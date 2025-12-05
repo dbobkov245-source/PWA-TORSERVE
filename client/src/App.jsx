@@ -102,6 +102,23 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [expanded, setExpanded] = useState({}) // { infoHash: boolean }
 
+  // TV Details View - selected torrent for modal
+  const [selectedTorrent, setSelectedTorrent] = useState(null)
+
+  // Detect if running on TV (large screen + no touch)
+  const [isTV, setIsTV] = useState(false)
+
+  useEffect(() => {
+    const checkIsTV = () => {
+      const largeScreen = window.innerWidth >= 1280
+      const noTouch = !('ontouchstart' in window)
+      setIsTV(largeScreen && noTouch)
+    }
+    checkIsTV()
+    window.addEventListener('resize', checkIsTV)
+    return () => window.removeEventListener('resize', checkIsTV)
+  }, [])
+
   // Player preference: 'system' | 'vimu' | 'vlc' | 'mx'
   const [preferredPlayer, setPreferredPlayer] = useState(
     localStorage.getItem('preferredPlayer') || 'system'
@@ -393,95 +410,175 @@ function App() {
           value={magnet}
           onChange={(e) => setMagnet(e.target.value)}
           placeholder="Paste Magnet URI..."
-          className="flex-1 p-3 rounded bg-gray-800 border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
+          tabIndex={0}
+          className="flex-1 p-3 rounded bg-gray-800 border border-gray-700 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 text-white"
         />
         <button
           type="submit"
           disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-bold disabled:opacity-50 transition-colors"
+          tabIndex={0}
+          className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-bold disabled:opacity-50 transition-colors tv-focusable"
         >
           {loading ? 'Adding...' : 'Add'}
         </button>
       </form>
 
-      {error && <div className="text-red-500 text-center mb-4 bg-red-900/20 p-2 rounded">{error}</div>}
+      {error && <div className="text-red-500 text-center mb-4 bg-red-900/20 p-2 rounded max-w-2xl mx-auto">{error}</div>}
 
-      <div className="grid gap-4 max-w-4xl mx-auto">
-        {torrents.map((t) => (
-          <div key={t.infoHash} className="bg-gray-800 rounded-lg p-4 shadow-lg border border-gray-700">
-            <div
-              className="flex justify-between items-start mb-2 cursor-pointer select-none"
-              onClick={() => toggleExpand(t.infoHash)}
+      {/* ─── Netflix Grid ─── */}
+      <div className="netflix-grid">
+        {torrents.map((t) => {
+          const progress = Math.round((t.progress || 0) * 100)
+          const isReady = progress >= 100 || t.files?.length > 0
+
+          return (
+            <button
+              key={t.infoHash}
+              tabIndex={0}
+              onClick={() => setSelectedTorrent(t)}
+              className={`torrent-card tv-card ${isReady ? 'ready pulse-ready' : ''}`}
             >
-              <h2 className="text-xl font-semibold truncate flex-1 mr-4 text-gray-100 flex items-center gap-2">
-                <span className="text-gray-500 text-sm">{expanded[t.infoHash] ? '▼' : '▶'}</span>
-                {t.name || 'Fetching Metadata...'}
-              </h2>
-              <div className="text-right">
-                <div className="text-sm text-gray-400">
-                  {(t.progress * 100).toFixed(1)}%
-                </div>
-                <div className="text-xs text-gray-500">
-                  {(t.downloadSpeed / 1024 / 1024).toFixed(2)} MB/s • {t.numPeers} peers
+              {/* Card Content */}
+              <div>
+                <div className="text-4xl mb-2">🎬</div>
+                <div className="torrent-card-title">
+                  {t.name || 'Fetching Metadata...'}
                 </div>
               </div>
-            </div>
 
-            <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4">
-              <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${t.progress * 100}%` }}></div>
-            </div>
-
-            {expanded[t.infoHash] && (
-              <div className="space-y-2 animate-fade-in">
-                {t.files.map((f) => (
-                  <div key={f.index} className="bg-gray-700/50 p-3 rounded hover:bg-gray-700 transition-colors">
-                    <div className="mb-2">
-                      <div className="truncate text-sm font-medium">{f.name}</div>
-                      <div className="text-xs text-gray-400">{(f.length / 1024 / 1024).toFixed(0)} MB</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const streamUrl = getStreamUrl(t.infoHash, f.index)
-                          navigator.clipboard.writeText(streamUrl)
-                          alert('Link copied! Paste in VLC/MX Player')
-                        }}
-                        className="flex-1 bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded text-sm font-bold shadow-sm transition-colors"
-                      >
-                        📋 Copy
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePlay(t.infoHash, f.index, f.name)
-                        }}
-                        className="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm font-bold shadow-sm transition-colors"
-                      >
-                        ▶️ Play
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              {/* Status & Progress */}
+              <div>
+                <div className="torrent-card-status">
+                  <span>{isReady ? '✅ Ready' : `⏳ ${progress}%`}</span>
+                  <span>•</span>
+                  <span>{t.numPeers || 0} peers</span>
+                </div>
+                <div className="torrent-card-progress">
+                  <div
+                    className="torrent-card-progress-bar"
+                    style={{ width: `${Math.max(progress, 5)}%` }}
+                  />
+                </div>
               </div>
-            )}
+            </button>
+          )
+        })}
 
-            <div className="mt-4 pt-4 border-t border-gray-700 flex justify-end">
-              <button
-                onClick={() => deleteTorrent(t.infoHash)}
-                className="text-red-400 hover:text-red-300 text-sm font-medium px-3 py-1 hover:bg-red-900/20 rounded transition-colors"
-              >
-                Remove Torrent
-              </button>
-            </div>
-          </div>
-        ))}
         {torrents.length === 0 && (
-          <div className="text-center text-gray-500 mt-10 p-8 bg-gray-800/50 rounded-lg border border-gray-700 border-dashed">
-            No active torrents. Add a magnet link to start.
+          <div className="col-span-full text-center text-gray-500 py-16 px-8 bg-gray-800/30 rounded-2xl border-2 border-gray-700 border-dashed">
+            <div className="text-5xl mb-4">📺</div>
+            <div className="text-xl font-semibold mb-2">No Active Torrents</div>
+            <div className="text-sm">Add a magnet link or open a .torrent file to start</div>
           </div>
         )}
       </div>
+
+      {/* ─── Details Modal (TV Full Screen) ─── */}
+      {selectedTorrent && (
+        <div
+          className="details-overlay"
+          onClick={() => setSelectedTorrent(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' || e.key === 'Backspace') {
+              setSelectedTorrent(null)
+            }
+          }}
+        >
+          <div
+            className="details-modal animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Title */}
+            <h2 className="details-title">
+              {selectedTorrent.name || 'Unknown Torrent'}
+            </h2>
+
+            {/* Progress */}
+            <div className="details-progress-container">
+              <div className="details-progress-bar">
+                <div
+                  className="details-progress-fill"
+                  style={{ width: `${Math.round((selectedTorrent.progress || 0) * 100)}%` }}
+                />
+              </div>
+              <div className={`details-status ${(selectedTorrent.progress || 0) >= 1 ? 'ready' : 'loading'}`}>
+                {(selectedTorrent.progress || 0) >= 1
+                  ? '✅ Ready to Watch'
+                  : `⏳ Loading: ${Math.round((selectedTorrent.progress || 0) * 100)}%`
+                }
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="text-gray-400 text-sm mb-4">
+              {selectedTorrent.files?.length || 0} files • {selectedTorrent.numPeers || 0} peers •
+              {((selectedTorrent.downloadSpeed || 0) / 1024 / 1024).toFixed(1)} MB/s
+            </div>
+
+            {/* Action Buttons */}
+            <div className="details-buttons">
+              {/* Watch Button - Primary */}
+              <button
+                tabIndex={0}
+                autoFocus
+                onClick={() => {
+                  // Find first video file or first file
+                  const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
+                  const videoFile = selectedTorrent.files?.find(f =>
+                    videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
+                  ) || selectedTorrent.files?.[0]
+
+                  if (videoFile) {
+                    handlePlay(selectedTorrent.infoHash, videoFile.index, videoFile.name)
+                    setSelectedTorrent(null)
+                  } else {
+                    alert('No playable files found')
+                  }
+                }}
+                className="details-btn-watch tv-btn-primary"
+              >
+                ▶ WATCH IN {preferredPlayer.toUpperCase()}
+              </button>
+
+              {/* File List (if multiple files) */}
+              {selectedTorrent.files?.length > 1 && (
+                <div className="mt-4 max-h-40 overflow-y-auto bg-gray-800/50 rounded-lg p-2">
+                  {selectedTorrent.files.map((f, idx) => (
+                    <button
+                      key={idx}
+                      tabIndex={0}
+                      onClick={() => {
+                        handlePlay(selectedTorrent.infoHash, f.index, f.name)
+                        setSelectedTorrent(null)
+                      }}
+                      className="w-full text-left p-2 hover:bg-gray-700 rounded transition-colors text-sm truncate tv-focusable"
+                    >
+                      📄 {f.name} ({(f.length / 1024 / 1024).toFixed(0)} MB)
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Delete Button */}
+              <button
+                tabIndex={0}
+                onClick={() => {
+                  deleteTorrent(selectedTorrent.infoHash)
+                  setSelectedTorrent(null)
+                }}
+                className="details-btn-delete tv-btn-danger"
+              >
+                🗑 Delete Torrent
+              </button>
+            </div>
+
+            {/* Back Hint */}
+            <div className="details-back">
+              Press <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">ESC</kbd> or <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">BACK</kbd> to close
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
