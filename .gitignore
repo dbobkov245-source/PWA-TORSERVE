@@ -4,3 +4,5 @@ node_modules
 dist
 db.json
 *.log
+
+generate_code_doc.py
