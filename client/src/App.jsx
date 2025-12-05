@@ -102,10 +102,21 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [expanded, setExpanded] = useState({}) // { infoHash: boolean }
 
+  // Player preference: 'system' | 'vimu' | 'vlc' | 'mx'
+  const [preferredPlayer, setPreferredPlayer] = useState(
+    localStorage.getItem('preferredPlayer') || 'system'
+  )
+
   // Server status state
   const [serverStatus, setServerStatus] = useState('ok')
   const [lastStateChange, setLastStateChange] = useState(null)
   const [retryAfter, setRetryAfter] = useState(null)
+
+  // Save player preference
+  const savePreferredPlayer = (player) => {
+    setPreferredPlayer(player)
+    localStorage.setItem('preferredPlayer', player)
+  }
 
   const getApiUrl = (path) => {
     if (serverUrl) {
@@ -248,24 +259,59 @@ function App() {
     return `${protocol}//${host}/stream/${infoHash}/${fileIndex}`
   }
 
-  // Handle Play button - open stream URL
-  // Uses Capacitor Browser plugin on Android for external player
+  // Handle Play button - open stream URL in external video player
   const handlePlay = async (infoHash, fileIndex, fileName) => {
     const streamUrl = getStreamUrl(infoHash, fileIndex)
-    console.log('[Play] Opening stream:', streamUrl)
+    console.log('[Play] Opening stream:', streamUrl, 'Player:', preferredPlayer)
 
-    // On Android native app, use Browser plugin to open in external app
+    // On Android native app, use player-specific URL schemes
     if (Capacitor.isNativePlatform()) {
       try {
-        // Open URL in system browser which will show "Open with" dialog
-        await Browser.open({
-          url: streamUrl,
-          windowName: '_system' // Force external
-        })
+        let playerUrl
+
+        switch (preferredPlayer) {
+          case 'vimu':
+            // Vimu Media Player
+            playerUrl = `vimu://${streamUrl}`
+            console.log('[Play] Using Vimu:', playerUrl)
+            break
+
+          case 'vlc':
+            // VLC for Android
+            playerUrl = `vlc://${streamUrl}`
+            console.log('[Play] Using VLC:', playerUrl)
+            break
+
+          case 'mx':
+            // MX Player with intent
+            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;end`
+            console.log('[Play] Using MX Player:', playerUrl)
+            break
+
+          case 'system':
+          default:
+            // System chooser with video/* MIME type
+            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
+            console.log('[Play] Using System Chooser:', playerUrl)
+            break
+        }
+
+        window.location.href = playerUrl
+
+        // Fallback: if specific player not installed, show system chooser after delay
+        if (preferredPlayer !== 'system') {
+          setTimeout(() => {
+            const systemUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
+            console.log('[Play] Fallback to system chooser')
+            window.location.href = systemUrl
+          }, 1000)
+        }
+
       } catch (e) {
-        console.error('[Play] Browser.open failed:', e)
-        // Fallback to window.open
-        window.open(streamUrl, '_blank')
+        console.error('[Play] Failed:', e)
+        // Final fallback: copy to clipboard
+        navigator.clipboard.writeText(streamUrl)
+        alert('Link copied! Paste in video player')
       }
     } else {
       // Browser: open in new tab
@@ -300,18 +346,44 @@ function App() {
       )}
 
       {showSettings && (
-        <div className="mb-6 p-4 bg-gray-800 rounded border border-gray-700">
-          <label className="block text-sm text-gray-400 mb-2">Server URL (for APK)</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              defaultValue={serverUrl}
-              onBlur={(e) => saveServerUrl(e.target.value)}
-              placeholder="http://192.168.1.88:3000"
-              className="flex-1 p-2 rounded bg-gray-900 border border-gray-600 text-white"
-            />
+        <div className="mb-6 p-4 bg-gray-800 rounded border border-gray-700 space-y-4">
+          {/* Server URL */}
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Server URL (for APK)</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                defaultValue={serverUrl}
+                onBlur={(e) => saveServerUrl(e.target.value)}
+                placeholder="http://192.168.1.88:3000"
+                className="flex-1 p-2 rounded bg-gray-900 border border-gray-600 text-white"
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Current: {serverUrl || 'Relative (Web Mode)'}</p>
           </div>
-          <p className="text-xs text-gray-500 mt-1">Current: {serverUrl || 'Relative (Web Mode)'}</p>
+
+          {/* Player Selection (only on native) */}
+          {Capacitor.isNativePlatform() && (
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">🎬 Video Player</label>
+              <select
+                value={preferredPlayer}
+                onChange={(e) => savePreferredPlayer(e.target.value)}
+                className="w-full p-2 rounded bg-gray-900 border border-gray-600 text-white"
+              >
+                <option value="system">📱 System Chooser (recommended)</option>
+                <option value="vimu">🟣 Vimu Media Player</option>
+                <option value="vlc">🔶 VLC for Android</option>
+                <option value="mx">🔵 MX Player</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {preferredPlayer === 'system'
+                  ? 'Android will show a list of video players'
+                  : `Will open directly in ${preferredPlayer.toUpperCase()}`
+                }
+              </p>
+            </div>
+          )}
         </div>
       )}
 
