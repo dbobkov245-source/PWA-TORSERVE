@@ -285,11 +285,13 @@ function App() {
     if (Capacitor.isNativePlatform()) {
       try {
         let playerUrl
+        const encodedUrl = encodeURIComponent(streamUrl)
+        const encodedTitle = encodeURIComponent(fileName || 'Video')
 
         switch (preferredPlayer) {
           case 'vimu':
-            // Vimu Media Player
-            playerUrl = `vimu://${streamUrl}`
+            // Vimu Media Player - try direct URL first
+            playerUrl = `vimu://play?url=${encodedUrl}`
             console.log('[Play] Using Vimu:', playerUrl)
             break
 
@@ -300,35 +302,30 @@ function App() {
             break
 
           case 'mx':
-            // MX Player with intent
-            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;end`
+            // MX Player with full intent
+            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;S.title=${encodedTitle};end`
             console.log('[Play] Using MX Player:', playerUrl)
             break
 
           case 'system':
           default:
-            // System chooser with video/* MIME type
-            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
+            // System chooser - proper intent format
+            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;scheme=http;type=video/*;S.title=${encodedTitle};end`
             console.log('[Play] Using System Chooser:', playerUrl)
             break
         }
 
+        // Try launching player
+        console.log('[Play] Navigating to:', playerUrl)
         window.location.href = playerUrl
-
-        // Fallback: if specific player not installed, show system chooser after delay
-        if (preferredPlayer !== 'system') {
-          setTimeout(() => {
-            const systemUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
-            console.log('[Play] Fallback to system chooser')
-            window.location.href = systemUrl
-          }, 1000)
-        }
 
       } catch (e) {
         console.error('[Play] Failed:', e)
-        // Final fallback: copy to clipboard
-        navigator.clipboard.writeText(streamUrl)
-        alert('Link copied! Paste in video player')
+        // Fallback: copy to clipboard
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(streamUrl)
+          alert('Ссылка скопирована! Вставьте в плеер.')
+        }
       }
     } else {
       // Browser: open in new tab
