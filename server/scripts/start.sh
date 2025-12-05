@@ -1,14 +1,16 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────
 # PWA-TorServe: Main Startup Script for Termux
-# Запускает сервер с автоматическим ремаунтом NAS при сбое
+# Запускает сервер + синхронизация на NAS каждые 5 минут
 # ─────────────────────────────────────────────────────────────
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$(dirname "$SCRIPT_DIR")"
-MOUNT_POINT="$HOME/tor-cache"
+DOWNLOAD_PATH="$HOME/downloads"
+NAS_PATH="nas:/tor-cache"
+SYNC_INTERVAL=300  # 5 minutes
 
 echo "╔════════════════════════════════════════════╗"
 echo "║   PWA-TorServe Starting...                ║"
@@ -16,38 +18,44 @@ echo "╚═══════════════════════�
 
 # ─── Acquire Wake Lock ───
 echo "🔒 Acquiring wake lock..."
-termux-wake-lock
+termux-wake-lock 2>/dev/null || true
 
-# ─── Initial Mount ───
-echo "🔗 Mounting NAS..."
-"$SCRIPT_DIR/mount.sh"
+# ─── Create downloads folder ───
+mkdir -p "$DOWNLOAD_PATH"
 
 # ─── Export Environment ───
-export DOWNLOAD_PATH="$MOUNT_POINT"
+export DOWNLOAD_PATH
 export NODE_ENV=production
 echo "📁 DOWNLOAD_PATH=$DOWNLOAD_PATH"
 
-# ─── Mount Watchdog (background) ───
-echo "👁️  Starting mount watchdog..."
+# ─── NAS Sync Watchdog (background) ───
+echo "☁️  Starting NAS sync (every 5 min)..."
 (
     while true; do
-        sleep 60
+        sleep $SYNC_INTERVAL
         
-        if ! mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
-            echo "[$(date)] ⚠️  Mount lost! Attempting remount..."
-            "$SCRIPT_DIR/mount.sh" || echo "[$(date)] ❌ Remount failed"
+        echo "[$(date '+%H:%M:%S')] 🔄 Syncing to NAS..."
+        if rclone sync "$DOWNLOAD_PATH" "$NAS_PATH" --quiet 2>/dev/null; then
+            echo "[$(date '+%H:%M:%S')] ✅ Sync complete"
+        else
+            echo "[$(date '+%H:%M:%S')] ⚠️  Sync failed (NAS offline?)"
         fi
     done
 ) &
-WATCHDOG_PID=$!
-echo "   Watchdog PID: $WATCHDOG_PID"
+SYNC_PID=$!
+echo "   Sync PID: $SYNC_PID"
 
 # ─── Trap for cleanup ───
 cleanup() {
     echo ""
     echo "🛑 Shutting down..."
-    kill $WATCHDOG_PID 2>/dev/null || true
-    termux-wake-unlock
+    
+    # Final sync before exit
+    echo "📤 Final sync to NAS..."
+    rclone sync "$DOWNLOAD_PATH" "$NAS_PATH" --quiet 2>/dev/null || true
+    
+    kill $SYNC_PID 2>/dev/null || true
+    termux-wake-unlock 2>/dev/null || true
     echo "✅ Cleanup complete"
     exit 0
 }
