@@ -100,6 +100,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showServerInput, setShowServerInput] = useState(false)
   const [expanded, setExpanded] = useState({}) // { infoHash: boolean }
 
   // TV Details View - selected torrent for modal
@@ -370,17 +371,30 @@ function App() {
       {showSettings && (
         <div className="mb-6 p-4 bg-gray-800 rounded border border-gray-700 space-y-4">
           {/* Server URL */}
+          {/* Server URL (Hidden by default to avoid focus trap) */}
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Server URL (for APK)</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                defaultValue={serverUrl}
-                onBlur={(e) => saveServerUrl(e.target.value)}
-                placeholder="http://192.168.1.88:3000"
-                className="flex-1 p-2 rounded bg-gray-900 border border-gray-600 text-white"
-              />
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm text-gray-400">Server URL (for APK)</label>
+              <button
+                onClick={() => setShowServerInput(!showServerInput)}
+                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-600 tv-focusable tabIndex={0}"
+              >
+                {showServerInput ? 'Hide' : 'Edit'}
+              </button>
             </div>
+
+            {showServerInput && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  defaultValue={serverUrl}
+                  onBlur={(e) => saveServerUrl(e.target.value)}
+                  placeholder="http://192.168.1.88:3000"
+                  className="flex-1 p-2 rounded bg-gray-900 border border-gray-600 text-white"
+                  autoFocus
+                />
+              </div>
+            )}
             <p className="text-xs text-gray-500 mt-1">Current: {serverUrl || 'Relative (Web Mode)'}</p>
           </div>
 
