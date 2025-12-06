@@ -15,8 +15,10 @@ services:
       - DOWNLOAD_PATH=/downloads
       - DB_PATH=/app/data/db.json
     volumes:
-      # NAS Storage Mapping (Hardcoded Requirement)
-      - /volume2/tor-cache:/downloads
+      # Downloads folder (map to your NAS media folder)
+      - /volume1/docker/pwa-torserve/downloads:/app/downloads
+      # [HOTFIX] Map source code for easy updates without rebuild
+      - ./server:/app/server
       # Persistence for DB
       - ./data:/app/data
     logging:

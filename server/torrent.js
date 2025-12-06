@@ -20,7 +20,7 @@ export const addTorrent = (magnetURI) => {
         try {
             engine = torrentStream(magnetURI, {
                 path: path,
-                connections: 20,       // 📉 RAM-safe limit
+                connections: 20,       // 📉 RAM-safe limit (Reverted from 50)
                 uploads: 0,
                 dht: true,             // ✅ DHT enabled (needed for trackerless torrents)
                 verify: false          // ⚡ Faster torrent start

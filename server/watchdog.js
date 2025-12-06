@@ -19,8 +19,8 @@ import path from 'path'
 
 const CONFIG = {
     CHECK_INTERVAL_MS: 30000,           // Main loop interval: 30s
-    RAM_OK_THRESHOLD_MB: 500,           // Below this = OK
-    RAM_DEGRADED_THRESHOLD_MB: 600,     // Above this = Degraded
+    RAM_OK_THRESHOLD_MB: 800,           // ⬆ Relaxed for 100GB files
+    RAM_DEGRADED_THRESHOLD_MB: 1000,    // ⬆ Limit increased to 1GB
     HYSTERESIS_DELAY_MS: 30000,         // 30s delay before degraded
     STORAGE_CHECK_TIMEOUT_MS: 5000,     // 5s timeout for storage check
     CIRCUIT_BREAKER_THRESHOLD: 3,       // 3 failures → circuit open
