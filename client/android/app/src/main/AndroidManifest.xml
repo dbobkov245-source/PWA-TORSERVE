@@ -79,6 +79,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     
+    <!-- Queries for Intent resolution (Android 11+) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <package android:name="net.gtvbox.videoplayer" /> <!-- Vimu -->
+        <package android:name="com.mxtech.videoplayer.ad" /> <!-- MX Player Free -->
+        <package android:name="com.mxtech.videoplayer.pro" /> <!-- MX Player Pro -->
+        <package android:name="org.videolan.vlc" /> <!-- VLC -->
+        <package android:name="com.brouken.player" /> <!-- Just Player -->
+    </queries>
+
     <!-- Android TV Features -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

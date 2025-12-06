@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Capacitor } from '@capacitor/core'
+import { registerPlugin } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App as CapacitorApp } from '@capacitor/app'
+
+// Register Custom Java Bridge
+const TVPlayer = registerPlugin('TVPlayer')
 
 // ─────────────────────────────────────────────────────────────
 // Server Status Components
@@ -84,14 +87,32 @@ const ErrorScreen = ({ status, retryAfter, onRetry }) => {
   )
 }
 
+
+
 // ─────────────────────────────────────────────────────────────
 // Main App Component
 // ─────────────────────────────────────────────────────────────
 
 function App() {
+  // Debug Logging State
+  // Trap Global Errors
+  useEffect(() => {
+    const handleError = (event) => {
+      console.error(`ERROR: ${event.message || event.reason}`)
+    }
+    window.addEventListener('error', handleError)
+    window.addEventListener('unhandledrejection', handleError)
+
+    console.log('App Started. Version: v1.0.0 (Release)')
+    return () => {
+      window.removeEventListener('error', handleError)
+      window.removeEventListener('unhandledrejection', handleError)
+    }
+  }, [])
+
   // Default to current origin if web, or a default IP if native
   const defaultUrl = Capacitor.isNativePlatform()
-    ? (localStorage.getItem('serverUrl') || 'http://192.168.1.88:3000')
+    ? (localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000') // Updated default IP
     : '' // Relative path for web
 
   const [serverUrl, setServerUrl] = useState(defaultUrl)
@@ -101,10 +122,8 @@ function App() {
   const [error, setError] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showServerInput, setShowServerInput] = useState(false)
-  const [expanded, setExpanded] = useState({}) // { infoHash: boolean }
-
-  // TV Details View - selected torrent for modal
   const [selectedTorrent, setSelectedTorrent] = useState(null)
+  // const [showDebug, setShowDebug] = useState(true) // Removed for release
 
   // Detect if running on TV (large screen + no touch)
   const [isTV, setIsTV] = useState(false)
@@ -130,6 +149,17 @@ function App() {
   const [lastStateChange, setLastStateChange] = useState(null)
   const [retryAfter, setRetryAfter] = useState(null)
 
+  // ─── Manual Focus Management (Fix for TV Remote) ───
+  useEffect(() => {
+    if (selectedTorrent) {
+      console.log('Modal Opened. Forcing focus to Watch button...')
+      setTimeout(() => {
+        const watchBtn = document.querySelector('.details-btn-watch')
+        if (watchBtn) watchBtn.focus()
+      }, 300)
+    }
+  }, [selectedTorrent])
+
   // Save player preference
   const savePreferredPlayer = (player) => {
     setPreferredPlayer(player)
@@ -138,7 +168,6 @@ function App() {
 
   const getApiUrl = (path) => {
     if (serverUrl) {
-      // Remove trailing slash from serverUrl if present
       const base = serverUrl.replace(/\/$/, '')
       return `${base}${path}`
     }
@@ -155,24 +184,15 @@ function App() {
   const fetchStatus = async () => {
     try {
       const res = await fetch(getApiUrl('/api/status'))
-
-      // Handle 503 with Retry-After header
       if (res.status === 503) {
         const retryHeader = res.headers.get('Retry-After')
         setRetryAfter(retryHeader ? parseInt(retryHeader, 10) : 300)
       }
-
       const data = await res.json()
-
-      // Update server status
       setServerStatus(data.serverStatus || 'ok')
       setLastStateChange(data.lastStateChange || null)
-
-      // Update torrents (may be empty on error states)
       setTorrents(data.torrents || [])
       setError(null)
-
-      // Clear retry state on successful OK status
       if (data.serverStatus === 'ok') {
         setRetryAfter(null)
       }
@@ -189,7 +209,7 @@ function App() {
     if (!Capacitor.isNativePlatform()) return
 
     const handleAppUrlOpen = async (event) => {
-      console.log('[AppUrlOpen] Received URL:', event.url)
+      console.log(`[AppUrlOpen] Received URL: ${event.url}`)
 
       if (event.url && event.url.startsWith('magnet:')) {
         setLoading(true)
@@ -207,7 +227,7 @@ function App() {
           console.log('[Magnet] Added successfully')
           fetchStatus()
         } catch (err) {
-          console.error('[Magnet] Failed to add:', err)
+          console.error(`[Magnet] Failed to add: ${err.message}`)
           setError(`Failed to add magnet: ${err.message}`)
         } finally {
           setLoading(false)
@@ -215,24 +235,17 @@ function App() {
       }
     }
 
-    // Add listener
     CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
-
-    // Cleanup on unmount
     return () => {
       CapacitorApp.removeAllListeners()
     }
-  }, [serverUrl]) // Re-subscribe if serverUrl changes
+  }, [serverUrl])
 
   useEffect(() => {
     fetchStatus()
-    const interval = setInterval(fetchStatus, 5000) // Reduced frequency for TV performance
+    const interval = setInterval(fetchStatus, 5000)
     return () => clearInterval(interval)
   }, [serverUrl])
-
-  const toggleExpand = (infoHash) => {
-    setExpanded(prev => ({ ...prev, [infoHash]: !prev[infoHash] }))
-  }
 
   const addTorrent = async (e) => {
     e.preventDefault()
@@ -247,8 +260,10 @@ function App() {
       })
       if (!res.ok) throw new Error(await res.text())
       setMagnet('')
+      console.log('Magnet added successfully')
       fetchStatus()
     } catch (err) {
+      console.error(`Add Error: ${err.message}`)
       setError(err.message)
     } finally {
       setLoading(false)
@@ -271,76 +286,85 @@ function App() {
       const base = serverUrl.replace(/\/$/, '')
       return `${base}/stream/${infoHash}/${fileIndex}`
     }
-    // For web mode, use full URL with current host
     const protocol = window.location.protocol
     const host = window.location.host
     return `${protocol}//${host}/stream/${infoHash}/${fileIndex}`
   }
 
-  // Handle Play button - open stream URL in external video player
+  // Handle Play button - use Native Java Bridge
   const handlePlay = async (infoHash, fileIndex, fileName) => {
     const streamUrl = getStreamUrl(infoHash, fileIndex)
-    console.log('[Play] Opening stream:', streamUrl, 'Player:', preferredPlayer)
+    const pkg = "net.gtvbox.videoplayer" // Vimu default
 
-    // On Android native app, use different launch methods
-    if (Capacitor.isNativePlatform()) {
-      const title = fileName || 'Video'
+    console.log(`[Play] Native Bridge: ${streamUrl} via ${pkg}`)
 
+    try {
+      await TVPlayer.play({
+        url: streamUrl,
+        package: pkg
+      })
+      console.log("[Play] TVPlayer.play() resolved successfully")
+    } catch (e) {
+      console.error(`[Play] Bridge launch failed: ${e.message}`)
       try {
-        // Method based on player selection
-        switch (preferredPlayer) {
-          case 'vimu':
-            // Vimu - try intent first
-            console.log('[Play] Launching Vimu...')
-            await Browser.open({
-              url: `intent:#Intent;action=android.intent.action.VIEW;type=video/*;S.url=${encodeURIComponent(streamUrl)};package=net.gtvbox.videoplayer;end`
-            })
-            break
-
-          case 'vlc':
-            // VLC - use vlc:// scheme with just the path
-            console.log('[Play] Launching VLC...')
-            await Browser.open({ url: `vlc://${streamUrl}` })
-            break
-
-          case 'mx':
-            // MX Player Pro and Free
-            console.log('[Play] Launching MX Player...')
-            await Browser.open({
-              url: `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(title)};end`
-            })
-            break
-
-          case 'system':
-          default:
-            // System chooser - simple intent
-            console.log('[Play] Opening system chooser...')
-            await Browser.open({
-              url: `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
-            })
-            break
-        }
-      } catch (e) {
-        console.error('[Play] Browser.open failed:', e)
-
-        // Fallback: try direct location.href
-        try {
-          console.log('[Play] Fallback: window.location.href')
-          window.location.href = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
-        } catch (e2) {
-          console.error('[Play] Fallback failed:', e2)
-          // Last resort: copy to clipboard
-          if (navigator.clipboard) {
-            await navigator.clipboard.writeText(streamUrl)
-            alert(`Ссылка скопирована!\n\nОткройте ${preferredPlayer.toUpperCase()} и вставьте:\n${streamUrl}`)
-          }
-        }
+        await TVPlayer.play({ url: streamUrl, package: "" })
+        console.log("[Play] Fallback system chooser called")
+      } catch (err) {
+        console.error(`[Play] Fallback failed: ${err.message}`)
+        alert("Error launching player: " + err.message)
       }
-    } else {
-      // Browser: open in new tab
-      window.open(streamUrl, '_blank')
     }
   }
+
+  const copyStreamUrl = (infoHash, fileIndex) => {
+    const streamUrl = getStreamUrl(infoHash, fileIndex)
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(streamUrl).then(() => {
+        alert('URL скопирован! Вставьте его в любой плеер.')
+      }).catch(err => {
+        alert('Ошибка копирования: ' + err.message)
+      })
+    } else {
+      const textArea = document.createElement("textarea");
+      textArea.value = streamUrl;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        alert('URL скопирован (fallback)!')
+      } catch (err) {
+        alert('Не удалось скопировать URL')
+      }
+      document.body.removeChild(textArea);
+    }
+  }
+
+  // ─── Hardware Back Button & Keyboard Handling ───
+  useEffect(() => {
+    const backListener = CapacitorApp.addListener('backButton', () => {
+      // console.log('Hardware Back Button Pressed')
+      if (selectedTorrent) {
+        setSelectedTorrent(null)
+      } else if (showSettings) {
+        setShowSettings(false)
+      } else {
+        CapacitorApp.minimizeApp()
+      }
+    })
+
+    const keyListener = (e) => {
+      if (e.key === 'Escape' || e.key === 'Backspace') {
+        if (selectedTorrent) setSelectedTorrent(null)
+        if (showSettings) setShowSettings(false)
+      }
+    }
+    window.addEventListener('keydown', keyListener)
+
+    return () => {
+      backListener.then(h => h.remove())
+      window.removeEventListener('keydown', keyListener)
+    }
+  }, [selectedTorrent, showSettings])
 
   // ─── Render Error Screen for critical states ───
   if (serverStatus === 'circuit_open' || serverStatus === 'error') {
@@ -355,23 +379,23 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 font-sans overflow-x-hidden max-w-full">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-blue-500">PWA-TorServe</h1>
+      {/* (Debug overlay removed) */}
+
+      <div className="flex justify-between items-center mb-6 pl-4 pr-4">
+        <h1 className="text-3xl font-bold text-blue-500">PWA-TorServe (v1.0.0)</h1>
         <div className="flex gap-4">
+          {/* Debug button removed */}
           <button onClick={fetchStatus} className="text-gray-400 hover:text-white" title="Refresh">🔄</button>
           <button onClick={() => setShowSettings(!showSettings)} className="text-gray-400 hover:text-white" title="Settings">⚙️</button>
         </div>
       </div>
 
-      {/* ─── Degraded Status Banner ─── */}
       {serverStatus === 'degraded' && (
         <DegradedBanner lastStateChange={lastStateChange} />
       )}
 
       {showSettings && (
         <div className="mb-6 p-4 bg-gray-800 rounded border border-gray-700 space-y-4">
-          {/* Server URL */}
-          {/* Server URL (Hidden by default to avoid focus trap) */}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm text-gray-400">Server URL (for APK)</label>
@@ -398,7 +422,6 @@ function App() {
             <p className="text-xs text-gray-500 mt-1">Current: {serverUrl || 'Relative (Web Mode)'}</p>
           </div>
 
-          {/* Player Selection (only on native) */}
           {Capacitor.isNativePlatform() && (
             <div>
               <label className="block text-sm text-gray-400 mb-2">🎬 Video Player</label>
@@ -414,11 +437,11 @@ function App() {
                     onClick={() => savePreferredPlayer(player.id)}
                     tabIndex={0}
                     className={`
-                      flex items-center justify-between p-3 rounded-lg border transition-all text-left tv-focusable
-                      ${preferredPlayer === player.id
+                       flex items-center justify-between p-3 rounded-lg border transition-all text-left tv-focusable
+                       ${preferredPlayer === player.id
                         ? 'bg-blue-600 border-blue-400 ring-2 ring-blue-400/50'
                         : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}
-                    `}
+                     `}
                   >
                     <div>
                       <div className="font-bold">{player.name}</div>
@@ -436,28 +459,46 @@ function App() {
         </div>
       )}
 
-      <form onSubmit={addTorrent} className="mb-8 max-w-2xl mx-auto flex gap-2">
-        <input
-          type="text"
-          value={magnet}
-          onChange={(e) => setMagnet(e.target.value)}
-          placeholder="Paste Magnet URI..."
-          tabIndex={0}
-          className="flex-1 p-3 rounded bg-gray-800 border border-gray-700 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 text-white"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          tabIndex={0}
-          className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-bold disabled:opacity-50 transition-colors tv-focusable"
-        >
-          {loading ? 'Adding...' : 'Add'}
-        </button>
-      </form>
+      <div className="flex justify-center mb-8">
+        {!showServerInput && (
+          <button
+            onClick={() => setShowServerInput(true)}
+            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-full font-bold transition-all shadow-lg flex items-center gap-2 tv-focusable"
+          >
+            ➕ Add Magnet Link
+          </button>
+        )}
+      </div>
+
+      {showServerInput && (
+        <form onSubmit={addTorrent} className="mb-8 max-w-2xl mx-auto flex gap-2 animate-fade-in bg-gray-800 p-4 rounded-xl border border-gray-700">
+          <input
+            type="text"
+            value={magnet}
+            onChange={(e) => setMagnet(e.target.value)}
+            placeholder="Paste Magnet URI..."
+            autoFocus
+            className="flex-1 p-3 rounded bg-gray-900 border border-gray-600 focus:outline-none focus:border-blue-500 text-white"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-bold disabled:opacity-50"
+          >
+            {loading ? '...' : 'Add'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowServerInput(false)}
+            className="px-4 py-3 rounded hover:bg-gray-700 text-gray-400"
+          >
+            ✕
+          </button>
+        </form>
+      )}
 
       {error && <div className="text-red-500 text-center mb-4 bg-red-900/20 p-2 rounded max-w-2xl mx-auto">{error}</div>}
 
-      {/* ─── Netflix Grid ─── */}
       <div className="netflix-grid">
         {torrents.map((t) => {
           const progress = Math.round((t.progress || 0) * 100)
@@ -467,10 +508,12 @@ function App() {
             <button
               key={t.infoHash}
               tabIndex={0}
-              onClick={() => setSelectedTorrent(t)}
-              className={`torrent-card tv-card ${isReady ? 'ready pulse-ready' : ''}`}
+              onClick={() => {
+                console.log(`Selected torrent: ${t.name}`)
+                setSelectedTorrent(t)
+              }}
+              className={`torrent-card tv-card ${isReady ? 'ready' : ''}`}
             >
-              {/* Card Content */}
               <div>
                 <div className="text-4xl mb-2">🎬</div>
                 <div className="torrent-card-title">
@@ -478,12 +521,10 @@ function App() {
                 </div>
               </div>
 
-              {/* Status & Progress */}
               <div>
                 <div className="torrent-card-status">
                   <span>{isReady ? '✅ Ready' : `⏳ ${progress}%`}</span>
-                  <span>•</span>
-                  <span>{t.numPeers || 0} peers</span>
+                  <span>• {t.numPeers || 0} peers</span>
                 </div>
                 <div className="torrent-card-progress">
                   <div
@@ -505,109 +546,59 @@ function App() {
         )}
       </div>
 
-      {/* ─── Details Modal (TV Full Screen) ─── */}
       {selectedTorrent && (
         <div
           className="details-overlay"
           onClick={() => setSelectedTorrent(null)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' || e.key === 'Backspace') {
-              setSelectedTorrent(null)
-            }
-          }}
         >
           <div
             className="details-modal animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Title */}
-            <h2 className="details-title">
-              {selectedTorrent.name || 'Unknown Torrent'}
-            </h2>
+            <h2 className="details-title">{selectedTorrent.name}</h2>
 
-            {/* Progress */}
-            <div className="details-progress-container">
-              <div className="details-progress-bar">
-                <div
-                  className="details-progress-fill"
-                  style={{ width: `${Math.round((selectedTorrent.progress || 0) * 100)}%` }}
-                />
-              </div>
-              <div className={`details-status ${(selectedTorrent.progress || 0) >= 1 ? 'ready' : 'loading'}`}>
-                {(selectedTorrent.progress || 0) >= 1
-                  ? '✅ Ready to Watch'
-                  : `⏳ Loading: ${Math.round((selectedTorrent.progress || 0) * 100)}%`
+            <button
+              className="details-btn-watch tv-btn-primary"
+              tabIndex={0}
+              onClick={() => {
+                console.log('Watch Clicked')
+                const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
+                const videoFile = selectedTorrent.files?.find(f =>
+                  videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
+                ) || selectedTorrent.files?.[0]
+
+                if (videoFile) {
+                  handlePlay(selectedTorrent.infoHash, videoFile.index, videoFile.name)
+                } else {
+                  console.log('No video files found!')
+                  alert('No playable files found')
                 }
-              </div>
-            </div>
+              }}
+            >
+              ▶ WATCH
+            </button>
 
-            {/* Stats */}
-            <div className="text-gray-400 text-sm mb-4">
-              {selectedTorrent.files?.length || 0} files • {selectedTorrent.numPeers || 0} peers •
-              {((selectedTorrent.downloadSpeed || 0) / 1024 / 1024).toFixed(1)} MB/s
-            </div>
+            <button
+              tabIndex={0}
+              className="details-btn-delete mt-2 bg-gray-700 hover:bg-gray-600 border-none"
+              onClick={() => {
+                const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
+                const videoFile = selectedTorrent.files?.find(f =>
+                  videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
+                ) || selectedTorrent.files?.[0]
+                if (videoFile) copyStreamUrl(selectedTorrent.infoHash, videoFile.index)
+              }}
+            >
+              📋 Copy Link (Backup)
+            </button>
 
-            {/* Action Buttons */}
-            <div className="details-buttons">
-              {/* Watch Button - Primary */}
-              <button
-                tabIndex={0}
-                autoFocus
-                onClick={() => {
-                  // Find first video file or first file
-                  const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
-                  const videoFile = selectedTorrent.files?.find(f =>
-                    videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
-                  ) || selectedTorrent.files?.[0]
-
-                  if (videoFile) {
-                    handlePlay(selectedTorrent.infoHash, videoFile.index, videoFile.name)
-                    setSelectedTorrent(null)
-                  } else {
-                    alert('No playable files found')
-                  }
-                }}
-                className="details-btn-watch tv-btn-primary"
-              >
-                ▶ WATCH IN {preferredPlayer.toUpperCase()}
-              </button>
-
-              {/* File List (if multiple files) */}
-              {selectedTorrent.files?.length > 1 && (
-                <div className="mt-4 max-h-40 overflow-y-auto bg-gray-800/50 rounded-lg p-2">
-                  {selectedTorrent.files.map((f, idx) => (
-                    <button
-                      key={idx}
-                      tabIndex={0}
-                      onClick={() => {
-                        handlePlay(selectedTorrent.infoHash, f.index, f.name)
-                        setSelectedTorrent(null)
-                      }}
-                      className="w-full text-left p-2 hover:bg-gray-700 rounded transition-colors text-sm truncate tv-focusable"
-                    >
-                      📄 {f.name} ({(f.length / 1024 / 1024).toFixed(0)} MB)
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Delete Button */}
-              <button
-                tabIndex={0}
-                onClick={() => {
-                  deleteTorrent(selectedTorrent.infoHash)
-                  setSelectedTorrent(null)
-                }}
-                className="details-btn-delete tv-btn-danger"
-              >
-                🗑 Delete Torrent
-              </button>
-            </div>
-
-            {/* Back Hint */}
-            <div className="details-back">
-              Press <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">ESC</kbd> or <kbd className="px-2 py-1 bg-gray-700 rounded text-xs">BACK</kbd> to close
-            </div>
+            <button
+              className="details-btn-delete tv-btn-danger mt-4"
+              onClick={() => deleteTorrent(selectedTorrent.infoHash)}
+            >
+              Delete
+            </button>
+            <div className="details-back mt-4 text-gray-400">Press BACK to close</div>
           </div>
         </div>
       )}

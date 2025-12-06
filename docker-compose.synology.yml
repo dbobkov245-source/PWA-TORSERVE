@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  torserve:
+    # Use the image built previously or build it here if you transfer the source.
+    # Assuming user might build on NAS or pull from a registry. If building on NAS:
+    build: .
+    image: pwa-torserve:latest
+    container_name: torserve
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DOWNLOAD_PATH=/downloads
+      - DB_PATH=/app/data/db.json
+    volumes:
+      # NAS Storage Mapping (Hardcoded Requirement)
+      - /volume2/tor-cache:/downloads
+      # Persistence for DB
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

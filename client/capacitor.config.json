@@ -4,7 +4,12 @@
     "webDir": "dist",
     "server": {
         "androidScheme": "https",
-        "cleartext": true
+        "cleartext": true,
+        "allowNavigation": [
+            "192.168.1.70",
+            "192.168.1.*",
+            "*"
+        ]
     },
     "android": {
         "allowMixedContent": true

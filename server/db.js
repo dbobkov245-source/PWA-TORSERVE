@@ -8,7 +8,8 @@ const defaultData = {
     storageFailures: 0,
     progress: {}
 }
-const adapter = new JSONFile('db.json')
+const dbPath = process.env.DB_PATH || 'db.json'
+const adapter = new JSONFile(dbPath)
 const db = new Low(adapter, defaultData)
 
 // Ensure DB is ready and migrate existing data

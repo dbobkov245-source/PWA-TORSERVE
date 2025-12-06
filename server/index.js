@@ -70,24 +70,33 @@ app.get('/api/status', (req, res) => {
 
 // API: Generate M3U Playlist for Video Files
 app.get('/playlist.m3u', (req, res) => {
-    const host = req.headers.host || `localhost:${PORT}`
+    // 1. Determine Host (Synology IP or Localhost)
+    const host = req.get('host') || `localhost:${PORT}`
     const protocol = req.protocol || 'http'
+
+    // 2. Get All Torrents
     const torrents = getAllTorrents()
-    
+
     let m3u = '#EXTM3U\n'
-    const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
-    
+    const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.mpg', '.mpeg']
+
+    // 3. Filter & Generate
     for (const torrent of torrents) {
+        if (!torrent.files) continue;
+
         for (const file of torrent.files) {
             const ext = path.extname(file.name).toLowerCase()
             if (videoExtensions.includes(ext)) {
-                const duration = -1 // Unknown duration
-                m3u += `#EXTINF:${duration},${file.name}\n`
+                // Metadata for player
+                // Use -1 for live/unknown duration, or try to guess if available
+                m3u += `#EXTINF:-1,${file.name}\n`
+
+                // Stream URL: http://<NAS_IP>:3000/stream/<HASH>/<INDEX>
                 m3u += `${protocol}://${host}/stream/${torrent.infoHash}/${file.index}\n`
             }
         }
     }
-    
+
     res.set('Content-Type', 'audio/x-mpegurl')
     res.set('Content-Disposition', 'attachment; filename="playlist.m3u"')
     res.send(m3u)
@@ -215,8 +224,8 @@ app.get('*', (req, res) => {
     }
 })
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`)
 
     // Start watchdog in background (non-blocking)
     startWatchdog().catch(err => {

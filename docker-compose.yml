@@ -1,36 +1,24 @@
-# PWA-TorServe Docker Compose Configuration
-# Usage: docker-compose up -d
-
 version: '3.8'
 
 services:
-  server:
+  pwa-torserve:
     build: .
+    image: pwa-torserve:latest
     container_name: pwa-torserve
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    volumes:
-      - ./downloads:/app/downloads
     environment:
-      - DOWNLOAD_PATH=/app/downloads
       - NODE_ENV=production
-    restart: unless-stopped
-
-    # Resource limits for stability
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
-
-    # Logging configuration
+      - DOWNLOAD_PATH=/app/downloads
+      - DB_PATH=/app/data/db.json
+    volumes:
+      # Persistent data (database, settings)
+      - ./data:/app/data
+      # Downloads folder (map to your NAS media folder)
+      - /volume1/docker/pwa-torserve/downloads:/app/downloads
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  downloads:
-    driver: local
