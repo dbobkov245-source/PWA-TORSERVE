@@ -281,50 +281,58 @@ function App() {
     const streamUrl = getStreamUrl(infoHash, fileIndex)
     console.log('[Play] Opening stream:', streamUrl, 'Player:', preferredPlayer)
 
-    // On Android native app, use player-specific URL schemes
+    // On Android native app, use different launch methods
     if (Capacitor.isNativePlatform()) {
-      try {
-        let playerUrl
-        const encodedUrl = encodeURIComponent(streamUrl)
-        const encodedTitle = encodeURIComponent(fileName || 'Video')
+      const title = fileName || 'Video'
 
+      try {
+        // Method based on player selection
         switch (preferredPlayer) {
           case 'vimu':
-            // Vimu Media Player - try direct URL first
-            playerUrl = `vimu://play?url=${encodedUrl}`
-            console.log('[Play] Using Vimu:', playerUrl)
+            // Vimu - try intent first
+            console.log('[Play] Launching Vimu...')
+            await Browser.open({
+              url: `intent:#Intent;action=android.intent.action.VIEW;type=video/*;S.url=${encodeURIComponent(streamUrl)};package=net.gtvbox.videoplayer;end`
+            })
             break
 
           case 'vlc':
-            // VLC for Android
-            playerUrl = `vlc://${streamUrl}`
-            console.log('[Play] Using VLC:', playerUrl)
+            // VLC - use vlc:// scheme with just the path
+            console.log('[Play] Launching VLC...')
+            await Browser.open({ url: `vlc://${streamUrl}` })
             break
 
           case 'mx':
-            // MX Player with full intent
-            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;S.title=${encodedTitle};end`
-            console.log('[Play] Using MX Player:', playerUrl)
+            // MX Player Pro and Free
+            console.log('[Play] Launching MX Player...')
+            await Browser.open({
+              url: `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(title)};end`
+            })
             break
 
           case 'system':
           default:
-            // System chooser - proper intent format
-            playerUrl = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;scheme=http;type=video/*;S.title=${encodedTitle};end`
-            console.log('[Play] Using System Chooser:', playerUrl)
+            // System chooser - simple intent
+            console.log('[Play] Opening system chooser...')
+            await Browser.open({
+              url: `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
+            })
             break
         }
-
-        // Try launching player
-        console.log('[Play] Navigating to:', playerUrl)
-        window.location.href = playerUrl
-
       } catch (e) {
-        console.error('[Play] Failed:', e)
-        // Fallback: copy to clipboard
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(streamUrl)
-          alert('Ссылка скопирована! Вставьте в плеер.')
+        console.error('[Play] Browser.open failed:', e)
+
+        // Fallback: try direct location.href
+        try {
+          console.log('[Play] Fallback: window.location.href')
+          window.location.href = `intent:${streamUrl}#Intent;action=android.intent.action.VIEW;type=video/*;end`
+        } catch (e2) {
+          console.error('[Play] Fallback failed:', e2)
+          // Last resort: copy to clipboard
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(streamUrl)
+            alert(`Ссылка скопирована!\n\nОткройте ${preferredPlayer.toUpperCase()} и вставьте:\n${streamUrl}`)
+          }
         }
       }
     } else {
@@ -380,21 +388,34 @@ function App() {
           {Capacitor.isNativePlatform() && (
             <div>
               <label className="block text-sm text-gray-400 mb-2">🎬 Video Player</label>
-              <select
-                value={preferredPlayer}
-                onChange={(e) => savePreferredPlayer(e.target.value)}
-                className="w-full p-2 rounded bg-gray-900 border border-gray-600 text-white"
-              >
-                <option value="system">📱 System Chooser (recommended)</option>
-                <option value="vimu">🟣 Vimu Media Player</option>
-                <option value="vlc">🔶 VLC for Android</option>
-                <option value="mx">🔵 MX Player</option>
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                {preferredPlayer === 'system'
-                  ? 'Android will show a list of video players'
-                  : `Will open directly in ${preferredPlayer.toUpperCase()}`
-                }
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  { id: 'system', name: '📱 System Chooser', desc: 'Ask every time' },
+                  { id: 'vimu', name: '🟣 Vimu Player', desc: 'Best for TV' },
+                  { id: 'vlc', name: '🔶 VLC Android', desc: 'Reliable fallback' },
+                  { id: 'mx', name: '🔵 MX Player', desc: 'Advanced features' },
+                ].map((player) => (
+                  <button
+                    key={player.id}
+                    onClick={() => savePreferredPlayer(player.id)}
+                    tabIndex={0}
+                    className={`
+                      flex items-center justify-between p-3 rounded-lg border transition-all text-left tv-focusable
+                      ${preferredPlayer === player.id
+                        ? 'bg-blue-600 border-blue-400 ring-2 ring-blue-400/50'
+                        : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}
+                    `}
+                  >
+                    <div>
+                      <div className="font-bold">{player.name}</div>
+                      <div className="text-xs opacity-75">{player.desc}</div>
+                    </div>
+                    {preferredPlayer === player.id && <span>✅</span>}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Selected player will open automatically when you press Play.
               </p>
             </div>
           )}
