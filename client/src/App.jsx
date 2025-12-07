@@ -60,7 +60,28 @@ const cleanTitle = (rawName) => {
 // Components
 // ─────────────────────────────────────────────────────────────
 
-const Poster = ({ name, onClick, progress, peers, isReady }) => {
+// Format file size
+const formatSize = (bytes) => {
+  if (!bytes) return ''
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let size = bytes
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024
+    i++
+  }
+  return `${size.toFixed(1)} ${units[i]}`
+}
+
+// Format download speed
+const formatSpeed = (bytesPerSec) => {
+  if (!bytesPerSec || bytesPerSec < 1024) return ''
+  const kbps = bytesPerSec / 1024
+  if (kbps < 1024) return `${kbps.toFixed(0)} KB/s`
+  return `${(kbps / 1024).toFixed(1)} MB/s`
+}
+
+const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed }) => {
   const [bgImage, setBgImage] = useState(null)
   const cleanedName = cleanTitle(name)
 
@@ -183,6 +204,12 @@ const Poster = ({ name, onClick, progress, peers, isReady }) => {
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path></svg>
             {peers}
           </span>
+          {size > 0 && (
+            <span className="text-gray-500">{formatSize(size)}</span>
+          )}
+          {downloadSpeed > 0 && (
+            <span className="text-green-400">↓{formatSpeed(downloadSpeed)}</span>
+          )}
           {!isReady && (
             <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
               <div style={{ width: `${progress * 100}%` }} className="h-full bg-blue-500" />
@@ -300,9 +327,73 @@ function App() {
   const [lastStateChange, setLastStateChange] = useState(null)
   const [retryAfter, setRetryAfter] = useState(null)
 
+  // New: Sorting & Categories
+  const [sortBy, setSortBy] = useState(localStorage.getItem('sortBy') || 'name')
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [buffering, setBuffering] = useState(null) // { name, progress }
+
+  // New: RuTracker Search
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
+
+  // Categories definition
+  const CATEGORIES = [
+    { id: 'all', name: 'Все', icon: '📚' },
+    { id: 'movie', name: 'Фильмы', icon: '🎬' },
+    { id: 'series', name: 'Сериалы', icon: '📺' },
+    { id: 'music', name: 'Музыка', icon: '🎵' },
+    { id: 'other', name: 'Другое', icon: '📁' }
+  ]
+
+  // Auto-detect category based on files
+  const getCategory = (torrent) => {
+    const files = torrent.files || []
+    const videos = files.filter(f => /\.(mp4|mkv|avi|webm|mov)$/i.test(f.name))
+    const audio = files.filter(f => /\.(mp3|flac|m4a|ogg|wav)$/i.test(f.name))
+
+    if (audio.length > 0 && videos.length === 0) return 'music'
+    if (videos.length > 1) return 'series'
+    if (videos.length === 1) return 'movie'
+    return 'other'
+  }
+
+  // Filter and sort torrents
+  const getFilteredAndSortedTorrents = () => {
+    let result = [...torrents]
+
+    // Filter by category
+    if (categoryFilter !== 'all') {
+      result = result.filter(t => getCategory(t) === categoryFilter)
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'name': return (a.name || '').localeCompare(b.name || '')
+        case 'size':
+          const sizeA = a.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0
+          const sizeB = b.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0
+          return sizeB - sizeA
+        case 'peers': return (b.numPeers || 0) - (a.numPeers || 0)
+        default: return 0
+      }
+    })
+
+    return result
+  }
+
+  const displayTorrents = getFilteredAndSortedTorrents()
+
   const savePreferredPlayer = (playerId) => {
     setPreferredPlayer(playerId)
     localStorage.setItem('preferredPlayer', playerId)
+  }
+
+  const saveSortBy = (sort) => {
+    setSortBy(sort)
+    localStorage.setItem('sortBy', sort)
   }
 
   const saveServerUrl = (url) => {
@@ -382,6 +473,52 @@ function App() {
     addMagnet(magnet)
   }
 
+  // Logic: RuTracker Search
+  const searchRuTracker = async () => {
+    if (!searchQuery.trim()) return
+    setSearchLoading(true)
+    setSearchResults([])
+    try {
+      const res = await fetch(getApiUrl(`/api/rutracker/search?query=${encodeURIComponent(searchQuery)}`))
+      const data = await res.json()
+      setSearchResults(data.results || [])
+    } catch (err) {
+      console.error('[Search] Error:', err)
+      setError('Ошибка поиска: ' + err.message)
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
+  const addFromSearch = async (magnetOrId, title) => {
+    setSearchLoading(true)
+    try {
+      // Jacred returns magnet directly in search results
+      if (magnetOrId && magnetOrId.startsWith('magnet:')) {
+        await addMagnet(magnetOrId)
+        setShowSearch(false)
+        setSearchResults([])
+        setSearchQuery('')
+      } else {
+        // Fallback: try to get magnet via API
+        const res = await fetch(getApiUrl(`/api/rutracker/magnet/${encodeURIComponent(magnetOrId)}`))
+        const data = await res.json()
+        if (data.magnet) {
+          await addMagnet(data.magnet)
+          setShowSearch(false)
+          setSearchResults([])
+          setSearchQuery('')
+        } else {
+          setError('Не удалось получить magnet-ссылку')
+        }
+      }
+    } catch (err) {
+      setError('Ошибка: ' + err.message)
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
   // ─── Hardware Back Button & Keyboard Handling ───
   useEffect(() => {
     const handleBack = () => {
@@ -432,22 +569,98 @@ function App() {
     return `${window.location.protocol}//${window.location.host}/stream/${infoHash}/${fileIndex}`
   }
 
-  // Logic: Play
+  // Logic: Play single file
   const handlePlay = async (infoHash, fileIndex, fileName) => {
     const streamUrl = getStreamUrl(infoHash, fileIndex)
-    const pkg = preferredPlayer // Use stored preference
+    const title = cleanTitle(fileName)
+    const pkg = preferredPlayer
 
-    console.log(`[Play] URL: ${streamUrl} | Package: ${pkg}`)
+    console.log(`[Play] URL: ${streamUrl} | Package: ${pkg} | Title: ${title}`)
+
+    // Check if selected player is installed (skip for system chooser)
+    if (pkg && Capacitor.isNativePlatform()) {
+      try {
+        const { installed } = await TVPlayer.isPackageInstalled({ package: pkg })
+        if (!installed) {
+          const playerName = PLAYERS.find(p => p.id === pkg)?.name || pkg
+          alert(`${playerName} не установлен. Выберите другой плеер в настройках.`)
+          return
+        }
+      } catch (e) {
+        console.warn('[Play] isPackageInstalled check failed:', e)
+      }
+    }
+
+    // Show buffering banner
+    setBuffering({ name: title, progress: 10 })
+    setSelectedTorrent(null) // Close modal
 
     try {
-      await TVPlayer.play({ url: streamUrl, package: pkg })
+      await TVPlayer.play({ url: streamUrl, package: pkg, title: title })
+      setBuffering(null)
     } catch (e) {
       console.error(`[Play] Failed with ${pkg}, trying system chooser...`)
       try {
-        await TVPlayer.play({ url: streamUrl, package: "" })
+        await TVPlayer.play({ url: streamUrl, package: "", title: title })
+        setBuffering(null)
       } catch (err) {
+        setBuffering(null)
         alert("Error launching player: " + err.message)
       }
+    }
+  }
+
+  // Logic: Play All (playlist for series)
+  const handlePlayAll = async (torrent, startIndex = 0) => {
+    const videoFiles = torrent.files?.filter(f =>
+      /\.(mp4|mkv|avi|webm|mov)$/i.test(f.name)
+    ) || []
+
+    if (videoFiles.length <= 1) {
+      // Single file, use normal play
+      const file = videoFiles[0] || torrent.files?.[0]
+      if (file) handlePlay(torrent.infoHash, file.index, file.name)
+      return
+    }
+
+    const pkg = preferredPlayer
+    const title = cleanTitle(torrent.name)
+    const urls = videoFiles.map(f => getStreamUrl(torrent.infoHash, f.index))
+    const names = videoFiles.map(f => cleanTitle(f.name) || f.name)
+
+    console.log(`[PlayAll] ${urls.length} files | Package: ${pkg}`)
+
+    // Check if selected player is installed
+    if (pkg && Capacitor.isNativePlatform()) {
+      try {
+        const { installed } = await TVPlayer.isPackageInstalled({ package: pkg })
+        if (!installed) {
+          const playerName = PLAYERS.find(p => p.id === pkg)?.name || pkg
+          alert(`${playerName} не установлен. Выберите другой плеер в настройках.`)
+          return
+        }
+      } catch (e) {
+        console.warn('[PlayAll] isPackageInstalled check failed:', e)
+      }
+    }
+
+    // Show buffering banner
+    setBuffering({ name: `${title} (${urls.length} files)`, progress: 10 })
+    setSelectedTorrent(null) // Close modal
+
+    try {
+      await TVPlayer.playList({
+        package: pkg,
+        title: title,
+        urls: urls,
+        names: names,
+        startIndex: startIndex
+      })
+      setBuffering(null)
+    } catch (e) {
+      console.error('[PlayAll] Playlist failed, falling back to single play:', e)
+      setBuffering(null)
+      handlePlay(torrent.infoHash, videoFiles[startIndex]?.index || 0, videoFiles[startIndex]?.name)
     }
   }
 
@@ -536,16 +749,126 @@ function App() {
       {/* Content Grid */}
       <div className="px-6 py-4">
         {/* Add Button */}
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-200">My List</h2>
-          {!showServerInput && (
+          <div className="flex gap-2">
             <button
-              onClick={() => setShowServerInput(true)}
-              className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105"
+              onClick={() => setShowSearch(!showSearch)}
+              className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105"
             >
-              + Add Magnet
+              🔍 Поиск
             </button>
-          )}
+            {!showServerInput && (
+              <button
+                onClick={() => setShowServerInput(true)}
+                className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105"
+              >
+                + Magnet
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* RuTracker Search Panel */}
+        {showSearch && (
+          <div className="mb-6 p-4 bg-gray-900 rounded-xl border border-purple-600/50 animate-fade-in">
+            <div className="flex gap-2 mb-4">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && searchRuTracker()}
+                placeholder="Поиск на RuTracker..."
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none"
+                autoFocus
+              />
+              <button
+                onClick={searchRuTracker}
+                disabled={searchLoading}
+                className="bg-purple-600 px-6 py-3 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50"
+              >
+                {searchLoading ? '...' : '🔍'}
+              </button>
+              <button
+                onClick={() => { setShowSearch(false); setSearchResults([]) }}
+                className="bg-gray-800 px-4 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Search Results */}
+            {searchResults.length > 0 && (
+              <div className="max-h-64 overflow-y-auto space-y-2">
+                {searchResults.map((r, i) => (
+                  <div
+                    key={r.id || i}
+                    className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{r.title}</div>
+                      <div className="text-xs text-gray-400 flex gap-3 mt-1">
+                        <span>📀 {r.size}</span>
+                        <span className="text-green-400">⬆ {r.seeders}</span>
+                        {r.tracker && <span className="text-purple-400">{r.tracker}</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => addFromSearch(r.magnet || r.id, r.title)}
+                      disabled={searchLoading}
+                      className="ml-3 bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded text-sm font-bold disabled:opacity-50"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {searchLoading && (
+              <div className="text-center text-gray-400 py-4">
+                <span className="animate-pulse">Поиск...</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Category Tabs */}
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-3 pt-1 px-1 -mx-1">
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setCategoryFilter(cat.id)}
+              className={`
+                px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all
+                focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-[#141414] focus:outline-none
+                ${categoryFilter === cat.id
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}
+              `}
+            >
+              {cat.icon} {cat.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Sort Buttons */}
+        <div className="flex gap-2 mb-6 text-xs px-1 -mx-1">
+          <span className="text-gray-500 self-center">Сортировка:</span>
+          {[{ id: 'name', label: 'Имя' }, { id: 'size', label: 'Размер' }, { id: 'peers', label: 'Пиры' }].map(s => (
+            <button
+              key={s.id}
+              onClick={() => saveSortBy(s.id)}
+              className={`
+                px-3 py-1 rounded transition-all
+                focus:ring-2 focus:ring-blue-400 focus:outline-none
+                ${sortBy === s.id
+                  ? 'bg-gray-700 text-white'
+                  : 'bg-gray-800/50 text-gray-500 hover:text-white'}
+              `}
+            >
+              {s.label}
+            </button>
+          ))}
         </div>
 
         {/* Input Form */}
@@ -569,21 +892,23 @@ function App() {
 
         {/* The GRID */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {torrents.map(t => (
+          {displayTorrents.map(t => (
             <Poster
               key={t.infoHash}
               name={t.name}
               progress={t.progress}
               peers={t.numPeers}
+              size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
+              downloadSpeed={t.downloadSpeed || 0}
               isReady={t.progress >= 1 || t.files?.length > 0}
               onClick={() => setSelectedTorrent(t)}
             />
           ))}
 
-          {torrents.length === 0 && !loading && (
+          {displayTorrents.length === 0 && !loading && (
             <div className="col-span-full py-20 text-center text-gray-600">
-              <div className="text-6xl mb-4">🍿</div>
-              <p className="text-lg">Your list is empty.</p>
+              <div className="text-6xl mb-4">{categoryFilter === 'all' ? '🍿' : CATEGORIES.find(c => c.id === categoryFilter)?.icon}</div>
+              <p className="text-lg">{categoryFilter === 'all' ? 'Your list is empty.' : 'Нет торрентов в этой категории'}</p>
             </div>
           )}
         </div>
@@ -606,10 +931,11 @@ function App() {
               </div>
 
               <div className="space-y-3">
+                {/* Play button */}
                 <button
                   autoFocus
                   onClick={() => {
-                    const video = selectedTorrent.files?.find(f => /\.(mp4|mkv|avi|mov)$/i.test(f.name)) || selectedTorrent.files?.[0]
+                    const video = selectedTorrent.files?.find(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)) || selectedTorrent.files?.[0]
                     if (video) handlePlay(selectedTorrent.infoHash, video.index, video.name)
                     else alert("No video files recognized")
                   }}
@@ -617,6 +943,16 @@ function App() {
                 >
                   ▶ Play
                 </button>
+
+                {/* Play All button - only show if multiple video files */}
+                {selectedTorrent.files?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)).length > 1 && (
+                  <button
+                    onClick={() => handlePlayAll(selectedTorrent)}
+                    className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700 focus:bg-blue-500 transition-colors flex items-center justify-center gap-2"
+                  >
+                    📺 Play All ({selectedTorrent.files?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)).length} episodes)
+                  </button>
+                )}
 
                 <div className="flex gap-2">
                   <button
@@ -637,6 +973,29 @@ function App() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Buffering Overlay */}
+      {buffering && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="text-center">
+            <div className="text-6xl mb-4 animate-pulse">⏳</div>
+            <h2 className="text-xl font-bold text-white mb-2">Буферизация...</h2>
+            <p className="text-gray-400">{buffering.name}</p>
+            <div className="mt-4 w-48 h-2 bg-gray-700 rounded-full overflow-hidden mx-auto">
+              <div
+                className="h-full bg-blue-500 transition-all duration-300"
+                style={{ width: `${buffering.progress || 10}%` }}
+              />
+            </div>
+            <button
+              onClick={() => setBuffering(null)}
+              className="mt-6 text-gray-500 hover:text-white"
+            >
+              Отмена
+            </button>
           </div>
         </div>
       )}

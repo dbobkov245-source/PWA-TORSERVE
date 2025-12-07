@@ -3,9 +3,6 @@
 **Самовосстанавливающийся стриминговый сервис для Android TV и мобильных устройств.**
 Позволяет смотреть торренты онлайн без полного скачивания, с поддержкой внешних плееров (Vimu, VLC, MX Player) на Android TV.
 
-![Dashboard Screenshot](https://raw.githubusercontent.com/your-username/your-repo/main/docs/screenshot.png)
-*(Замените ссылку на реальный скриншот)*
-
 ---
 
 ## ✨ Возможности

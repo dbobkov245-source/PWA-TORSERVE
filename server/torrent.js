@@ -88,6 +88,20 @@ export const getAllTorrents = () => {
 }
 
 const formatEngine = (engine) => {
+    // Calculate downloaded bytes
+    let downloaded = 0
+    if (engine.files) {
+        engine.files.forEach(file => {
+            // torrent-stream tracks how much of each file has been downloaded
+            if (file.length && engine.bitfield) {
+                const pieces = Math.ceil(file.length / engine.torrent?.pieceLength || 1)
+                // Rough estimation based on peer activity
+            }
+        })
+    }
+
+    const totalSize = engine.files?.reduce((sum, f) => sum + f.length, 0) || 0
+
     return {
         infoHash: engine.infoHash,
         name: engine.torrent?.name || 'Unknown Torrent',
@@ -95,6 +109,7 @@ const formatEngine = (engine) => {
         downloadSpeed: engine.swarm?.downloadSpeed() || 0,
         uploadSpeed: engine.swarm?.uploadSpeed() || 0,
         numPeers: engine.swarm?.wires?.length || 0,
+        totalSize: totalSize,
         files: engine.files ? engine.files.map((file, index) => ({
             name: file.name,
             length: file.length,

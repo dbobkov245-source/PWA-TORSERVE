@@ -91,6 +91,32 @@ app.get('/api/tmdb/image/:size/:path', (req, res) => {
     res.status(404).send('Offline Mode')
 })
 
+// ─────────────────────────────────────────────────────────────
+// API: Jacred Torrent Search (like Lampa)
+// ─────────────────────────────────────────────────────────────
+
+import { searchJacred, getMagnetFromJacred } from './jacred.js'
+
+// Search torrents via Jacred
+app.get('/api/rutracker/search', async (req, res) => {
+    const { query } = req.query
+    if (!query) {
+        return res.status(400).json({ error: 'Query required' })
+    }
+
+    console.log(`[Jacred] Searching: ${query}`)
+    const result = await searchJacred(query)
+    res.json(result)
+})
+
+// Get magnet link (already in search results, but keeping for compatibility)
+app.get('/api/rutracker/magnet/:topicId', async (req, res) => {
+    const { topicId } = req.params
+    // topicId is actually the magnet URL for Jacred
+    const result = await getMagnetFromJacred(decodeURIComponent(topicId))
+    res.json(result)
+})
+
 // API: Generate M3U Playlist for Video Files
 app.get('/playlist.m3u', (req, res) => {
     // 1. Determine Host (Synology IP or Localhost)
@@ -138,28 +164,38 @@ app.post('/api/add', async (req, res) => {
     }
 })
 
+// Map of MIME types
+const mimeMap = {
+    '.mp4': 'video/mp4',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.avi': 'video/avi',
+    '.mov': 'video/quicktime',
+    '.mpg': 'video/mpeg',
+    '.mpeg': 'video/mpeg'
+}
+
 // API: Remove Torrent (with File Hygiene)
-app.delete('/api/delete/:infoHash', (req, res) => {
+app.delete('/api/delete/:infoHash', async (req, res) => {
     const { infoHash } = req.params
     const torrent = getTorrent(infoHash) // Get info BEFORE deletion
 
     const success = removeTorrent(infoHash)
 
     if (success) {
-        // 🔥 PHYSICAL DELETION (FILE HYGIENE) 🔥
+        // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
         if (torrent && torrent.name) {
             const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
             const fullPath = path.join(downloadPath, torrent.name)
-            try {
-                if (fs.existsSync(fullPath)) {
-                    fs.rmSync(fullPath, { recursive: true, force: true })
-                    console.log(`[File Hygiene] Deleted: ${fullPath}`)
-                }
-            } catch (e) {
-                console.error(`[File Hygiene] Error deleting files: ${e.message}`)
-            }
+
+            // Fire-and-forget async deletion to avoid blocking the server
+            import('fs/promises').then(fsPromises => {
+                fsPromises.rm(fullPath, { recursive: true, force: true })
+                    .then(() => console.log(`[File Hygiene] Successfully removed: ${fullPath}`))
+                    .catch(e => console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`))
+            })
         }
-        res.json({ success: true })
+        res.json({ success: true, message: 'Deletion started asynchronously' })
     } else {
         res.status(404).json({ error: 'Torrent not found' })
     }
@@ -177,15 +213,13 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const file = engine.files?.[fileIndex]
     if (!file) return res.status(404).send('File not found')
 
-    // torrent-stream file object has .createReadStream()
-    // but we need to verify if it supports range the same way
+    // Detect Content-Type
+    const ext = path.extname(file.name).toLowerCase()
+    const contentType = mimeMap[ext] || 'application/octet-stream'
 
     // Synology Cache Path Check
     const downloadPath = process.env.DOWNLOAD_PATH
     if (downloadPath && !fs.existsSync(downloadPath)) {
-        // Just log error, don't crash. 
-        // Note: WebTorrent might have created the directory if it had permissions.
-        // If the volume is unmounted, this check helps.
         console.error(`Cache path not accessible: ${downloadPath}`)
         return res.status(500).send('Cache storage not accessible')
     }
@@ -193,7 +227,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     if (!range) {
         const head = {
             'Content-Length': file.length,
-            'Content-Type': 'video/mp4', // Simplification, ideally detect mime
+            'Content-Type': contentType,
         }
         res.writeHead(200, head)
         file.createReadStream().pipe(res)
@@ -204,10 +238,6 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const chunksize = (end - start) + 1
 
         // Smart Progress Tracking
-        // Formula: (startByte / totalBytes) * duration
-        // We assume duration is passed in query or we just store percentage if duration unknown
-        // User asked for: (startByte / totalBytes) * duration
-        // We'll try to get duration from query param ?duration=SECONDS
         const duration = parseFloat(req.query.duration) || 0
         const progressTime = duration > 0 ? (start / file.length) * duration : 0
 
@@ -230,7 +260,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             'Content-Range': `bytes ${start}-${end}/${file.length}`,
             'Accept-Ranges': 'bytes',
             'Content-Length': chunksize,
-            'Content-Type': 'video/mp4',
+            'Content-Type': contentType,
         }
 
         res.writeHead(206, head)
