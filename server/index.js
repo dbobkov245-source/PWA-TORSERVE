@@ -1,3 +1,6 @@
+// IGNORE SSL ERRORS (Global Hack for Mirrors)
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+
 import express from 'express'
 import cors from 'cors'
 import path from 'path'
@@ -19,6 +22,15 @@ const PORT = process.env.PORT || 3000
 // Middleware
 app.use(cors())
 app.use(express.json())
+
+// DEBUG USER: Log all requests
+app.use((req, res, next) => {
+    // Filter out boring static files to keep logs clean
+    if (!req.url.match(/\.(js|css|png|jpg|ico|map)$/)) {
+        console.log(`[HTTP] ${req.method} ${req.url}`)
+    }
+    next()
+})
 
 // Serve static frontend
 const distPath = path.join(__dirname, '../client/dist')
@@ -66,6 +78,17 @@ app.get('/api/status', (req, res) => {
         lastStateChange: state.lastStateChange,
         torrents: status
     })
+})
+
+// API: TMDB Proxy (DISABLED - OFFLINE MODE)
+// ISP blocks are too severe. We return 404 immediately to show 
+// the "Beautiful Placeholders" on the client without lag.
+app.get('/api/tmdb/search', (req, res) => {
+    res.status(404).json({ error: 'Offline Mode (Blocked by ISP)' })
+})
+
+app.get('/api/tmdb/image/:size/:path', (req, res) => {
+    res.status(404).send('Offline Mode')
 })
 
 // API: Generate M3U Playlist for Video Files

@@ -2,13 +2,197 @@ import { useState, useEffect } from 'react'
 import { registerPlugin } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
 
+const TMDB_API_KEY = 'c3bec60e67fabf42dd2202281dcbc9a7'
+
 // ─────────────────────────────────────────────────────────────
-// Server Status Components
+// Helpers
 // ─────────────────────────────────────────────────────────────
+
+const cleanTitle = (rawName) => {
+  if (!rawName) return ''
+
+  // 1. Initial cleanup: dots, underscores, brackets
+  let name = rawName
+    .replace(/\./g, ' ')
+    .replace(/_/g, ' ')
+    .replace(/\[.*?\]/g, '')
+    .replace(/\(.*?\)/g, '')
+    .trim()
+
+  // 2. Cut off at Year (e.g. "Movie Title 2023 ...")
+  const yearMatch = name.match(/\b(19\d{2}|20\d{2})\b/)
+  if (yearMatch) {
+    const index = name.indexOf(yearMatch[0])
+    name = name.substring(0, index)
+  }
+
+  // 3. Remove technical/garbage tags
+  const tags = [
+    '1080p', '720p', '2160p', '4k', 'WEB-DL', 'WEBRip', 'BluRay', 'HDR',
+    'H.264', 'x264', 'HEVC', 'AAC', 'AC3', 'DTS', 'HDTV',
+    'rus', 'eng', 'torrent', 'stream', 'dub', 'sub'
+  ]
+
+  // Find the earliest occurrence of a tag and cut
+  let cutoff = name.length
+  const lowerName = name.toLowerCase()
+  tags.forEach(tag => {
+    // Match strict word boundary so we don't cut "stream" in "Mainstream"
+    // actually user asked to remove "stream", usually these are separated by spaces after dot replacement
+    const idx = lowerName.indexOf(tag.toLowerCase())
+    if (idx !== -1 && idx < cutoff) {
+      cutoff = idx
+    }
+  })
+
+  return name.substring(0, cutoff)
+    .replace(/[^\w\s\u0400-\u04FF]/g, '') // remove weird symbols
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// ─────────────────────────────────────────────────────────────
+// Components
+// ─────────────────────────────────────────────────────────────
+
+const Poster = ({ name, onClick, progress, peers, isReady }) => {
+  const [bgImage, setBgImage] = useState(null)
+  const cleanedName = cleanTitle(name)
+
+  // Gradient generator for fallback (Beautiful Offline UI)
+  const getGradient = (str) => {
+    let hash = 0
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
+    const h1 = Math.abs(hash % 360)
+    const h2 = Math.abs((hash * 13) % 360)
+    return `linear-gradient(135deg, hsl(${h1}, 70%, 20%), hsl(${h2}, 80%, 15%))`
+  }
+
+  useEffect(() => {
+    if (!cleanedName) return
+
+    const cacheKey = `poster_v3_${cleanedName}` // Bump cache version
+    const cached = localStorage.getItem(cacheKey)
+    if (cached) {
+      setBgImage(cached)
+      return
+    }
+
+    const fetchPoster = async () => {
+      try {
+        const TMDB_API_KEY = 'c3bec60e67fabf42dd2202281dcbc9a7'
+        let result = null
+
+        // 1. Try Client-Side Search (Bypass Server)
+        // We use api.allorigins.win to avoid CORS issues and bypass local blocking
+        try {
+          const tmdbUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(cleanedName)}&language=ru-RU`
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(tmdbUrl)}`
+
+          console.log('[Poster] Client Search:', proxyUrl)
+          const res = await fetch(proxyUrl)
+          if (res.ok) {
+            const data = await res.json()
+            result = data.results?.find(r => r.poster_path)
+          }
+        } catch (e) {
+          console.warn('[Poster] Client Search Failed:', e)
+        }
+
+        // 2. Fallback to Server (only if client search failed, though server is likely offline)
+        if (!result) {
+          let baseUrl = ''
+          if (Capacitor.isNativePlatform()) {
+            baseUrl = localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000'
+          }
+          baseUrl = baseUrl.replace(/\/$/, '')
+          const apiUrl = `${baseUrl}/api/tmdb/search?query=${encodeURIComponent(cleanedName)}`
+          console.log('[Poster] Fetching Meta (Server Fallback):', apiUrl) // Added console log for clarity
+          const res = await fetch(apiUrl)
+          if (res.ok) {
+            const data = await res.json()
+            result = data.results?.find(r => r.poster_path)
+          }
+        }
+
+        // 3. If we found a poster (either way), show it via wsrv.nl
+        if (result) {
+          const directUrl = `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w500${result.poster_path}&output=webp`
+          localStorage.setItem(cacheKey, directUrl)
+          setBgImage(directUrl)
+        }
+      } catch (err) {
+        console.warn('Poster Fetch Fail:', err)
+      }
+    }
+
+    fetchPoster()
+  }, [cleanedName])
+
+  return (
+    <button
+      onClick={onClick}
+      className={`
+          relative group aspect-[2/3] rounded-xl overflow-hidden shadow-xl
+          transition-all duration-300
+          focus:scale-105 focus:ring-4 focus:ring-blue-500 focus:z-20 outline-none
+          hover:scale-105
+          bg-gray-800
+        `}
+      style={{ background: !bgImage ? getGradient(name) : undefined }}
+    >
+      {/* If we have an image, show it. Otherwise show decorative gradient elements. */}
+      {bgImage ? (
+        <img
+          src={bgImage}
+          alt={name}
+          className="w-full h-full object-cover transition-opacity duration-500"
+          onError={() => setBgImage(null)} // Revert to gradient on load error
+        />
+      ) : (
+        <>
+          <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute bottom-10 -left-10 w-24 h-24 bg-black/20 rounded-full blur-xl pointer-events-none" />
+          <div className="absolute inset-0 flex items-center justify-center p-4 text-center">
+            <h3 className="text-gray-100 font-bold text-lg leading-snug drop-shadow-lg line-clamp-4 font-sans tracking-wide">
+              {cleanedName || name}
+            </h3>
+          </div>
+        </>
+      )}
+
+      {/* Overlay for Stats */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/10 flex flex-col justify-end p-3 text-left">
+        {/* Status Badge */}
+        <div className="absolute top-2 right-2 flex gap-1">
+          {isReady ? (
+            <span className="bg-green-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm">READY</span>
+          ) : (
+            <span className="bg-yellow-500 text-black text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm">{Math.round(progress * 100)}%</span>
+          )}
+        </div>
+
+        {/* Footer Stats */}
+        <div className="text-xs text-gray-400 flex items-center gap-2 mt-auto">
+          <span className="flex items-center gap-1">
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path></svg>
+            {peers}
+          </span>
+          {!isReady && (
+            <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
+              <div style={{ width: `${progress * 100}%` }} className="h-full bg-blue-500" />
+            </div>
+          )}
+        </div>
+      </div>
+    </button>
+  )
+}
 
 const DegradedBanner = ({ lastStateChange }) => {
   const [elapsed, setElapsed] = useState(0)
@@ -28,7 +212,7 @@ const DegradedBanner = ({ lastStateChange }) => {
   }
 
   return (
-    <div className="bg-yellow-600/90 text-yellow-100 p-4 rounded-lg mb-6 border border-yellow-500 animate-pulse">
+    <div className="bg-yellow-600/90 text-yellow-100 p-4 rounded-lg mb-6 border border-yellow-500 animate-pulse mx-4">
       <div className="flex items-center gap-3">
         <span className="text-2xl">❄️</span>
         <div>
@@ -68,14 +252,6 @@ const ErrorScreen = ({ status, retryAfter, onRetry }) => {
         <div className="text-6xl mb-4">{icon}</div>
         <h1 className="text-2xl font-bold text-red-400 mb-2">{title}</h1>
         <p className="text-gray-300 mb-6">{message}</p>
-
-        <div className="bg-gray-800 rounded-lg p-4">
-          <div className="text-sm text-gray-400 mb-1">Auto-retry in</div>
-          <div className="text-3xl font-mono text-white">
-            {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, '0')}
-          </div>
-        </div>
-
         <button
           onClick={onRetry}
           className="mt-6 bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold transition-colors"
@@ -87,35 +263,31 @@ const ErrorScreen = ({ status, retryAfter, onRetry }) => {
   )
 }
 
-
-
 // ─────────────────────────────────────────────────────────────
-// Main App Component
+// Main App
 // ─────────────────────────────────────────────────────────────
 
 function App() {
-  // Debug Logging State
-  // Trap Global Errors
-  useEffect(() => {
-    const handleError = (event) => {
-      console.error(`ERROR: ${event.message || event.reason}`)
+  // Constants
+  const PLAYERS = [
+    { id: 'net.gtvbox.videoplayer', name: 'Vimu Player (Рекомендуем)' },
+    { id: 'org.videolan.vlc', name: 'VLC for Android' },
+    { id: 'com.mxtech.videoplayer.ad', name: 'MX Player' },
+    { id: '', name: 'System Chooser (Спрашивать всегда)' }
+  ];
+
+  // State
+  const [serverUrl, setServerUrl] = useState(() => {
+    if (Capacitor.isNativePlatform()) {
+      return localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000'
     }
-    window.addEventListener('error', handleError)
-    window.addEventListener('unhandledrejection', handleError)
+    return ''
+  })
 
-    console.log('App Started. Version: v1.0.0 (Release)')
-    return () => {
-      window.removeEventListener('error', handleError)
-      window.removeEventListener('unhandledrejection', handleError)
-    }
-  }, [])
+  const [preferredPlayer, setPreferredPlayer] = useState(
+    localStorage.getItem('preferredPlayer') || 'net.gtvbox.videoplayer'
+  )
 
-  // Default to current origin if web, or a default IP if native
-  const defaultUrl = Capacitor.isNativePlatform()
-    ? (localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000') // Updated default IP
-    : '' // Relative path for web
-
-  const [serverUrl, setServerUrl] = useState(defaultUrl)
   const [torrents, setTorrents] = useState([])
   const [magnet, setMagnet] = useState('')
   const [loading, setLoading] = useState(false)
@@ -123,47 +295,21 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
-  // const [showDebug, setShowDebug] = useState(true) // Removed for release
 
-  // Detect if running on TV (large screen + no touch)
-  const [isTV, setIsTV] = useState(false)
-
-  useEffect(() => {
-    const checkIsTV = () => {
-      const largeScreen = window.innerWidth >= 1280
-      const noTouch = !('ontouchstart' in window)
-      setIsTV(largeScreen && noTouch)
-    }
-    checkIsTV()
-    window.addEventListener('resize', checkIsTV)
-    return () => window.removeEventListener('resize', checkIsTV)
-  }, [])
-
-  // Player preference: 'system' | 'vimu' | 'vlc' | 'mx'
-  const [preferredPlayer, setPreferredPlayer] = useState(
-    localStorage.getItem('preferredPlayer') || 'system'
-  )
-
-  // Server status state
   const [serverStatus, setServerStatus] = useState('ok')
   const [lastStateChange, setLastStateChange] = useState(null)
   const [retryAfter, setRetryAfter] = useState(null)
 
-  // ─── Manual Focus Management (Fix for TV Remote) ───
-  useEffect(() => {
-    if (selectedTorrent) {
-      console.log('Modal Opened. Forcing focus to Watch button...')
-      setTimeout(() => {
-        const watchBtn = document.querySelector('.details-btn-watch')
-        if (watchBtn) watchBtn.focus()
-      }, 300)
-    }
-  }, [selectedTorrent])
+  const savePreferredPlayer = (playerId) => {
+    setPreferredPlayer(playerId)
+    localStorage.setItem('preferredPlayer', playerId)
+  }
 
-  // Save player preference
-  const savePreferredPlayer = (player) => {
-    setPreferredPlayer(player)
-    localStorage.setItem('preferredPlayer', player)
+  const saveServerUrl = (url) => {
+    setServerUrl(url)
+    localStorage.setItem('serverUrl', url)
+    setShowSettings(false)
+    fetchStatus()
   }
 
   const getApiUrl = (path) => {
@@ -174,188 +320,90 @@ function App() {
     return path
   }
 
-  const saveServerUrl = (url) => {
-    setServerUrl(url)
-    localStorage.setItem('serverUrl', url)
-    setShowSettings(false)
-    fetchStatus()
-  }
-
   const fetchStatus = async () => {
     try {
       const res = await fetch(getApiUrl('/api/status'))
       if (res.status === 503) {
-        const retryHeader = res.headers.get('Retry-After')
-        setRetryAfter(retryHeader ? parseInt(retryHeader, 10) : 300)
+        setRetryAfter(300)
       }
       const data = await res.json()
       setServerStatus(data.serverStatus || 'ok')
       setLastStateChange(data.lastStateChange || null)
       setTorrents(data.torrents || [])
       setError(null)
-      if (data.serverStatus === 'ok') {
-        setRetryAfter(null)
-      }
     } catch (err) {
       console.error('Error fetching status:', err)
       if (torrents.length === 0) {
-        setError(`Connection Error: ${err.message}. Check Server URL.`)
+        setError(`Connection Error: ${err.message}`)
       }
     }
   }
 
-  // ─── Magnet Link Handler (Deep Link) ───
-  useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return
-
-    const handleAppUrlOpen = async (event) => {
-      console.log(`[AppUrlOpen] Received URL: ${event.url}`)
-
-      if (event.url && event.url.startsWith('magnet:')) {
-        setLoading(true)
-        setError(null)
-        try {
-          const res = await fetch(getApiUrl('/api/add'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ magnet: event.url })
-          })
-          if (!res.ok) {
-            const errorText = await res.text()
-            throw new Error(errorText)
-          }
-          console.log('[Magnet] Added successfully')
-          fetchStatus()
-        } catch (err) {
-          console.error(`[Magnet] Failed to add: ${err.message}`)
-          setError(`Failed to add magnet: ${err.message}`)
-        } finally {
-          setLoading(false)
-        }
-      }
-    }
-
-    CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
-    return () => {
-      CapacitorApp.removeAllListeners()
-    }
-  }, [serverUrl])
-
+  // Effect: Polling
   useEffect(() => {
     fetchStatus()
     const interval = setInterval(fetchStatus, 5000)
     return () => clearInterval(interval)
   }, [serverUrl])
 
-  const addTorrent = async (e) => {
-    e.preventDefault()
-    if (!magnet) return
+  // Effect: Magnet Handler
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    const handleAppUrlOpen = async (event) => {
+      if (event.url?.startsWith('magnet:')) {
+        addMagnet(event.url)
+      }
+    }
+    CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
+    return () => CapacitorApp.removeAllListeners()
+  }, [serverUrl])
+
+  // Logic: Add Torrent
+  const addMagnet = async (magnetLink) => {
+    if (!magnetLink) return
     setLoading(true)
-    setError(null)
     try {
-      const res = await fetch(getApiUrl('/api/add'), {
+      await fetch(getApiUrl('/api/add'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ magnet })
+        body: JSON.stringify({ magnet: magnetLink })
       })
-      if (!res.ok) throw new Error(await res.text())
       setMagnet('')
-      console.log('Magnet added successfully')
       fetchStatus()
     } catch (err) {
-      console.error(`Add Error: ${err.message}`)
       setError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
-  const deleteTorrent = async (infoHash) => {
-    if (!confirm('Remove this torrent?')) return
-    try {
-      await fetch(getApiUrl(`/api/delete/${infoHash}`), { method: 'DELETE' })
-      fetchStatus()
-    } catch (err) {
-      console.error('Failed to delete:', err)
-    }
-  }
-
-  // Get direct HTTP stream URL
-  const getStreamUrl = (infoHash, fileIndex) => {
-    if (serverUrl) {
-      const base = serverUrl.replace(/\/$/, '')
-      return `${base}/stream/${infoHash}/${fileIndex}`
-    }
-    const protocol = window.location.protocol
-    const host = window.location.host
-    return `${protocol}//${host}/stream/${infoHash}/${fileIndex}`
-  }
-
-  // Handle Play button - use Native Java Bridge
-  const handlePlay = async (infoHash, fileIndex, fileName) => {
-    const streamUrl = getStreamUrl(infoHash, fileIndex)
-    const pkg = "net.gtvbox.videoplayer" // Vimu default
-
-    console.log(`[Play] Native Bridge: ${streamUrl} via ${pkg}`)
-
-    try {
-      await TVPlayer.play({
-        url: streamUrl,
-        package: pkg
-      })
-      console.log("[Play] TVPlayer.play() resolved successfully")
-    } catch (e) {
-      console.error(`[Play] Bridge launch failed: ${e.message}`)
-      try {
-        await TVPlayer.play({ url: streamUrl, package: "" })
-        console.log("[Play] Fallback system chooser called")
-      } catch (err) {
-        console.error(`[Play] Fallback failed: ${err.message}`)
-        alert("Error launching player: " + err.message)
-      }
-    }
-  }
-
-  const copyStreamUrl = (infoHash, fileIndex) => {
-    const streamUrl = getStreamUrl(infoHash, fileIndex)
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(streamUrl).then(() => {
-        alert('URL скопирован! Вставьте его в любой плеер.')
-      }).catch(err => {
-        alert('Ошибка копирования: ' + err.message)
-      })
-    } else {
-      const textArea = document.createElement("textarea");
-      textArea.value = streamUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      try {
-        document.execCommand('copy');
-        alert('URL скопирован (fallback)!')
-      } catch (err) {
-        alert('Не удалось скопировать URL')
-      }
-      document.body.removeChild(textArea);
-    }
+  const addTorrent = (e) => {
+    e.preventDefault()
+    addMagnet(magnet)
   }
 
   // ─── Hardware Back Button & Keyboard Handling ───
   useEffect(() => {
-    const backListener = CapacitorApp.addListener('backButton', () => {
-      // console.log('Hardware Back Button Pressed')
+    const handleBack = () => {
       if (selectedTorrent) {
         setSelectedTorrent(null)
       } else if (showSettings) {
         setShowSettings(false)
       } else {
-        CapacitorApp.minimizeApp()
+        // Use exitApp instead of minimize for better TV UX
+        CapacitorApp.exitApp()
       }
+    }
+
+    const backListener = CapacitorApp.addListener('backButton', () => {
+      console.log('Native Back Button')
+      handleBack()
     })
 
     const keyListener = (e) => {
-      if (e.key === 'Escape' || e.key === 'Backspace') {
-        if (selectedTorrent) setSelectedTorrent(null)
-        if (showSettings) setShowSettings(false)
+      // 27=Esc, 8=Backspace, 10009=TV Back
+      if (e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009) {
+        handleBack()
       }
     }
     window.addEventListener('keydown', keyListener)
@@ -366,239 +414,229 @@ function App() {
     }
   }, [selectedTorrent, showSettings])
 
-  // ─── Render Error Screen for critical states ───
+  const deleteTorrent = async (infoHash) => {
+    if (!confirm('Remove this torrent?')) return
+    try {
+      await fetch(getApiUrl(`/api/delete/${infoHash}`), { method: 'DELETE' })
+      setSelectedTorrent(null)
+      fetchStatus()
+    } catch (err) {
+      alert('Delete failed')
+    }
+  }
+
+  const getStreamUrl = (infoHash, fileIndex) => {
+    if (serverUrl) {
+      return `${serverUrl.replace(/\/$/, '')}/stream/${infoHash}/${fileIndex}`
+    }
+    return `${window.location.protocol}//${window.location.host}/stream/${infoHash}/${fileIndex}`
+  }
+
+  // Logic: Play
+  const handlePlay = async (infoHash, fileIndex, fileName) => {
+    const streamUrl = getStreamUrl(infoHash, fileIndex)
+    const pkg = preferredPlayer // Use stored preference
+
+    console.log(`[Play] URL: ${streamUrl} | Package: ${pkg}`)
+
+    try {
+      await TVPlayer.play({ url: streamUrl, package: pkg })
+    } catch (e) {
+      console.error(`[Play] Failed with ${pkg}, trying system chooser...`)
+      try {
+        await TVPlayer.play({ url: streamUrl, package: "" })
+      } catch (err) {
+        alert("Error launching player: " + err.message)
+      }
+    }
+  }
+
+  const copyUrl = (infoHash, fileIndex) => {
+    const url = getStreamUrl(infoHash, fileIndex)
+    navigator.clipboard?.writeText(url)
+      .then(() => alert('URL copied!'))
+      .catch(() => alert('Failed to copy'))
+  }
+
+  // Render: Critical Error
   if (serverStatus === 'circuit_open' || serverStatus === 'error') {
-    return (
-      <ErrorScreen
-        status={serverStatus}
-        retryAfter={retryAfter || 300}
-        onRetry={fetchStatus}
-      />
-    )
+    return <ErrorScreen status={serverStatus} retryAfter={retryAfter} onRetry={fetchStatus} />
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 font-sans overflow-x-hidden max-w-full">
-      {/* (Debug overlay removed) */}
+    <div className="min-h-screen bg-[#141414] text-white font-sans selection:bg-red-500 selection:text-white pb-20">
 
-      <div className="flex justify-between items-center mb-6 pl-4 pr-4">
-        <h1 className="text-3xl font-bold text-blue-500">PWA-TorServe (v1.0.0)</h1>
+      {/* Navbar */}
+      <div className="sticky top-0 z-30 bg-[#141414]/90 backdrop-blur-md px-6 py-4 flex justify-between items-center shadow-lg border-b border-gray-800">
+        <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-500">
+          PWA-TorServe
+        </h1>
         <div className="flex gap-4">
-          {/* Debug button removed */}
-          <button onClick={fetchStatus} className="text-gray-400 hover:text-white" title="Refresh">🔄</button>
-          <button onClick={() => setShowSettings(!showSettings)} className="text-gray-400 hover:text-white" title="Settings">⚙️</button>
+          <button onClick={fetchStatus} className="p-2 hover:bg-gray-800 rounded-full transition-colors">🔄</button>
+          <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-800 rounded-full transition-colors">⚙️</button>
         </div>
       </div>
 
-      {serverStatus === 'degraded' && (
-        <DegradedBanner lastStateChange={lastStateChange} />
-      )}
+      {/* Status Banner */}
+      {serverStatus === 'degraded' && <DegradedBanner lastStateChange={lastStateChange} />}
 
+      {/* Settings Panel */}
       {showSettings && (
-        <div className="mb-6 p-4 bg-gray-800 rounded border border-gray-700 space-y-4">
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm text-gray-400">Server URL (for APK)</label>
-              <button
-                onClick={() => setShowServerInput(!showServerInput)}
-                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-600 tv-focusable tabIndex={0}"
-              >
-                {showServerInput ? 'Hide' : 'Edit'}
-              </button>
-            </div>
+        <div className="mx-6 mb-6 p-6 bg-gray-900 rounded-xl border border-gray-800 shadow-2xl animate-fade-in relative z-20">
+          <h2 className="text-xl font-bold mb-4 text-gray-200">Settings</h2>
 
-            {showServerInput && (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  defaultValue={serverUrl}
-                  onBlur={(e) => saveServerUrl(e.target.value)}
-                  placeholder="http://192.168.1.88:3000"
-                  className="flex-1 p-2 rounded bg-gray-900 border border-gray-600 text-white"
-                  autoFocus
-                />
-              </div>
-            )}
-            <p className="text-xs text-gray-500 mt-1">Current: {serverUrl || 'Relative (Web Mode)'}</p>
+          <div className="mb-6">
+            <label className="text-gray-400 text-sm mb-3 block">Default Video Player</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {PLAYERS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => savePreferredPlayer(p.id)}
+                  className={`
+                    p-4 rounded-lg border text-left transition-all
+                    ${preferredPlayer === p.id
+                      ? 'bg-blue-600 border-blue-500 text-white shadow-lg scale-[1.02]'
+                      : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}
+                  `}
+                >
+                  <div className="font-bold">{p.name}</div>
+                  <div className="text-xs opacity-75 mt-1">{p.id || 'System Default'}</div>
+                </button>
+              ))}
+            </div>
           </div>
 
-          {Capacitor.isNativePlatform() && (
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">🎬 Video Player</label>
-              <div className="grid grid-cols-1 gap-2">
-                {[
-                  { id: 'system', name: '📱 System Chooser', desc: 'Ask every time' },
-                  { id: 'vimu', name: '🟣 Vimu Player', desc: 'Best for TV' },
-                  { id: 'vlc', name: '🔶 VLC Android', desc: 'Reliable fallback' },
-                  { id: 'mx', name: '🔵 MX Player', desc: 'Advanced features' },
-                ].map((player) => (
-                  <button
-                    key={player.id}
-                    onClick={() => savePreferredPlayer(player.id)}
-                    tabIndex={0}
-                    className={`
-                       flex items-center justify-between p-3 rounded-lg border transition-all text-left tv-focusable
-                       ${preferredPlayer === player.id
-                        ? 'bg-blue-600 border-blue-400 ring-2 ring-blue-400/50'
-                        : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}
-                     `}
-                  >
-                    <div>
-                      <div className="font-bold">{player.name}</div>
-                      <div className="text-xs opacity-75">{player.desc}</div>
-                    </div>
-                    {preferredPlayer === player.id && <span>✅</span>}
-                  </button>
-                ))}
+          <div className="border-t border-gray-800 pt-4">
+            <button
+              onClick={() => setShowServerInput(!showServerInput)}
+              className="text-gray-500 text-sm hover:text-white flex items-center gap-2"
+            >
+              {showServerInput ? '▼' : '▶'} Advanced: Server Connection
+            </button>
+
+            {showServerInput && (
+              <div className="mt-3 animate-fade-in">
+                <label className="text-gray-400 text-sm mb-2 block">Server URL</label>
+                <div className="flex gap-2">
+                  <input
+                    value={serverUrl}
+                    onChange={e => setServerUrl(e.target.value)}
+                    onBlur={e => saveServerUrl(e.target.value)}
+                    placeholder="http://192.168.1.70:3000"
+                    className="bg-gray-800 text-white px-4 py-2 rounded flex-1 border border-gray-700 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <p className="text-xs text-gray-600 mt-1">Change only if moving to a new server IP.</p>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Selected player will open automatically when you press Play.
-              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Content Grid */}
+      <div className="px-6 py-4">
+        {/* Add Button */}
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-semibold text-gray-200">My List</h2>
+          {!showServerInput && (
+            <button
+              onClick={() => setShowServerInput(true)}
+              className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105"
+            >
+              + Add Magnet
+            </button>
+          )}
+        </div>
+
+        {/* Input Form */}
+        {showServerInput && (
+          <form onSubmit={addTorrent} className="mb-8 flex gap-2 animate-fade-in">
+            <input
+              value={magnet}
+              onChange={e => setMagnet(e.target.value)}
+              placeholder="Paste magnet link..."
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+              autoFocus
+            />
+            <button disabled={loading} className="bg-blue-600 px-6 py-3 rounded-lg font-bold">
+              {loading ? 'Adding...' : 'Add'}
+            </button>
+            <button type="button" onClick={() => setShowServerInput(false)} className="bg-gray-800 px-4 rounded-lg">✕</button>
+          </form>
+        )}
+
+        {error && <div className="bg-red-900/50 text-red-200 p-4 rounded-lg mb-6 border border-red-800">{error}</div>}
+
+        {/* The GRID */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {torrents.map(t => (
+            <Poster
+              key={t.infoHash}
+              name={t.name}
+              progress={t.progress}
+              peers={t.numPeers}
+              isReady={t.progress >= 1 || t.files?.length > 0}
+              onClick={() => setSelectedTorrent(t)}
+            />
+          ))}
+
+          {torrents.length === 0 && !loading && (
+            <div className="col-span-full py-20 text-center text-gray-600">
+              <div className="text-6xl mb-4">🍿</div>
+              <p className="text-lg">Your list is empty.</p>
             </div>
           )}
         </div>
-      )}
-
-      <div className="flex justify-center mb-8">
-        {!showServerInput && (
-          <button
-            onClick={() => setShowServerInput(true)}
-            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-full font-bold transition-all shadow-lg flex items-center gap-2 tv-focusable"
-          >
-            ➕ Add Magnet Link
-          </button>
-        )}
       </div>
 
-      {showServerInput && (
-        <form onSubmit={addTorrent} className="mb-8 max-w-2xl mx-auto flex gap-2 animate-fade-in bg-gray-800 p-4 rounded-xl border border-gray-700">
-          <input
-            type="text"
-            value={magnet}
-            onChange={(e) => setMagnet(e.target.value)}
-            placeholder="Paste Magnet URI..."
-            autoFocus
-            className="flex-1 p-3 rounded bg-gray-900 border border-gray-600 focus:outline-none focus:border-blue-500 text-white"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded font-bold disabled:opacity-50"
-          >
-            {loading ? '...' : 'Add'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowServerInput(false)}
-            className="px-4 py-3 rounded hover:bg-gray-700 text-gray-400"
-          >
-            ✕
-          </button>
-        </form>
-      )}
-
-      {error && <div className="text-red-500 text-center mb-4 bg-red-900/20 p-2 rounded max-w-2xl mx-auto">{error}</div>}
-
-      <div className="netflix-grid">
-        {torrents.map((t) => {
-          const progress = Math.round((t.progress || 0) * 100)
-          const isReady = progress >= 100 || t.files?.length > 0
-
-          return (
-            <button
-              key={t.infoHash}
-              tabIndex={0}
-              onClick={() => {
-                console.log(`Selected torrent: ${t.name}`)
-                setSelectedTorrent(t)
-              }}
-              className={`torrent-card tv-card ${isReady ? 'ready' : ''}`}
-            >
-              <div>
-                <div className="text-4xl mb-2">🎬</div>
-                <div className="torrent-card-title">
-                  {t.name || 'Fetching Metadata...'}
-                </div>
-              </div>
-
-              <div>
-                <div className="torrent-card-status">
-                  <span>{isReady ? '✅ Ready' : `⏳ ${progress}%`}</span>
-                  <span>• {t.numPeers || 0} peers</span>
-                </div>
-                <div className="torrent-card-progress">
-                  <div
-                    className="torrent-card-progress-bar"
-                    style={{ width: `${Math.max(progress, 5)}%` }}
-                  />
-                </div>
-              </div>
-            </button>
-          )
-        })}
-
-        {torrents.length === 0 && (
-          <div className="col-span-full text-center text-gray-500 py-16 px-8 bg-gray-800/30 rounded-2xl border-2 border-gray-700 border-dashed">
-            <div className="text-5xl mb-4">📺</div>
-            <div className="text-xl font-semibold mb-2">No Active Torrents</div>
-            <div className="text-sm">Add a magnet link or open a .torrent file to start</div>
-          </div>
-        )}
-      </div>
-
+      {/* Details Modal */}
       {selectedTorrent && (
-        <div
-          className="details-overlay"
-          onClick={() => setSelectedTorrent(null)}
-        >
-          <div
-            className="details-modal animate-fade-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="details-title">{selectedTorrent.name}</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedTorrent(null)}>
+          <div className="bg-[#181818] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative" onClick={e => e.stopPropagation()}>
 
-            <button
-              className="details-btn-watch tv-btn-primary"
-              tabIndex={0}
-              onClick={() => {
-                console.log('Watch Clicked')
-                const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
-                const videoFile = selectedTorrent.files?.find(f =>
-                  videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
-                ) || selectedTorrent.files?.[0]
+            {/* Modal Header */}
+            <div className="h-32 bg-gradient-to-br from-blue-900 to-gray-900 p-6 flex items-end relative">
+              <button onClick={() => setSelectedTorrent(null)} className="absolute top-4 right-4 bg-black/40 rounded-full p-2 text-white hover:bg-black/60 transition-colors">✕</button>
+              <h2 className="text-2xl font-bold leading-tight shadow-black drop-shadow-lg line-clamp-2">{cleanTitle(selectedTorrent.name)}</h2>
+            </div>
 
-                if (videoFile) {
-                  handlePlay(selectedTorrent.infoHash, videoFile.index, videoFile.name)
-                } else {
-                  console.log('No video files found!')
-                  alert('No playable files found')
-                }
-              }}
-            >
-              ▶ WATCH
-            </button>
+            <div className="p-6">
+              <div className="text-sm text-gray-400 mb-6 font-mono break-all text-xs border-l-2 border-gray-700 pl-3">
+                {selectedTorrent.name}
+              </div>
 
-            <button
-              tabIndex={0}
-              className="details-btn-delete mt-2 bg-gray-700 hover:bg-gray-600 border-none"
-              onClick={() => {
-                const videoExts = ['.mp4', '.mkv', '.avi', '.webm', '.mov']
-                const videoFile = selectedTorrent.files?.find(f =>
-                  videoExts.some(ext => f.name?.toLowerCase().endsWith(ext))
-                ) || selectedTorrent.files?.[0]
-                if (videoFile) copyStreamUrl(selectedTorrent.infoHash, videoFile.index)
-              }}
-            >
-              📋 Copy Link (Backup)
-            </button>
+              <div className="space-y-3">
+                <button
+                  autoFocus
+                  onClick={() => {
+                    const video = selectedTorrent.files?.find(f => /\.(mp4|mkv|avi|mov)$/i.test(f.name)) || selectedTorrent.files?.[0]
+                    if (video) handlePlay(selectedTorrent.infoHash, video.index, video.name)
+                    else alert("No video files recognized")
+                  }}
+                  className="w-full bg-white text-black py-4 rounded font-bold hover:bg-gray-200 focus:bg-yellow-400 text-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  ▶ Play
+                </button>
 
-            <button
-              className="details-btn-delete tv-btn-danger mt-4"
-              onClick={() => deleteTorrent(selectedTorrent.infoHash)}
-            >
-              Delete
-            </button>
-            <div className="details-back mt-4 text-gray-400">Press BACK to close</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const video = selectedTorrent.files?.[0]
+                      if (video) copyUrl(selectedTorrent.infoHash, video.index)
+                    }}
+                    className="flex-1 bg-gray-800 text-gray-300 py-3 rounded font-medium hover:bg-gray-700"
+                  >
+                    Copy Link
+                  </button>
+                  <button
+                    onClick={() => deleteTorrent(selectedTorrent.infoHash)}
+                    className="flex-1 bg-gray-800 text-red-400 py-3 rounded font-medium hover:bg-red-900/20"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
