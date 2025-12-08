@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { registerPlugin } from '@capacitor/core'
+import { registerPlugin, CapacitorHttp } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
@@ -42,8 +42,6 @@ const cleanTitle = (rawName) => {
   let cutoff = name.length
   const lowerName = name.toLowerCase()
   tags.forEach(tag => {
-    // Match strict word boundary so we don't cut "stream" in "Mainstream"
-    // actually user asked to remove "stream", usually these are separated by spaces after dot replacement
     const idx = lowerName.indexOf(tag.toLowerCase())
     if (idx !== -1 && idx < cutoff) {
       cutoff = idx
@@ -81,7 +79,17 @@ const formatSpeed = (bytesPerSec) => {
   return `${(kbps / 1024).toFixed(1)} MB/s`
 }
 
-const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed }) => {
+// Format ETA (seconds to human readable)
+const formatEta = (seconds) => {
+  if (!seconds || seconds <= 0) return ''
+  if (seconds < 60) return `${seconds}с`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}м`
+  const hours = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  return `${hours}ч ${mins}м`
+}
+
+const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta }) => {
   const [bgImage, setBgImage] = useState(null)
   const cleanedName = cleanTitle(name)
 
@@ -106,53 +114,124 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed }
 
     const fetchPoster = async () => {
       try {
-        const TMDB_API_KEY = 'c3bec60e67fabf42dd2202281dcbc9a7'
         let result = null
+        const query = encodeURIComponent(cleanedName)
 
-        // 1. Try Client-Side Search (Bypass Server)
-        // We use api.allorigins.win to avoid CORS issues and bypass local blocking
-        try {
-          const tmdbUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(cleanedName)}&language=ru-RU`
-          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(tmdbUrl)}`
+        // Получаем кастомный TMDB прокси из localStorage (как в Lampa)
+        const customProxy = localStorage.getItem('tmdbProxyUrl') || ''
 
-          console.log('[Poster] Client Search:', proxyUrl)
-          const res = await fetch(proxyUrl)
-          if (res.ok) {
-            const data = await res.json()
-            result = data.results?.find(r => r.poster_path)
+        // 1️⃣ Если задан кастомный прокси — используем его
+        if (customProxy) {
+          try {
+            const proxyBase = customProxy.replace(/\/$/, '')
+            const customUrl = `${proxyBase}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            console.log('[Poster] Custom Proxy:', cleanedName)
+
+            const res = await fetch(customUrl)
+            if (res.ok) {
+              const data = await res.json()
+              result = data.results?.find(r => r.poster_path)
+            }
+          } catch (proxyErr) {
+            console.warn('[Poster] Custom proxy failed:', proxyErr)
           }
-        } catch (e) {
-          console.warn('[Poster] Client Search Failed:', e)
         }
 
-        // 2. Fallback to Server (only if client search failed, though server is likely offline)
+        // 2️⃣ Lampa Proxy (apn-latest.onrender.com) — обходит блокировки без VPN!
         if (!result) {
-          let baseUrl = ''
-          if (Capacitor.isNativePlatform()) {
-            baseUrl = localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000'
-          }
-          baseUrl = baseUrl.replace(/\/$/, '')
-          const apiUrl = `${baseUrl}/api/tmdb/search?query=${encodeURIComponent(cleanedName)}`
-          console.log('[Poster] Fetching Meta (Server Fallback):', apiUrl) // Added console log for clarity
-          const res = await fetch(apiUrl)
-          if (res.ok) {
-            const data = await res.json()
-            result = data.results?.find(r => r.poster_path)
+          try {
+            const lampaProxy = 'https://apn-latest.onrender.com/'
+            const tmdbPath = `api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            const lampaUrl = lampaProxy + tmdbPath
+            console.log('[Poster] Lampa Proxy:', cleanedName)
+
+            const res = await fetch(lampaUrl)
+            if (res.ok) {
+              const data = await res.json()
+              result = data.results?.find(r => r.poster_path)
+            }
+          } catch (lampaErr) {
+            console.warn('[Poster] Lampa proxy failed:', lampaErr)
           }
         }
 
-        // 3. If we found a poster (either way), show it via wsrv.nl
+        // 3️⃣ Fallback: CapacitorHttp (Android, требует VPN/DNS)
+        if (!result && Capacitor.isNativePlatform()) {
+          try {
+            const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            console.log('[Poster] Native Search:', cleanedName)
+            const response = await CapacitorHttp.get({ url: searchUrl })
+            if (response.data && response.data.results) {
+              result = response.data.results.find(r => r.poster_path)
+            }
+          } catch (nativeErr) {
+            console.warn('[Poster] Native request failed:', nativeErr)
+          }
+        }
+
+        // 4️⃣ Fallback: corsproxy.io (браузер)
+        if (!result) {
+          try {
+            const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
+            console.log('[Poster] CorsProxy:', cleanedName)
+            const res = await fetch(proxyUrl)
+            if (res.ok) {
+              const data = await res.json()
+              result = data.results?.find(r => r.poster_path)
+            }
+          } catch (proxyErr) {
+            console.warn('[Poster] CorsProxy failed:', proxyErr)
+          }
+        }
+
+        // 5️⃣ Fallback: Кинопоиск API (альтернатива TMDB)
+        let kpPoster = null
+        if (!result) {
+          try {
+            const KP_API_KEY = '2a4a0808-81a3-40ae-b0d3-e11335ede616'
+            const kpProxy = 'https://cors.kp556.workers.dev:8443/'
+            const kpUrl = `${kpProxy}https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`
+            console.log('[Poster] Kinopoisk:', cleanedName)
+
+            const res = await fetch(kpUrl, {
+              headers: { 'X-API-KEY': KP_API_KEY }
+            })
+            if (res.ok) {
+              const data = await res.json()
+              const kpFilm = data.films?.find(f => f.posterUrlPreview)
+              if (kpFilm) {
+                kpPoster = kpFilm.posterUrlPreview
+                console.log('[Poster] Kinopoisk Found:', cleanedName, kpFilm.nameRu || kpFilm.nameEn)
+              }
+            }
+          } catch (kpErr) {
+            console.warn('[Poster] Kinopoisk failed:', kpErr)
+          }
+        }
+
+        // Сохраняем постер (TMDB через wsrv.nl или Кинопоиск напрямую)
         if (result) {
           const directUrl = `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w500${result.poster_path}&output=webp`
           localStorage.setItem(cacheKey, directUrl)
           setBgImage(directUrl)
+          console.log('[Poster] Found:', cleanedName, result.title || result.name)
+        } else if (kpPoster) {
+          // Кинопоиск постер тоже через wsrv.nl для стабильности
+          const kpUrl = `https://wsrv.nl/?url=${encodeURIComponent(kpPoster)}&output=webp`
+          localStorage.setItem(cacheKey, kpUrl)
+          setBgImage(kpUrl)
+        } else {
+          console.log('[Poster] Not found:', cleanedName)
         }
       } catch (err) {
-        console.warn('Poster Fetch Fail:', err)
+        console.warn('[Poster] Error:', cleanedName, err)
       }
     }
 
-    fetchPoster()
+    // Рандомная задержка (0-2 сек) чтобы не бомбить API при загрузке списка
+    const timer = setTimeout(fetchPoster, Math.random() * 2000)
+    return () => clearTimeout(timer)
   }, [cleanedName])
 
   return (
@@ -199,20 +278,37 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed }
         </div>
 
         {/* Footer Stats */}
-        <div className="text-xs text-gray-400 flex items-center gap-2 mt-auto">
-          <span className="flex items-center gap-1">
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path></svg>
-            {peers}
-          </span>
-          {size > 0 && (
-            <span className="text-gray-500">{formatSize(size)}</span>
+        <div className="text-xs text-gray-400 flex flex-col gap-1 mt-auto">
+          {/* Download progress info */}
+          {!isReady && downloaded > 0 && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-blue-400">
+                {formatSize(downloaded)} / {formatSize(size)}
+              </span>
+              {eta > 0 && (
+                <span className="text-yellow-400">⏱ {formatEta(eta)}</span>
+              )}
+            </div>
           )}
-          {downloadSpeed > 0 && (
-            <span className="text-green-400">↓{formatSpeed(downloadSpeed)}</span>
-          )}
-          {!isReady && (
-            <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
-              <div style={{ width: `${progress * 100}%` }} className="h-full bg-blue-500" />
+
+          {/* Stats row */}
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path></svg>
+              {peers}
+            </span>
+            {isReady && size > 0 && (
+              <span className="text-gray-500">{formatSize(size)}</span>
+            )}
+            {downloadSpeed > 0 && (
+              <span className="text-green-400">↓{formatSpeed(downloadSpeed)}</span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {!isReady && progress > 0 && (
+            <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div style={{ width: `${progress * 100}%` }} className="h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-300" />
             </div>
           )}
         </div>
@@ -313,6 +409,11 @@ function App() {
 
   const [preferredPlayer, setPreferredPlayer] = useState(
     localStorage.getItem('preferredPlayer') || 'net.gtvbox.videoplayer'
+  )
+
+  // TMDB Proxy URL (как в Lampa) - если пусто, используется стандартный механизм
+  const [tmdbProxyUrl, setTmdbProxyUrl] = useState(
+    localStorage.getItem('tmdbProxyUrl') || ''
   )
 
   const [torrents, setTorrents] = useState([])
@@ -740,8 +841,94 @@ function App() {
                   />
                 </div>
                 <p className="text-xs text-gray-600 mt-1">Change only if moving to a new server IP.</p>
+
+                {/* TMDB Proxy URL (как в Lampa) */}
+                <label className="text-gray-400 text-sm mb-2 block mt-4">TMDB API Proxy (опционально)</label>
+                <div className="flex gap-2">
+                  <input
+                    value={tmdbProxyUrl}
+                    onChange={e => setTmdbProxyUrl(e.target.value)}
+                    onBlur={e => {
+                      localStorage.setItem('tmdbProxyUrl', e.target.value)
+                    }}
+                    placeholder="https://your-proxy.com/3"
+                    className="bg-gray-800 text-white px-4 py-2 rounded flex-1 border border-gray-700 focus:border-purple-500 outline-none"
+                  />
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  Обход блокировки TMDB. Формат: <code>https://proxy/3</code>
+                </p>
+                <p className="text-xs text-gray-600">
+                  🔗 Примеры: api.themoviedb.org, tmdb.apps.lol, apitmdb.example.com
+                </p>
               </div>
             )}
+
+            {/* Clear Poster Cache Button */}
+            <button
+              onClick={() => {
+                const keys = Object.keys(localStorage).filter(k => k.startsWith('poster_'))
+                keys.forEach(k => localStorage.removeItem(k))
+                alert(`Очищено ${keys.length} постеров. Перезагрузите приложение.`)
+                window.location.reload()
+              }}
+              className="mt-4 text-red-400 text-sm hover:text-red-300 flex items-center gap-2"
+            >
+              🗑️ Очистить кэш постеров ({Object.keys(localStorage).filter(k => k.startsWith('poster_')).length} шт.)
+            </button>
+
+            {/* Test Poster Button */}
+            <button
+              onClick={async () => {
+                const testName = 'The Beekeeper'
+                const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(testName)}&language=ru-RU`
+
+                let msg = `🧪 Тест постера: "${testName}"\n\n`
+
+                // Test 1: CapacitorHttp (native)
+                if (Capacitor.isNativePlatform()) {
+                  try {
+                    msg += '1️⃣ CapacitorHttp: '
+                    const response = await CapacitorHttp.get({ url: searchUrl })
+                    if (response.data?.results?.length > 0) {
+                      const r = response.data.results[0]
+                      msg += `✅ Найдено: ${r.title || r.name}\n`
+                    } else {
+                      msg += `❌ Нет результатов\n`
+                    }
+                  } catch (e) {
+                    msg += `❌ Ошибка: ${e.message}\n`
+                  }
+                } else {
+                  msg += '1️⃣ CapacitorHttp: ⏭️ пропущен (не Android)\n'
+                }
+
+                // Test 2: corsproxy.io
+                try {
+                  msg += '2️⃣ corsproxy.io: '
+                  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
+                  const res = await fetch(proxyUrl)
+                  if (res.ok) {
+                    const data = await res.json()
+                    if (data.results?.length > 0) {
+                      const r = data.results[0]
+                      msg += `✅ Найдено: ${r.title || r.name}\n`
+                    } else {
+                      msg += `❌ Нет результатов\n`
+                    }
+                  } else {
+                    msg += `❌ HTTP ${res.status}\n`
+                  }
+                } catch (e) {
+                  msg += `❌ Ошибка: ${e.message}\n`
+                }
+
+                alert(msg)
+              }}
+              className="mt-2 text-blue-400 text-sm hover:text-blue-300 flex items-center gap-2"
+            >
+              🧪 Тест загрузки постеров
+            </button>
           </div>
         </div>
       )}
@@ -898,9 +1085,11 @@ function App() {
               name={t.name}
               progress={t.progress}
               peers={t.numPeers}
-              size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
+              size={t.totalSize || t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
+              downloaded={t.downloaded || 0}
               downloadSpeed={t.downloadSpeed || 0}
-              isReady={t.progress >= 1 || t.files?.length > 0}
+              eta={t.eta || 0}
+              isReady={t.progress >= 1 || (t.progress === 0 && t.files?.length > 0)}
               onClick={() => setSelectedTorrent(t)}
             />
           ))}

@@ -7,4 +7,4 @@ db.json
 
 generate_code_doc.py
 *.tar
-FULL_PROJECT_CODE.md
+docs/

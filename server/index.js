@@ -64,8 +64,11 @@ app.get('/api/status', (req, res) => {
         infoHash: t.infoHash,
         name: t.name,
         progress: t.progress,
+        downloaded: t.downloaded,
+        totalSize: t.totalSize,
         downloadSpeed: t.downloadSpeed,
         numPeers: t.numPeers,
+        eta: t.eta,
         files: t.files.map(f => ({
             name: f.name,
             length: f.length,
