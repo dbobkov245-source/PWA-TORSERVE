@@ -1,5 +1,4 @@
-// IGNORE SSL ERRORS (Global Hack for Mirrors)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+// Security: SSL validation enabled globally (see jacred.js for targeted exceptions)
 
 import express from 'express'
 import cors from 'cors'
@@ -7,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, getServerState } from './watchdog.js'
 
@@ -237,6 +236,9 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
     const file = engine.files?.[fileIndex]
     if (!file) return res.status(404).send('File not found')
+
+    // Smart Priority: Prioritize this file's first chunks for instant playback
+    prioritizeFile(infoHash, parseInt(fileIndex, 10))
 
     // Detect Content-Type
     const ext = path.extname(file.name).toLowerCase()

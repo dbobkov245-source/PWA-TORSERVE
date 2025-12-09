@@ -74,27 +74,14 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
             // ────────────────────────────────────────────────────────
-            // Sequential Download Optimization (Light version)
-            // Only select files, don't create streams to avoid high RAM/CPU
+            // Download ALL files (full season download)
+            // Priority is set dynamically when streaming starts via prioritizeFile()
             // ────────────────────────────────────────────────────────
             if (engine.files && engine.files.length > 0) {
                 engine.files.forEach((file, idx) => {
-                    // Mark file for download (torrent-stream will prioritize)
                     file.select()
                     console.log(`[Torrent] Selected file ${idx}: ${file.name}`)
                 })
-
-                // Prioritize first 5% of pieces for faster playback start
-                const totalPieces = engine.torrent?.pieces?.length || 0
-                if (totalPieces > 0) {
-                    const priorityEnd = Math.max(1, Math.floor(totalPieces * 0.05))
-                    try {
-                        engine.select(0, priorityEnd, true)
-                        console.log(`[Torrent] Prioritizing first ${priorityEnd} of ${totalPieces} pieces (5%)`)
-                    } catch (e) {
-                        console.warn('[Torrent] Priority selection not supported:', e.message)
-                    }
-                }
             }
 
             engines.set(magnetURI, engine)
@@ -197,5 +184,52 @@ const formatEngine = (engine) => {
             path: file.path,
             index: index
         })) : []
+    }
+}
+
+// ────────────────────────────────────────────────────────
+// Smart Priority: Prioritize specific file for instant playback
+// Called when user starts streaming a specific episode
+// ────────────────────────────────────────────────────────
+export function prioritizeFile(infoHash, fileIndex) {
+    const engine = engines.get(infoHash)
+    if (!engine) {
+        console.warn('[Priority] Engine not found:', infoHash)
+        return false
+    }
+
+    const file = engine.files?.[fileIndex]
+    if (!file) {
+        console.warn('[Priority] File not found:', fileIndex)
+        return false
+    }
+
+    const pieceLength = engine.torrent?.pieceLength || 262144 // Default 256KB
+    const totalPieces = engine.torrent?.pieces?.length || 0
+
+    if (totalPieces === 0 || pieceLength === 0) {
+        console.warn('[Priority] No piece info available')
+        return false
+    }
+
+    // Calculate piece range for this specific file
+    const fileStart = file.offset || 0
+    const fileEnd = fileStart + file.length
+
+    const startPiece = Math.floor(fileStart / pieceLength)
+    const endPiece = Math.floor(fileEnd / pieceLength)
+
+    // Priority: first 5% of file OR first 15MB, whichever is smaller
+    const priorityBytes = Math.min(file.length * 0.05, 15 * 1024 * 1024)
+    const priorityPieces = Math.max(1, Math.ceil(priorityBytes / pieceLength))
+    const priorityEnd = Math.min(startPiece + priorityPieces, endPiece)
+
+    try {
+        engine.select(startPiece, priorityEnd, true) // true = high priority
+        console.log(`[Priority] File ${fileIndex}: pieces ${startPiece}-${priorityEnd} (of ${totalPieces} total)`)
+        return true
+    } catch (e) {
+        console.warn('[Priority] Selection failed:', e.message)
+        return false
     }
 }

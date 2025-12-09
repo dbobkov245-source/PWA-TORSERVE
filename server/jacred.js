@@ -50,6 +50,7 @@ const doSearch = (mirror, query) => {
             port: 443,
             path: searchPath,
             method: 'GET',
+            rejectUnauthorized: false, // Allow self-signed certs for pirate mirrors
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'application/json'
