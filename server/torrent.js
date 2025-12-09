@@ -1,9 +1,49 @@
 import torrentStream from 'torrent-stream'
 import process from 'process'
+import { db } from './db.js'
 
 const engines = new Map()
 
-export const addTorrent = (magnetURI) => {
+// ────────────────────────────────────────────────────────
+// Persistence: Save/Remove torrents to db.json
+// ────────────────────────────────────────────────────────
+async function saveTorrentToDB(magnetURI, name) {
+    db.data.torrents ||= []
+    // Avoid duplicates
+    if (!db.data.torrents.find(t => t.magnet === magnetURI)) {
+        db.data.torrents.push({ magnet: magnetURI, name, addedAt: Date.now() })
+        await db.write()
+        console.log('[Persistence] Saved torrent:', name)
+    }
+}
+
+async function removeTorrentFromDB(infoHash) {
+    db.data.torrents ||= []
+    const before = db.data.torrents.length
+    db.data.torrents = db.data.torrents.filter(t => !t.magnet.includes(infoHash))
+    if (db.data.torrents.length < before) {
+        await db.write()
+        console.log('[Persistence] Removed torrent from DB:', infoHash)
+    }
+}
+
+// Restore all saved torrents on server startup
+export async function restoreTorrents() {
+    await db.read()
+    const saved = db.data.torrents || []
+    console.log(`[Persistence] Restoring ${saved.length} torrents...`)
+
+    for (const { magnet, name } of saved) {
+        try {
+            await addTorrent(magnet, true) // true = skip saving (already in DB)
+            console.log(`[Persistence] Restored: ${name}`)
+        } catch (err) {
+            console.warn(`[Persistence] Failed to restore ${name}: ${err.message}`)
+        }
+    }
+}
+
+export const addTorrent = (magnetURI, skipSave = false) => {
     return new Promise((resolve, reject) => {
         // Simple duplicate check
         for (const [key, engine] of engines.entries()) {
@@ -32,8 +72,39 @@ export const addTorrent = (magnetURI) => {
 
         engine.on('ready', () => {
             console.log('[Torrent] Engine ready:', engine.infoHash)
+
+            // ────────────────────────────────────────────────────────
+            // Sequential Download Optimization (Light version)
+            // Only select files, don't create streams to avoid high RAM/CPU
+            // ────────────────────────────────────────────────────────
+            if (engine.files && engine.files.length > 0) {
+                engine.files.forEach((file, idx) => {
+                    // Mark file for download (torrent-stream will prioritize)
+                    file.select()
+                    console.log(`[Torrent] Selected file ${idx}: ${file.name}`)
+                })
+
+                // Prioritize first 5% of pieces for faster playback start
+                const totalPieces = engine.torrent?.pieces?.length || 0
+                if (totalPieces > 0) {
+                    const priorityEnd = Math.max(1, Math.floor(totalPieces * 0.05))
+                    try {
+                        engine.select(0, priorityEnd, true)
+                        console.log(`[Torrent] Prioritizing first ${priorityEnd} of ${totalPieces} pieces (5%)`)
+                    } catch (e) {
+                        console.warn('[Torrent] Priority selection not supported:', e.message)
+                    }
+                }
+            }
+
             engines.set(magnetURI, engine)
             engines.set(engine.infoHash, engine)
+
+            // Save to DB for persistence (unless restoring)
+            if (!skipSave) {
+                saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
+            }
+
             resolve(formatEngine(engine))
         })
 
@@ -68,6 +139,10 @@ export const removeTorrent = (infoHash) => {
     for (const [key, val] of engines.entries()) {
         if (val === engine) engines.delete(key)
     }
+
+    // Remove from persistent storage
+    removeTorrentFromDB(infoHash)
+
     return true
 }
 

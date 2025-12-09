@@ -1,6 +1,6 @@
 {
     "appId": "com.torserve.pwa",
-    "appName": "PWA-TorServe",
+    "appName": "MediaBox",
     "webDir": "dist",
     "server": {
         "androidScheme": "https",

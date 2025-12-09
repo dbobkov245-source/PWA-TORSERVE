@@ -7,7 +7,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, getServerState } from './watchdog.js'
 
@@ -83,15 +83,37 @@ app.get('/api/status', (req, res) => {
     })
 })
 
-// API: TMDB Proxy (DISABLED - OFFLINE MODE)
-// ISP blocks are too severe. We return 404 immediately to show 
-// the "Beautiful Placeholders" on the client without lag.
-app.get('/api/tmdb/search', (req, res) => {
-    res.status(404).json({ error: 'Offline Mode (Blocked by ISP)' })
+// API: TMDB Proxy with DoH bypass
+import { smartFetch, insecureAgent } from './utils/doh.js'
+
+const TMDB_API_KEY = process.env.TMDB_API_KEY || 'c3bec60e67fabf42dd2202281dcbc9a7'
+
+app.get('/api/tmdb/search', async (req, res) => {
+    const { query } = req.query
+    if (!query) return res.status(400).json({ error: 'Query required' })
+
+    try {
+        const url = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`
+        const response = await smartFetch(url)
+        res.json(response.data)
+    } catch (err) {
+        console.error('[TMDB] Search error:', err.message)
+        res.status(502).json({ error: 'TMDB API unavailable', details: err.message })
+    }
 })
 
-app.get('/api/tmdb/image/:size/:path', (req, res) => {
-    res.status(404).send('Offline Mode')
+app.get('/api/tmdb/image/:size/:path', async (req, res) => {
+    const { size, path: imagePath } = req.params
+    try {
+        const url = `https://image.tmdb.org/t/p/${size}/${imagePath}`
+        const response = await smartFetch(url, { responseType: 'arraybuffer' })
+        res.set('Content-Type', response.headers['content-type'] || 'image/jpeg')
+        res.set('Cache-Control', 'public, max-age=86400')
+        res.send(response.data)
+    } catch (err) {
+        console.error('[TMDB] Image error:', err.message)
+        res.status(502).send('Image unavailable')
+    }
 })
 
 // ─────────────────────────────────────────────────────────────
@@ -282,6 +304,11 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`)
+
+    // Restore saved torrents from db.json
+    restoreTorrents().catch(err => {
+        console.error('[Server] Restore failed:', err.message)
+    })
 
     // Start watchdog in background (non-blocking)
     startWatchdog().catch(err => {

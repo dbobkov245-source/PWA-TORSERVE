@@ -6,7 +6,8 @@ const defaultData = {
     serverStatus: 'ok',        // 'ok' | 'degraded' | 'error' | 'circuit_open'
     lastStateChange: Date.now(),
     storageFailures: 0,
-    progress: {}
+    progress: {},
+    torrents: []               // Array of { magnet, name, addedAt } for persistence
 }
 const dbPath = process.env.DB_PATH || 'db.json'
 const adapter = new JSONFile(dbPath)

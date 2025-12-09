@@ -531,10 +531,15 @@ function App() {
     }
   }
 
-  // Effect: Polling
+  // Effect: Polling + Warmup
   useEffect(() => {
     fetchStatus()
     const interval = setInterval(fetchStatus, 5000)
+
+    // Warmup external services (Render.com cold start prevention)
+    const warmUpTargets = ['https://apn-latest.onrender.com/ping']
+    warmUpTargets.forEach(url => fetch(url, { method: 'HEAD', mode: 'no-cors' }).catch(() => { }))
+
     return () => clearInterval(interval)
   }, [serverUrl])
 
@@ -1141,6 +1146,30 @@ function App() {
                   >
                     📺 Play All ({selectedTorrent.files?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)).length} episodes)
                   </button>
+                )}
+
+                {/* Episode List - TV Remote Friendly (no scroll container) */}
+                {selectedTorrent.files?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)).length > 1 && (
+                  <div className="bg-gray-900 rounded-lg overflow-hidden">
+                    <div className="px-3 py-2 bg-gray-800 text-gray-400 text-sm font-medium">
+                      📋 Выбор серии ({selectedTorrent.files?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name)).length})
+                    </div>
+                    {selectedTorrent.files
+                      ?.filter(f => /\.(mp4|mkv|avi|mov|webm)$/i.test(f.name))
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .slice(0, 20) // Limit to 20 to avoid huge lists
+                      .map((file, idx) => (
+                        <button
+                          key={file.index}
+                          onClick={() => handlePlay(selectedTorrent.infoHash, file.index, file.name)}
+                          className="w-full px-3 py-3 text-left border-t border-gray-800 hover:bg-gray-800 focus:bg-blue-600 focus:text-white focus:outline-none transition-colors flex items-center gap-3"
+                        >
+                          <span className="text-blue-400 font-mono text-sm w-8 focus:text-white">{idx + 1}</span>
+                          <span className="flex-1 text-sm text-gray-300 truncate">{cleanTitle(file.name) || file.name}</span>
+                          <span className="text-xs text-gray-500">{formatSize(file.length)}</span>
+                        </button>
+                      ))}
+                  </div>
                 )}
 
                 <div className="flex gap-2">
