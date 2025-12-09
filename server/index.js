@@ -114,8 +114,6 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
         res.status(502).send('Image unavailable')
     }
 })
-
-// ─────────────────────────────────────────────────────────────
 // API: Jacred Torrent Search (like Lampa)
 // ─────────────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ import { Capacitor } from '@capacitor/core'
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
 
-const TMDB_API_KEY = 'c3bec60e67fabf42dd2202281dcbc9a7'
+
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -116,28 +116,10 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
       try {
         let result = null
         const query = encodeURIComponent(cleanedName)
+        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
+        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY
 
-        // Получаем кастомный TMDB прокси из localStorage (как в Lampa)
-        const customProxy = localStorage.getItem('tmdbProxyUrl') || ''
-
-        // 1️⃣ Если задан кастомный прокси — используем его
-        if (customProxy) {
-          try {
-            const proxyBase = customProxy.replace(/\/$/, '')
-            const customUrl = `${proxyBase}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-            console.log('[Poster] Custom Proxy:', cleanedName)
-
-            const res = await fetch(customUrl)
-            if (res.ok) {
-              const data = await res.json()
-              result = data.results?.find(r => r.poster_path)
-            }
-          } catch (proxyErr) {
-            console.warn('[Poster] Custom proxy failed:', proxyErr)
-          }
-        }
-
-        // 2️⃣ Lampa Proxy (apn-latest.onrender.com) — обходит блокировки без VPN!
+        // 1️⃣ Lampa Proxy (apn-latest.onrender.com) — обходит блокировки без VPN!
         if (!result) {
           try {
             const lampaProxy = 'https://apn-latest.onrender.com/'
@@ -155,7 +137,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
           }
         }
 
-        // 3️⃣ Fallback: CapacitorHttp (Android, требует VPN/DNS)
+        // 2️⃣ Fallback: CapacitorHttp (Android, требует VPN/DNS)
         if (!result && Capacitor.isNativePlatform()) {
           try {
             const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
@@ -169,7 +151,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
           }
         }
 
-        // 4️⃣ Fallback: corsproxy.io (браузер)
+        // 3️⃣ Fallback: corsproxy.io (браузер)
         if (!result) {
           try {
             const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
@@ -185,11 +167,10 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
           }
         }
 
-        // 5️⃣ Fallback: Кинопоиск API (альтернатива TMDB)
+        // 4️⃣ Fallback: Кинопоиск API (альтернатива TMDB)
         let kpPoster = null
-        if (!result) {
+        if (!result && KP_API_KEY) {
           try {
-            const KP_API_KEY = '2a4a0808-81a3-40ae-b0d3-e11335ede616'
             const kpProxy = 'https://cors.kp556.workers.dev:8443/'
             const kpUrl = `${kpProxy}https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`
             console.log('[Poster] Kinopoisk:', cleanedName)
@@ -217,7 +198,6 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
           setBgImage(directUrl)
           console.log('[Poster] Found:', cleanedName, result.title || result.name)
         } else if (kpPoster) {
-          // Кинопоиск постер тоже через wsrv.nl для стабильности
           const kpUrl = `https://wsrv.nl/?url=${encodeURIComponent(kpPoster)}&output=webp`
           localStorage.setItem(cacheKey, kpUrl)
           setBgImage(kpUrl)
@@ -882,11 +862,11 @@ function App() {
               🗑️ Очистить кэш постеров ({Object.keys(localStorage).filter(k => k.startsWith('poster_')).length} шт.)
             </button>
 
-            {/* Test Poster Button */}
+            {/* Test Poster Button (Direct with VITE keys) */}
             <button
               onClick={async () => {
                 const testName = 'The Beekeeper'
-                const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(testName)}&language=ru-RU`
+                const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${import.meta.env.VITE_TMDB_API_KEY}&query=${encodeURIComponent(testName)}&language=ru-RU`
 
                 let msg = `🧪 Тест постера: "${testName}"\n\n`
 
@@ -932,7 +912,7 @@ function App() {
               }}
               className="mt-2 text-blue-400 text-sm hover:text-blue-300 flex items-center gap-2"
             >
-              🧪 Тест загрузки постеров
+              🧪 Тест (Direct)
             </button>
           </div>
         </div>
