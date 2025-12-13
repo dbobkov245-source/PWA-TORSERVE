@@ -12,13 +12,17 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DOWNLOAD_PATH=/downloads
+      - DOWNLOAD_PATH=/app/downloads
       - DB_PATH=/app/data/db.json
     volumes:
       # Downloads folder (map to your NAS media folder)
       - /volume1/docker/pwa-torserve/downloads:/app/downloads
       # [HOTFIX] Map source code for easy updates without rebuild
       - ./server:/app/server
+      # Utils folder (for DoH and other utilities)
+      - ./server/utils:/app/server/utils
+      # Environment file with API keys
+      - ./.env:/app/.env:ro
       # Persistence for DB
       - ./data:/app/data
     logging:
@@ -26,3 +30,4 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+

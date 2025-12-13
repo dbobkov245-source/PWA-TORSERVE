@@ -5,6 +5,24 @@ import { db } from './db.js'
 const engines = new Map()
 
 // ────────────────────────────────────────────────────────
+// Keep-Alive: Frozen torrents for instant resume (30 min TTL)
+// ────────────────────────────────────────────────────────
+const frozenTorrents = new Map() // infoHash -> { engine, frozenAt, magnetURI }
+const FROZEN_TTL = 30 * 60 * 1000 // 30 minutes
+
+// Cleanup expired frozen torrents every 5 minutes
+setInterval(() => {
+    const now = Date.now()
+    for (const [hash, frozen] of frozenTorrents.entries()) {
+        if (now - frozen.frozenAt > FROZEN_TTL) {
+            console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
+            frozen.engine.destroy()
+            frozenTorrents.delete(hash)
+        }
+    }
+}, 5 * 60 * 1000)
+
+// ────────────────────────────────────────────────────────
 // Persistence: Save/Remove torrents to db.json
 // ────────────────────────────────────────────────────────
 async function saveTorrentToDB(magnetURI, name) {
@@ -53,6 +71,18 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }
         }
 
+        // Check frozen torrents (Keep-Alive: instant resume!)
+        for (const [hash, frozen] of frozenTorrents.entries()) {
+            if (frozen.magnetURI === magnetURI || magnetURI.includes(hash)) {
+                console.log(`[Keep-Alive] Reusing frozen torrent: ${hash}`)
+                const engine = frozen.engine
+                frozenTorrents.delete(hash)
+                engines.set(magnetURI, engine)
+                engines.set(engine.infoHash, engine)
+                return resolve(formatEngine(engine))
+            }
+        }
+
         const path = process.env.DOWNLOAD_PATH || './downloads'
         console.log('[Torrent] Adding magnet, download path:', path)
 
@@ -74,14 +104,24 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
             // ────────────────────────────────────────────────────────
-            // Download ALL files (full season download)
-            // Priority is set dynamically when streaming starts via prioritizeFile()
+            // Download ALL files + AGGRESSIVE PRIORITIZATION
+            // Prioritize first video file immediately for instant playback
             // ────────────────────────────────────────────────────────
             if (engine.files && engine.files.length > 0) {
+                let firstVideoIdx = -1
                 engine.files.forEach((file, idx) => {
                     file.select()
-                    console.log(`[Torrent] Selected file ${idx}: ${file.name}`)
+                    // Find first video file
+                    if (firstVideoIdx === -1 && /\.(mp4|mkv|avi|webm|mov)$/i.test(file.name)) {
+                        firstVideoIdx = idx
+                    }
                 })
+
+                // Aggressive priority: immediately prioritize first video
+                if (firstVideoIdx >= 0) {
+                    console.log(`[Torrent] Auto-prioritizing first video: ${engine.files[firstVideoIdx].name}`)
+                    prioritizeFileInternal(engine, firstVideoIdx)
+                }
             }
 
             engines.set(magnetURI, engine)
@@ -112,19 +152,38 @@ export const addTorrent = (magnetURI, skipSave = false) => {
     })
 }
 
-export const removeTorrent = (infoHash) => {
+export const removeTorrent = (infoHash, forceDestroy = false) => {
     const engine = engines.get(infoHash)
     if (!engine) return false
 
-    console.log('Removing torrent:', infoHash)
-    engine.destroy(() => {
-        console.log('Engine destroyed:', infoHash)
-    })
+    // Find magnetURI for this engine
+    let magnetURI = null
+    for (const [key, val] of engines.entries()) {
+        if (val === engine && key.startsWith('magnet:')) {
+            magnetURI = key
+            break
+        }
+    }
 
-    // Remove from map (both keys)
+    // Remove from active map
     engines.delete(infoHash)
     for (const [key, val] of engines.entries()) {
         if (val === engine) engines.delete(key)
+    }
+
+    // Keep-Alive: freeze instead of destroy (unless forced)
+    if (!forceDestroy) {
+        console.log(`[Keep-Alive] Freezing torrent for 30min: ${infoHash}`)
+        frozenTorrents.set(infoHash, {
+            engine,
+            magnetURI,
+            frozenAt: Date.now()
+        })
+    } else {
+        console.log('Destroying torrent:', infoHash)
+        engine.destroy(() => {
+            console.log('Engine destroyed:', infoHash)
+        })
     }
 
     // Remove from persistent storage
@@ -191,13 +250,9 @@ const formatEngine = (engine) => {
 // Smart Priority: Prioritize specific file for instant playback
 // Called when user starts streaming a specific episode
 // ────────────────────────────────────────────────────────
-export function prioritizeFile(infoHash, fileIndex) {
-    const engine = engines.get(infoHash)
-    if (!engine) {
-        console.warn('[Priority] Engine not found:', infoHash)
-        return false
-    }
 
+// Internal function (accepts engine directly)
+function prioritizeFileInternal(engine, fileIndex, byteOffset = 0) {
     const file = engine.files?.[fileIndex]
     if (!file) {
         console.warn('[Priority] File not found:', fileIndex)
@@ -213,23 +268,47 @@ export function prioritizeFile(infoHash, fileIndex) {
     }
 
     // Calculate piece range for this specific file
-    const fileStart = file.offset || 0
-    const fileEnd = fileStart + file.length
+    const fileStart = (file.offset || 0) + byteOffset
+    const fileEnd = (file.offset || 0) + file.length
 
     const startPiece = Math.floor(fileStart / pieceLength)
     const endPiece = Math.floor(fileEnd / pieceLength)
 
-    // Priority: first 5% of file OR first 15MB, whichever is smaller
-    const priorityBytes = Math.min(file.length * 0.05, 15 * 1024 * 1024)
+    // ⚡ AGGRESSIVE PRIORITY: 50MB instead of 15MB for 4K content
+    const priorityBytes = Math.min(file.length * 0.1, 50 * 1024 * 1024) // 10% or 50MB
     const priorityPieces = Math.max(1, Math.ceil(priorityBytes / pieceLength))
     const priorityEnd = Math.min(startPiece + priorityPieces, endPiece)
 
     try {
         engine.select(startPiece, priorityEnd, true) // true = high priority
-        console.log(`[Priority] File ${fileIndex}: pieces ${startPiece}-${priorityEnd} (of ${totalPieces} total)`)
+        console.log(`[Priority] File ${fileIndex}: pieces ${startPiece}-${priorityEnd} (${priorityPieces} pieces, ~${Math.round(priorityBytes / 1024 / 1024)}MB)`)
         return true
     } catch (e) {
         console.warn('[Priority] Selection failed:', e.message)
         return false
     }
+}
+
+// Public API: prioritize by infoHash
+export function prioritizeFile(infoHash, fileIndex) {
+    const engine = engines.get(infoHash)
+    if (!engine) {
+        console.warn('[Priority] Engine not found:', infoHash)
+        return false
+    }
+    return prioritizeFileInternal(engine, fileIndex)
+}
+
+// ────────────────────────────────────────────────────────
+// Readahead: Prioritize chunks ahead of seek position
+// Called when player seeks to a new position
+// ────────────────────────────────────────────────────────
+export function readahead(infoHash, fileIndex, byteOffset) {
+    const engine = engines.get(infoHash)
+    if (!engine) {
+        console.warn('[Readahead] Engine not found:', infoHash)
+        return false
+    }
+    console.log(`[Readahead] Seeking to byte ${byteOffset} in file ${fileIndex}`)
+    return prioritizeFileInternal(engine, fileIndex, byteOffset)
 }

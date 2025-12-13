@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, getServerState } from './watchdog.js'
 
@@ -85,7 +85,7 @@ app.get('/api/status', (req, res) => {
 // API: TMDB Proxy with DoH bypass
 import { smartFetch, insecureAgent } from './utils/doh.js'
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY || 'c3bec60e67fabf42dd2202281dcbc9a7'
+const TMDB_API_KEY = process.env.TMDB_API_KEY || ''
 
 app.get('/api/tmdb/search', async (req, res) => {
     const { query } = req.query
@@ -261,6 +261,10 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const start = parseInt(parts[0], 10)
         const end = parts[1] ? parseInt(parts[1], 10) : file.length - 1
         const chunksize = (end - start) + 1
+
+        // 🔥 READAHEAD: Prioritize chunks starting from seek position
+        // This ensures smooth playback after seeking
+        readahead(infoHash, parseInt(fileIndex, 10), start)
 
         // Smart Progress Tracking
         const duration = parseFloat(req.query.duration) || 0
