@@ -4,46 +4,60 @@
 
 /**
  * Clean torrent/file name for display and poster search
- * Removes technical tags, year suffixes, and garbage characters
+ * Removes technical tags, year suffixes, season markers, and garbage characters
  */
 export const cleanTitle = (rawName) => {
     if (!rawName) return ''
 
-    // 1. Initial cleanup: dots, underscores, brackets
+    // 1. Базовая чистка: точки, нижние подчеркивания, скобки
     let name = rawName
         .replace(/\./g, ' ')
         .replace(/_/g, ' ')
-        .replace(/\[.*?\]/g, '')
-        .replace(/\(.*?\)/g, '')
+        .replace(/\[.*?\]/g, '') // Удаляем содержимое квадратных скобок
+        .replace(/\(.*?\)/g, '') // Удаляем содержимое круглых скобок
         .trim()
 
-    // 2. Cut off at Year (e.g. "Movie Title 2023 ...")
+    // 2. 🔥 ВАЖНО: Обрезаем по Сезону (S01, s01e01), если года нет
+    // Это спасет "IT Welcome to Derry S01..." -> "IT Welcome to Derry"
+    const seasonMatch = name.match(/\b(S\d{2}|s\d{2})\b/i)
+    if (seasonMatch) {
+        const index = name.indexOf(seasonMatch[0])
+        name = name.substring(0, index)
+    }
+
+    // 3. Обрезаем по Году (как и было)
     const yearMatch = name.match(/\b(19\d{2}|20\d{2})\b/)
     if (yearMatch) {
         const index = name.indexOf(yearMatch[0])
         name = name.substring(0, index)
     }
 
-    // 3. Remove technical/garbage tags
+    // 4. 🔥 Дополненный список мусорных тегов
     const tags = [
+        // Качество и рипы
         '1080p', '720p', '2160p', '4k', 'WEB-DL', 'WEBRip', 'BluRay', 'HDR',
-        'H.264', 'x264', 'HEVC', 'AAC', 'AC3', 'DTS', 'HDTV',
-        'rus', 'eng', 'torrent', 'stream', 'dub', 'sub'
+        'H.264', 'H264', 'x264', 'x265', 'HEVC', 'AAC', 'AC3', 'DTS', 'HDTV', 'DV', 'DoVi',
+        'SDR', 'BDRemux', 'Remux', 'TYMBLER', 'AKTEP', 'SOFCJ',
+        'CHDRip', 'HDRip', 'DVDRip', 'BDRip', 'CAMRip', 'TS', 'TC',
+        'DD5', 'DD51', 'DD', 'Atmos',
+        // Версии и расширения
+        'v2', 'v3', 'v4', 'mkv', 'avi', 'mp4',
+        // Языки и прочее
+        'rus', 'eng', 'torrent', 'stream', 'dub', 'sub', 'extended',
+        // Стриминги
+        'HMAX', 'ATVP', 'AMZN', 'NF', 'DSNP', 'HULU', 'OKKO', 'OM'
     ]
 
-    // Find the earliest occurrence of a tag and cut
-    let cutoff = name.length
-    const lowerName = name.toLowerCase()
+    // Удаляем теги (на случай если они стоят ДО сезона/года)
     tags.forEach(tag => {
-        const idx = lowerName.indexOf(tag.toLowerCase())
-        if (idx !== -1 && idx < cutoff) {
-            cutoff = idx
-        }
+        // Удаляем тег как отдельное слово
+        const regex = new RegExp(`\\b${tag}\\b`, 'gi')
+        name = name.replace(regex, '')
     })
 
-    return name.substring(0, cutoff)
-        .replace(/[^\w\s\u0400-\u04FF]/g, '') // remove weird symbols
-        .replace(/\s+/g, ' ')
+    return name
+        .replace(/[^\w\s\u0400-\u04FF:\-]/g, '') // Оставляем буквы, цифры, двоеточие и дефис
+        .replace(/\s+/g, ' ') // Убираем двойные пробелы
         .trim()
 }
 

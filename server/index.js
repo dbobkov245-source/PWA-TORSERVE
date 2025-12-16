@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, getServerState } from './watchdog.js'
 
@@ -227,6 +227,9 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
 app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const { infoHash, fileIndex } = req.params
     const range = req.headers.range
+
+    // 🔥 ACTIVATE TURBO MODE when user starts watching
+    boostTorrent(infoHash)
 
     // Use raw engine to access createReadStream
     const engine = getRawTorrent(infoHash)

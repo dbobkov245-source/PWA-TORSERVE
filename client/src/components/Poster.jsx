@@ -31,8 +31,8 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                 // 1️⃣ Custom Cloudflare Worker (приоритетный, ваш личный прокси)
                 if (!result && CUSTOM_PROXY) {
                     try {
-                        // Worker принимает запросы в формате: /api.themoviedb.org/3/...
-                        const proxyUrl = `${CUSTOM_PROXY}/api.themoviedb.org/3/search/multi?query=${query}&language=ru-RU`
+                        // Worker format: /search/multi?api_key=...&query=... (Worker adds /3 prefix)
+                        const proxyUrl = `${CUSTOM_PROXY}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
                         console.log('[Poster] Custom Proxy:', cleanedName)
 
                         const res = await fetch(proxyUrl)
@@ -48,9 +48,9 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                 // 2️⃣ Lampa Proxy (apn-latest.onrender.com) — fallback
                 if (!result) {
                     try {
-                        const lampaProxy = 'https://apn-latest.onrender.com/'
-                        const tmdbPath = `api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-                        const lampaUrl = lampaProxy + tmdbPath
+                        // Lampa proxy expects: https://proxy/https://api.themoviedb.org/...
+                        const targetUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+                        const lampaUrl = `https://apn-latest.onrender.com/${targetUrl}`
                         console.log('[Poster] Lampa Proxy:', cleanedName)
 
                         const res = await fetch(lampaUrl)
@@ -206,7 +206,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         {isReady && size > 0 && (
                             <span className="text-gray-500">{formatSize(size)}</span>
                         )}
-                        {downloadSpeed > 0 && (
+                        {!isReady && downloadSpeed > 0 && (
                             <span className="text-green-400">↓{formatSpeed(downloadSpeed)}</span>
                         )}
                     </div>

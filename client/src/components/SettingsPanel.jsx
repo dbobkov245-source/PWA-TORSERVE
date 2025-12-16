@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
+import { cleanTitle } from '../utils/helpers'
 
 // Player list
 const PLAYERS = [
@@ -19,9 +20,13 @@ const SettingsPanel = ({
     serverUrl,
     onServerUrlChange,
     tmdbProxyUrl,
-    onTmdbProxyUrlChange
+    onTmdbProxyUrlChange,
+    torrents = []
 }) => {
     const [showAdvanced, setShowAdvanced] = useState(false)
+    const [showPosterTest, setShowPosterTest] = useState(false)
+    const [testResult, setTestResult] = useState(null)
+    const [testLoading, setTestLoading] = useState(false)
 
     const handleClearCache = () => {
         const keys = Object.keys(localStorage).filter(k => k.startsWith('poster_'))
@@ -30,51 +35,115 @@ const SettingsPanel = ({
         window.location.reload()
     }
 
-    const handleTestPoster = async () => {
-        const testName = 'The Beekeeper'
-        const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${import.meta.env.VITE_TMDB_API_KEY}&query=${encodeURIComponent(testName)}&language=ru-RU`
+    const runPosterTest = async (testName) => {
+        setTestLoading(true)
+        setTestResult(null)
 
-        let msg = `🧪 Тест постера: "${testName}"\n\n`
+        const query = encodeURIComponent(testName)
+        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || ''
+        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY || ''
+        const CUSTOM_PROXY = import.meta.env.VITE_TMDB_PROXY_URL || ''
 
-        // Test 1: CapacitorHttp (native)
-        if (Capacitor.isNativePlatform()) {
+        let results = []
+
+        // 1️⃣ Custom Cloudflare Worker
+        if (CUSTOM_PROXY) {
             try {
-                msg += '1️⃣ CapacitorHttp: '
-                const response = await CapacitorHttp.get({ url: searchUrl })
-                if (response.data?.results?.length > 0) {
-                    const r = response.data.results[0]
-                    msg += `✅ Найдено: ${r.title || r.name}\n`
+                const proxyUrl = `${CUSTOM_PROXY}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+                const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+                if (res.ok) {
+                    const data = await res.json()
+                    const r = data.results?.find(x => x.poster_path)
+                    results.push({ name: 'Custom Worker', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
                 } else {
-                    msg += `❌ Нет результатов\n`
+                    results.push({ name: 'Custom Worker', status: '❌', detail: `HTTP ${res.status}` })
                 }
             } catch (e) {
-                msg += `❌ Ошибка: ${e.message}\n`
+                results.push({ name: 'Custom Worker', status: '❌', detail: e.message })
             }
         } else {
-            msg += '1️⃣ CapacitorHttp: ⏭️ пропущен (не Android)\n'
+            results.push({ name: 'Custom Worker', status: '⏭️', detail: 'не настроен' })
         }
 
-        // Test 2: corsproxy.io
+        // 2️⃣ Lampa Proxy
         try {
-            msg += '2️⃣ corsproxy.io: '
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
-            const res = await fetch(proxyUrl)
+            const targetUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            const lampaUrl = `https://apn-latest.onrender.com/${targetUrl}`
+            const res = await fetch(lampaUrl, { signal: AbortSignal.timeout(15000) })
             if (res.ok) {
                 const data = await res.json()
-                if (data.results?.length > 0) {
-                    const r = data.results[0]
-                    msg += `✅ Найдено: ${r.title || r.name}\n`
-                } else {
-                    msg += `❌ Нет результатов\n`
-                }
+                const r = data.results?.find(x => x.poster_path)
+                results.push({ name: 'Lampa Proxy', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
             } else {
-                msg += `❌ HTTP ${res.status}\n`
+                results.push({ name: 'Lampa Proxy', status: '❌', detail: `HTTP ${res.status}` })
             }
         } catch (e) {
-            msg += `❌ Ошибка: ${e.message}\n`
+            results.push({ name: 'Lampa Proxy', status: '❌', detail: e.message })
         }
 
-        alert(msg)
+        // 3️⃣ CapacitorHttp (native Android)
+        if (Capacitor.isNativePlatform()) {
+            try {
+                const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+                const response = await CapacitorHttp.get({ url: searchUrl })
+                if (response.data?.results?.length > 0) {
+                    const r = response.data.results.find(x => x.poster_path)
+                    results.push({ name: 'CapacitorHttp', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
+                } else {
+                    results.push({ name: 'CapacitorHttp', status: '⚠️', detail: 'Пустой ответ' })
+                }
+            } catch (e) {
+                if (e.message?.includes('127.0.0.1')) {
+                    results.push({ name: 'CapacitorHttp', status: '🚫', detail: 'DNS POISONING!' })
+                } else {
+                    results.push({ name: 'CapacitorHttp', status: '❌', detail: e.message })
+                }
+            }
+        } else {
+            results.push({ name: 'CapacitorHttp', status: '⏭️', detail: 'только Android' })
+        }
+
+        // 4️⃣ corsproxy.io
+        try {
+            const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
+            const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) })
+            if (res.ok) {
+                const data = await res.json()
+                const r = data.results?.find(x => x.poster_path)
+                results.push({ name: 'corsproxy.io', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
+            } else {
+                results.push({ name: 'corsproxy.io', status: '❌', detail: `HTTP ${res.status}` })
+            }
+        } catch (e) {
+            results.push({ name: 'corsproxy.io', status: '❌', detail: e.message })
+        }
+
+        // 5️⃣ Kinopoisk API
+        if (KP_API_KEY) {
+            try {
+                const kpProxy = 'https://cors.kp556.workers.dev:8443/'
+                const kpUrl = `${kpProxy}https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`
+                const res = await fetch(kpUrl, {
+                    headers: { 'X-API-KEY': KP_API_KEY },
+                    signal: AbortSignal.timeout(8000)
+                })
+                if (res.ok) {
+                    const data = await res.json()
+                    const kp = data.films?.find(f => f.posterUrlPreview)
+                    results.push({ name: 'Кинопоиск', status: kp ? '✅' : '⚠️', detail: kp?.nameRu || kp?.nameEn || 'Нет постеров' })
+                } else {
+                    results.push({ name: 'Кинопоиск', status: '❌', detail: `HTTP ${res.status}` })
+                }
+            } catch (e) {
+                results.push({ name: 'Кинопоиск', status: '❌', detail: e.message })
+            }
+        } else {
+            results.push({ name: 'Кинопоиск', status: '⏭️', detail: 'нет API ключа' })
+        }
+
+        setTestResult({ name: testName, results })
+        setTestLoading(false)
     }
 
     const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('poster_')).length
@@ -157,13 +226,65 @@ const SettingsPanel = ({
                     🗑️ Очистить кэш постеров ({cacheCount} шт.)
                 </button>
 
-                {/* Test Poster Button */}
+                {/* TV-Friendly Poster Test */}
                 <button
-                    onClick={handleTestPoster}
+                    onClick={() => setShowPosterTest(!showPosterTest)}
                     className="mt-2 text-blue-400 text-sm hover:text-blue-300 flex items-center gap-2"
                 >
-                    🧪 Тест (Direct)
+                    🧪 Тест постеров {showPosterTest ? '▼' : '▶'}
                 </button>
+
+                {showPosterTest && (
+                    <div className="mt-3 p-4 bg-gray-800 rounded-lg border border-gray-700 animate-fade-in">
+                        <p className="text-gray-400 text-sm mb-3">Выберите фильм для теста:</p>
+
+                        {/* Torrent List - TV-friendly buttons */}
+                        <div className="max-h-48 overflow-y-auto space-y-2 mb-4">
+                            {torrents.length === 0 ? (
+                                <p className="text-gray-500 text-sm">Нет загруженных торрентов</p>
+                            ) : (
+                                torrents.map(t => (
+                                    <button
+                                        key={t.infoHash}
+                                        onClick={() => runPosterTest(cleanTitle(t.name) || t.name)}
+                                        disabled={testLoading}
+                                        className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 focus:bg-blue-600 focus:outline-none rounded-lg transition-all text-sm truncate disabled:opacity-50"
+                                    >
+                                        🎬 {cleanTitle(t.name) || t.name}
+                                    </button>
+                                ))
+                            )}
+                        </div>
+
+                        {/* Loading State */}
+                        {testLoading && (
+                            <div className="text-center py-4">
+                                <span className="animate-pulse text-blue-400">⏳ Тестирование...</span>
+                            </div>
+                        )}
+
+                        {/* Test Results */}
+                        {testResult && (
+                            <div className="mt-4 p-3 bg-gray-900 rounded-lg border border-gray-600">
+                                <h4 className="font-bold text-white mb-2 text-sm">
+                                    🎬 "{testResult.name}"
+                                </h4>
+                                <div className="space-y-1">
+                                    {testResult.results.map((r, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-xs">
+                                            <span>{r.status}</span>
+                                            <span className="text-gray-400">{r.name}:</span>
+                                            <span className="text-gray-300 truncate">{r.detail}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-3">
+                                    💡 Все ❌ → VPN | DNS Poison → 1.1.1.1
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     )

@@ -441,6 +441,7 @@ function App() {
           onServerUrlChange={handleServerUrlChange}
           tmdbProxyUrl={tmdbProxyUrl}
           onTmdbProxyUrlChange={handleTmdbProxyUrlChange}
+          torrents={torrents}
         />
       )}
 

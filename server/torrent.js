@@ -1,8 +1,23 @@
 import torrentStream from 'torrent-stream'
 import process from 'process'
+import fs from 'fs'
+import path from 'path'
 import { db } from './db.js'
 
 const engines = new Map()
+
+// 🔥 Best Public Trackers (Tier 1 & 2)
+const PUBLIC_TRACKERS = [
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker.torrent.eu.org:451/announce',
+    'udp://tracker.tiny-vps.com:6969/announce',
+    'udp://tracker.cyberia.is:6969/announce',
+    'udp://tracker.moeking.me:6969/announce',
+    'udp://p4p.arenabg.com:1337/announce',
+    'udp://explodie.org:6969/announce',
+    'http://tracker.gbitt.info:80/announce'
+]
 
 // ────────────────────────────────────────────────────────
 // Keep-Alive: Frozen torrents for instant resume (30 min TTL)
@@ -86,14 +101,27 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         const path = process.env.DOWNLOAD_PATH || './downloads'
         console.log('[Torrent] Adding magnet, download path:', path)
 
+        // 🔥 STRATEGY 1: Tracker Injection
+        let enrichedMagnet = magnetURI
+        if (magnetURI.startsWith('magnet:?')) {
+            const extraTr = PUBLIC_TRACKERS
+                .filter(tr => !magnetURI.includes(encodeURIComponent(tr)))
+                .map(tr => `&tr=${encodeURIComponent(tr)}`)
+                .join('')
+            enrichedMagnet += extraTr
+            console.log('[Torrent] Injected', PUBLIC_TRACKERS.length, 'public trackers')
+        }
+
         let engine
         try {
-            engine = torrentStream(magnetURI, {
+            // 🔥 STRATEGY 2: Eco Mode (20 connections) by default
+            engine = torrentStream(enrichedMagnet, {
                 path: path,
-                connections: 20,       // 📉 RAM-safe limit (Reverted from 50)
+                connections: 20,       // Eco Mode: RAM-safe limit
                 uploads: 0,
-                dht: true,             // ✅ DHT enabled (needed for trackerless torrents)
-                verify: false          // ⚡ Faster torrent start
+                dht: true,             // ✅ DHT enabled
+                verify: false,
+                tracker: true
             })
         } catch (err) {
             console.error('[Torrent] Failed to create engine:', err.message)
@@ -141,14 +169,14 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             reject(err)
         })
 
-        // Timeout: reject if torrent doesn't connect within 60s
+        // 🔥 STRATEGY 3: Increased Timeout (90s)
         setTimeout(() => {
             if (!engines.has(magnetURI)) {
                 console.warn('[Torrent] Timeout: no peers found')
                 engine.destroy()
-                reject(new Error('Torrent timeout: no peers found within 60 seconds'))
+                reject(new Error('Torrent timeout: no peers found within 90 seconds'))
             }
-        }, 60000)
+        }, 90000)
     })
 }
 
@@ -208,11 +236,44 @@ export const getAllTorrents = () => {
     return Array.from(uniqueEngines).map(formatEngine)
 }
 
+// ────────────────────────────────────────────────────────
+// Calculate actual downloaded bytes from disk
+// This ensures correct progress after server restart
+// ────────────────────────────────────────────────────────
+function getDownloadedFromDisk(engine) {
+    const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
+    const torrentName = engine.torrent?.name
+    if (!torrentName || !engine.files) return 0
+
+    let totalDownloaded = 0
+    const torrentPath = path.join(downloadPath, torrentName)
+
+    for (const file of engine.files) {
+        try {
+            // For single-file torrents, file.path might be just the filename
+            // For multi-file torrents, it includes subfolder
+            const filePath = path.join(downloadPath, file.path)
+            if (fs.existsSync(filePath)) {
+                const stats = fs.statSync(filePath)
+                totalDownloaded += stats.size
+            }
+        } catch (e) {
+            // File doesn't exist or not accessible
+        }
+    }
+    return totalDownloaded
+}
+
 const formatEngine = (engine) => {
     const totalSize = engine.files?.reduce((sum, f) => sum + f.length, 0) || 0
 
-    // Get downloaded bytes from swarm (this is the most reliable metric)
-    const downloaded = engine.swarm?.downloaded || 0
+    // Get downloaded bytes: prefer disk check for accuracy after restart
+    const diskDownloaded = getDownloadedFromDisk(engine)
+    const swarmDownloaded = engine.swarm?.downloaded || 0
+
+    // Use disk value if larger (handles restart scenario)
+    // Otherwise use swarm value (more accurate during active download)
+    const downloaded = Math.max(diskDownloaded, swarmDownloaded)
 
     // Calculate progress (0-1)
     const progress = totalSize > 0 ? Math.min(downloaded / totalSize, 1) : 0
@@ -231,6 +292,7 @@ const formatEngine = (engine) => {
         infoHash: engine.infoHash,
         name: engine.torrent?.name || 'Unknown Torrent',
         progress: progress,
+        isReady: progress >= 0.99, // 99%+ считается завершённым
         downloaded: downloaded,
         totalSize: totalSize,
         downloadSpeed: downloadSpeed,
@@ -311,4 +373,20 @@ export function readahead(infoHash, fileIndex, byteOffset) {
     }
     console.log(`[Readahead] Seeking to byte ${byteOffset} in file ${fileIndex}`)
     return prioritizeFileInternal(engine, fileIndex, byteOffset)
+}
+
+// ────────────────────────────────────────────────────────
+// 🔥 Turbo Mode: Boost connections when streaming starts
+// ────────────────────────────────────────────────────────
+export const boostTorrent = (infoHash) => {
+    const engine = engines.get(infoHash)
+    if (!engine || !engine.swarm) return
+
+    // If still in Eco Mode (< 65), boost it!
+    if (engine.swarm.maxConnections < 65) {
+        console.log(`[Turbo] 🚀 Boosting connections for ${infoHash}: 20 -> 65`)
+        engine.swarm.maxConnections = 65
+        if (engine.discover) engine.discover()
+        engine.swarm.resume()
+    }
 }
