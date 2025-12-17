@@ -1,10 +1,33 @@
 /**
  * Jacred Torrent Search API
  * Использует публичные Jacred сервисы (как в Lampa)
+ * 
+ * ┌─────────────────────────────────────────────────────────────────────────────┐
+ * │                        🔒 SECURITY NOTICE                                   │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ This module disables SSL certificate validation (rejectUnauthorized: false) │
+ * │                                                                             │
+ * │ WHY: Jacred mirrors often use self-signed or expired certificates.         │
+ * │      Without this, the app would fail to connect to any working mirror.    │
+ * │                                                                             │
+ * │ RISKS:                                                                      │
+ * │   - Man-in-the-middle attacks possible (ISP/VPN could intercept)           │
+ * │   - No guarantee you're talking to the real server                         │
+ * │                                                                             │
+ * │ MITIGATIONS:                                                                │
+ * │   - Multiple mirrors = if one is compromised, others work                  │
+ * │   - Only search queries are sent (no auth, no personal data)               │
+ * │   - Magnet links are cryptographically verified (infohash)                 │
+ * │                                                                             │
+ * │ This is an ACCEPTED TRADEOFF for torrent search functionality.             │
+ * └─────────────────────────────────────────────────────────────────────────────┘
  */
 
 import https from 'https'
 import http from 'http'
+import { logger } from './utils/logger.js'
+
+const log = logger.child('Jacred')
 
 // List of Jacred mirrors (try in order)
 const JACRED_MIRRORS = [
@@ -26,14 +49,15 @@ export const searchJacred = async (query) => {
             const data = await doSearch(mirror, query)
             if (data && data.length > 0) {
                 currentMirror = mirror
-                console.log(`[Jacred] Using mirror: ${mirror}`)
+                log.info('Mirror connected', { mirror, resultsCount: data.length })
                 return { results: data }
             }
         } catch (err) {
-            console.warn(`[Jacred] Mirror ${mirror} failed:`, err.message)
+            log.warn('Mirror failed', { mirror, error: err.message })
         }
     }
 
+    log.error('All mirrors failed', { query })
     return { error: 'All mirrors failed', results: [] }
 }
 
@@ -50,7 +74,8 @@ const doSearch = (mirror, query) => {
             port: 443,
             path: searchPath,
             method: 'GET',
-            rejectUnauthorized: false, // Allow self-signed certs for pirate mirrors
+            // ⚠️ SECURITY: See module header for explanation
+            rejectUnauthorized: false,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'application/json'

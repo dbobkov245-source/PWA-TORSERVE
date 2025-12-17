@@ -63,6 +63,7 @@ app.get('/api/status', (req, res) => {
         infoHash: t.infoHash,
         name: t.name,
         progress: t.progress,
+        isReady: t.isReady,  // ✅ Fix: передаём isReady для правильного отображения в UI
         downloaded: t.downloaded,
         totalSize: t.totalSize,
         downloadSpeed: t.downloadSpeed,
@@ -137,6 +138,58 @@ app.get('/api/rutracker/magnet/:topicId', async (req, res) => {
     // topicId is actually the magnet URL for Jacred
     const result = await getMagnetFromJacred(decodeURIComponent(topicId))
     res.json(result)
+})
+
+// ─────────────────────────────────────────────────────────────
+// Debug API: View and manage persisted torrents in DB
+// ─────────────────────────────────────────────────────────────
+
+// View all torrents saved in db.json
+app.get('/api/db/torrents', async (req, res) => {
+    await db.read()
+    const torrents = db.data.torrents || []
+    res.json({
+        count: torrents.length,
+        torrents: torrents.map(t => ({
+            name: t.name,
+            addedAt: t.addedAt,
+            magnetPreview: t.magnet.substring(0, 80) + '...'
+        }))
+    })
+})
+
+// Force remove a torrent from DB by partial hash match
+app.delete('/api/db/torrents/:hash', async (req, res) => {
+    const { hash } = req.params
+    await db.read()
+
+    const before = db.data.torrents?.length || 0
+    const hashLower = hash.toLowerCase()
+
+    db.data.torrents = (db.data.torrents || []).filter(t => {
+        const magnetLower = t.magnet.toLowerCase()
+        return !magnetLower.includes(hashLower)
+    })
+
+    const removed = before - db.data.torrents.length
+
+    if (removed > 0) {
+        await db.write()
+        console.log(`[DB API] Force removed ${removed} torrent(s) by hash: ${hash}`)
+        res.json({ success: true, removed })
+    } else {
+        res.status(404).json({ error: 'No matching torrent found in DB', hash })
+    }
+})
+
+// Clear ALL torrents from DB (nuclear option)
+app.delete('/api/db/torrents', async (req, res) => {
+    await db.read()
+    const count = db.data.torrents?.length || 0
+    db.data.torrents = []
+    await db.write()
+    console.log(`[DB API] Cleared ALL ${count} torrents from DB`)
+    res.json({ success: true, cleared: count })
 })
 
 // API: Generate M3U Playlist for Video Files

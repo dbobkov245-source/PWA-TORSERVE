@@ -53,10 +53,23 @@ async function saveTorrentToDB(magnetURI, name) {
 async function removeTorrentFromDB(infoHash) {
     db.data.torrents ||= []
     const before = db.data.torrents.length
-    db.data.torrents = db.data.torrents.filter(t => !t.magnet.includes(infoHash))
+    const hashLower = infoHash.toLowerCase()
+
+    // Case-insensitive match: magnet URI contains infoHash in format urn:btih:HASH
+    db.data.torrents = db.data.torrents.filter(t => {
+        const magnetLower = t.magnet.toLowerCase()
+        const shouldRemove = magnetLower.includes(hashLower)
+        if (shouldRemove) {
+            console.log('[Persistence] Matching torrent for removal:', t.name)
+        }
+        return !shouldRemove
+    })
+
     if (db.data.torrents.length < before) {
         await db.write()
-        console.log('[Persistence] Removed torrent from DB:', infoHash)
+        console.log(`[Persistence] Removed ${before - db.data.torrents.length} torrent(s) from DB:`, infoHash)
+    } else {
+        console.log('[Persistence] WARNING: No torrent found in DB for hash:', infoHash)
     }
 }
 
