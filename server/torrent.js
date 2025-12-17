@@ -44,10 +44,29 @@ async function saveTorrentToDB(magnetURI, name) {
     db.data.torrents ||= []
     // Avoid duplicates
     if (!db.data.torrents.find(t => t.magnet === magnetURI)) {
-        db.data.torrents.push({ magnet: magnetURI, name, addedAt: Date.now() })
+        db.data.torrents.push({ magnet: magnetURI, name, addedAt: Date.now(), completed: false })
         await db.write()
         console.log('[Persistence] Saved torrent:', name)
     }
+}
+
+// Mark torrent as completed in DB (survives restart)
+async function markTorrentCompleted(infoHash) {
+    const hashLower = infoHash.toLowerCase()
+    const torrent = db.data.torrents?.find(t => t.magnet.toLowerCase().includes(hashLower))
+    if (torrent && !torrent.completed) {
+        torrent.completed = true
+        await db.write()
+        console.log('[Persistence] Marked as completed:', torrent.name)
+    }
+}
+
+// Check if torrent is marked as completed in DB
+function isTorrentCompleted(infoHash) {
+    const hashLower = infoHash.toLowerCase()
+    return db.data.torrents?.some(t =>
+        t.magnet.toLowerCase().includes(hashLower) && t.completed === true
+    ) || false
 }
 
 async function removeTorrentFromDB(infoHash) {
@@ -259,7 +278,6 @@ function getDownloadedFromDisk(engine) {
     if (!torrentName || !engine.files) return 0
 
     let totalDownloaded = 0
-    const torrentPath = path.join(downloadPath, torrentName)
 
     for (const file of engine.files) {
         try {
@@ -268,7 +286,14 @@ function getDownloadedFromDisk(engine) {
             const filePath = path.join(downloadPath, file.path)
             if (fs.existsSync(filePath)) {
                 const stats = fs.statSync(filePath)
-                totalDownloaded += stats.size
+                // 🔥 FIX: Use blocks * 512 for actual data on disk
+                // This works with sparse files and pre-allocated files
+                // Falls back to size if blocks not available (Windows)
+                const actualBytes = (stats.blocks !== undefined)
+                    ? stats.blocks * 512
+                    : stats.size
+                // Cap at file.length to avoid over-counting
+                totalDownloaded += Math.min(actualBytes, file.length)
             }
         } catch (e) {
             // File doesn't exist or not accessible
@@ -280,16 +305,35 @@ function getDownloadedFromDisk(engine) {
 const formatEngine = (engine) => {
     const totalSize = engine.files?.reduce((sum, f) => sum + f.length, 0) || 0
 
-    // Get downloaded bytes: prefer disk check for accuracy after restart
+    // Get downloaded bytes from different sources
     const diskDownloaded = getDownloadedFromDisk(engine)
     const swarmDownloaded = engine.swarm?.downloaded || 0
 
-    // Use disk value if larger (handles restart scenario)
-    // Otherwise use swarm value (more accurate during active download)
-    const downloaded = Math.max(diskDownloaded, swarmDownloaded)
+    // 🔥 Check if already marked as completed in DB (survives restart)
+    const wasCompleted = isTorrentCompleted(engine.infoHash)
+
+    // Determine downloaded bytes:
+    // 1. If marked completed in DB → use totalSize
+    // 2. If swarm has data → use swarm (active download)
+    // 3. Otherwise → use disk (restart scenario, partial download)
+    let downloaded
+    if (wasCompleted) {
+        downloaded = totalSize
+    } else if (swarmDownloaded > 0) {
+        downloaded = swarmDownloaded
+    } else {
+        downloaded = diskDownloaded
+    }
 
     // Calculate progress (0-1)
     const progress = totalSize > 0 ? Math.min(downloaded / totalSize, 1) : 0
+
+    // Check if ready (and save completed status if newly completed)
+    const isReady = wasCompleted || progress >= 0.99
+    if (isReady && !wasCompleted && progress >= 0.99) {
+        // Mark as completed in DB (async, fire-and-forget)
+        markTorrentCompleted(engine.infoHash)
+    }
 
     // Get download speed
     const downloadSpeed = engine.swarm?.downloadSpeed() || 0
@@ -305,7 +349,7 @@ const formatEngine = (engine) => {
         infoHash: engine.infoHash,
         name: engine.torrent?.name || 'Unknown Torrent',
         progress: progress,
-        isReady: progress >= 0.99, // 99%+ считается завершённым
+        isReady: isReady,
         downloaded: downloaded,
         totalSize: totalSize,
         downloadSpeed: downloadSpeed,
@@ -393,14 +437,28 @@ export function readahead(infoHash, fileIndex, byteOffset) {
 // ────────────────────────────────────────────────────────
 export const boostTorrent = (infoHash) => {
     const engine = engines.get(infoHash)
-    if (!engine || !engine.swarm) return
+
+    // Debug: why boost might not work
+    if (!engine) {
+        console.warn(`[Turbo] Engine not found for: ${infoHash}`)
+        return
+    }
+    if (!engine.swarm) {
+        console.warn(`[Turbo] No swarm for: ${infoHash}`)
+        return
+    }
+
+    const currentMax = engine.swarm.maxConnections || 0
+    console.log(`[Turbo] Current connections: ${engine.swarm.wires?.length || 0}/${currentMax}`)
 
     // If still in Eco Mode (< 65), boost it!
-    if (engine.swarm.maxConnections < 65) {
-        console.log(`[Turbo] 🚀 Boosting connections for ${infoHash}: 20 -> 65`)
+    if (currentMax < 65) {
+        console.log(`[Turbo] 🚀 Boosting connections for ${infoHash}: ${currentMax} -> 65`)
         engine.swarm.maxConnections = 65
         if (engine.discover) engine.discover()
         engine.swarm.resume()
+    } else {
+        console.log(`[Turbo] Already boosted (${currentMax}), skipping`)
     }
 }
 
