@@ -403,3 +403,32 @@ export const boostTorrent = (infoHash) => {
         engine.swarm.resume()
     }
 }
+
+// ────────────────────────────────────────────────────────
+// 🛑 Graceful Shutdown: Destroy all torrents
+// ────────────────────────────────────────────────────────
+export const destroyAllTorrents = () => {
+    console.log(`[Shutdown] Destroying ${engines.size} active engines...`)
+
+    // Destroy all active engines
+    const uniqueEngines = new Set(engines.values())
+    for (const engine of uniqueEngines) {
+        try {
+            engine.destroy()
+        } catch (e) {
+            console.warn('[Shutdown] Engine destroy failed:', e.message)
+        }
+    }
+    engines.clear()
+
+    // Clear frozen torrents
+    console.log(`[Shutdown] Clearing ${frozenTorrents.size} frozen torrents...`)
+    for (const [hash, frozen] of frozenTorrents.entries()) {
+        try {
+            frozen.engine.destroy()
+        } catch (e) { }
+    }
+    frozenTorrents.clear()
+
+    console.log('[Shutdown] All torrents destroyed')
+}

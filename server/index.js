@@ -6,9 +6,9 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents } from './torrent.js'
 import { db } from './db.js'
-import { startWatchdog, getServerState } from './watchdog.js'
+import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 
 dotenv.config()
 
@@ -22,9 +22,55 @@ const PORT = process.env.PORT || 3000
 app.use(cors())
 app.use(express.json())
 
-// DEBUG USER: Log all requests
+// ────────────────────────────────────────────────────────
+// 🛡️ Rate Limiting (Zero-Dependency)
+// 30 requests per minute per IP for /api/* routes
+// ────────────────────────────────────────────────────────
+const rateLimitMap = new Map()
+const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
+const RATE_LIMIT_MAX = 30 // requests per window
+
+// Cleanup old entries every 5 minutes
+setInterval(() => {
+    const now = Date.now()
+    for (const [ip, data] of rateLimitMap.entries()) {
+        if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+            rateLimitMap.delete(ip)
+        }
+    }
+}, 5 * 60 * 1000)
+
+app.use('/api/', (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown'
+    const now = Date.now()
+
+    let entry = rateLimitMap.get(ip)
+    if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+        // New window
+        entry = { windowStart: now, count: 1 }
+        rateLimitMap.set(ip, entry)
+    } else {
+        entry.count++
+    }
+
+    // Set rate limit headers
+    res.set('X-RateLimit-Limit', RATE_LIMIT_MAX)
+    res.set('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT_MAX - entry.count))
+    res.set('X-RateLimit-Reset', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS) / 1000))
+
+    if (entry.count > RATE_LIMIT_MAX) {
+        console.warn(`[RateLimit] Too many requests from ${ip}: ${entry.count}`)
+        return res.status(429).json({
+            error: 'Too many requests',
+            retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000)
+        })
+    }
+
+    next()
+})
+
+// DEBUG: Log all non-static requests
 app.use((req, res, next) => {
-    // Filter out boring static files to keep logs clean
     if (!req.url.match(/\.(js|css|png|jpg|ico|map)$/)) {
         console.log(`[HTTP] ${req.method} ${req.url}`)
     }
@@ -362,7 +408,7 @@ app.get('*', (req, res) => {
     }
 })
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`)
 
     // Restore saved torrents from db.json
@@ -375,3 +421,41 @@ app.listen(PORT, '0.0.0.0', () => {
         console.error('[Server] Watchdog failed:', err.message)
     })
 })
+
+// ────────────────────────────────────────────────────────
+// 🛑 Graceful Shutdown
+// Handles: Docker stop, NAS restart, Ctrl+C
+// ────────────────────────────────────────────────────────
+let isShuttingDown = false
+
+const gracefulShutdown = async (signal) => {
+    if (isShuttingDown) return
+    isShuttingDown = true
+
+    console.log(`\n[Shutdown] Received ${signal}, starting graceful shutdown...`)
+
+    // 1. Stop accepting new connections
+    server.close(() => {
+        console.log('[Shutdown] HTTP server closed')
+    })
+
+    // 2. Stop watchdog
+    stopWatchdog()
+
+    // 3. Destroy all torrent engines
+    destroyAllTorrents()
+
+    // 4. Save DB state
+    try {
+        await db.write()
+        console.log('[Shutdown] Database saved')
+    } catch (e) {
+        console.error('[Shutdown] DB save failed:', e.message)
+    }
+
+    console.log('[Shutdown] Cleanup complete, exiting...')
+    process.exit(0)
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
