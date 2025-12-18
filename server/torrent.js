@@ -187,6 +187,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             engines.set(magnetURI, engine)
             engines.set(engine.infoHash, engine)
 
+            // 🔄 Invalidate status cache on new torrent
+            invalidateStatusCache()
+
             // Save to DB for persistence (unless restoring)
             if (!skipSave) {
                 saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
@@ -215,6 +218,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 export const removeTorrent = (infoHash, forceDestroy = false) => {
     const engine = engines.get(infoHash)
     if (!engine) return false
+
+    // 🔄 Invalidate status cache on torrent removal
+    invalidateStatusCache()
 
     // Find magnetURI for this engine
     let magnetURI = null
@@ -266,9 +272,33 @@ export const getRawTorrent = (infoHash) => {
     return engines.get(infoHash) || null
 }
 
+// ────────────────────────────────────────────────────────
+// 🚀 Status Cache: Reduce CPU load from frequent polling
+// ────────────────────────────────────────────────────────
+let statusCache = null
+let statusCacheTime = 0
+const STATUS_CACHE_TTL = 2000 // 2 seconds
+
 export const getAllTorrents = () => {
+    const now = Date.now()
+
+    // Return cached result if fresh
+    if (statusCache && now - statusCacheTime < STATUS_CACHE_TTL) {
+        return statusCache
+    }
+
+    // Recalculate and cache
     const uniqueEngines = new Set(engines.values())
-    return Array.from(uniqueEngines).map(formatEngine)
+    statusCache = Array.from(uniqueEngines).map(formatEngine)
+    statusCacheTime = now
+
+    return statusCache
+}
+
+// Invalidate cache when torrents change
+export const invalidateStatusCache = () => {
+    statusCache = null
+    statusCacheTime = 0
 }
 
 // ────────────────────────────────────────────────────────
