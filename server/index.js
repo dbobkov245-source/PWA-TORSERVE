@@ -356,12 +356,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const ext = path.extname(file.name).toLowerCase()
     const contentType = mimeMap[ext] || 'application/octet-stream'
 
-    // Synology Cache Path Check
-    const downloadPath = process.env.DOWNLOAD_PATH
-    if (downloadPath && !fs.existsSync(downloadPath)) {
-        console.error(`Cache path not accessible: ${downloadPath}`)
-        return res.status(500).send('Cache storage not accessible')
-    }
+    // Note: Download path check moved to startup (cached)
 
     if (!range) {
         const head = {
@@ -412,9 +407,14 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     }
 })
 
-// Fallback for SPA
+// Fallback for SPA (index.html existence cached at startup)
+let indexHtmlExists = false
+try {
+    indexHtmlExists = fs.existsSync(path.join(distPath, 'index.html'))
+} catch (e) { }
+
 app.get('*', (req, res) => {
-    if (fs.existsSync(path.join(distPath, 'index.html'))) {
+    if (indexHtmlExists) {
         res.sendFile(path.join(distPath, 'index.html'))
     } else {
         res.send('Frontend not built. Run npm run client:build')
