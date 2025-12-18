@@ -246,6 +246,9 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
         })
     }
 
+    // 🔥 Memory fix: clear disk cache for this torrent
+    diskDownloadCache.delete(infoHash)
+
     // Remove from persistent storage
     removeTorrentFromDB(infoHash)
 
@@ -278,6 +281,13 @@ const DISK_CACHE_TTL = 30000 // 30 seconds
 // Non-blocking: returns cached value, schedules background update
 function getDownloadedFromDisk(engine) {
     const infoHash = engine.infoHash
+
+    // 🔥 Memory fix: hard cap on cache size
+    if (diskDownloadCache.size > 50) {
+        console.log('[Memory] Clearing diskDownloadCache (size exceeded 50)')
+        diskDownloadCache.clear()
+    }
+
     const cached = diskDownloadCache.get(infoHash)
     const now = Date.now()
 

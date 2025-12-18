@@ -18,31 +18,31 @@ export class LagMonitor {
 
     start() {
         if (this.intervalId) return // Already running
-        
+
         this.intervalId = setInterval(() => {
             const now = Date.now()
-            const expected = 100
+            const expected = 250  // 🔥 Memory fix: 250ms interval instead of 100ms
             const lag = now - this.lastCheck - expected
-            
+
             if (lag > this.threshold) {
                 const event = {
                     timestamp: now,
                     lag: lag,
                     memory: Math.round(process.memoryUsage().rss / 1024 / 1024)
                 }
-                
+
                 this.lagEvents.push(event)
                 console.warn(`[LagMonitor] Event loop lag: ${lag}ms, RAM: ${event.memory}MB`)
-                
-                // Keep only last 100 events
-                if (this.lagEvents.length > 100) {
+
+                // 🔥 Memory fix: keep only last 50 events (was 100)
+                if (this.lagEvents.length > 50) {
                     this.lagEvents.shift()
                 }
             }
-            
+
             this.lastCheck = now
-        }, 100)
-        
+        }, 250)  // 🔥 Memory fix: 250ms instead of 100ms (4x less allocations)
+
         console.log('[LagMonitor] Started')
     }
 
@@ -56,14 +56,14 @@ export class LagMonitor {
 
     getStats() {
         const now = Date.now()
-        const recentLags = this.lagEvents.filter(e => 
+        const recentLags = this.lagEvents.filter(e =>
             now - e.timestamp < 60000
         )
-        
+
         return {
             totalLags: this.lagEvents.length,
             recentLags: recentLags.length,
-            avgLag: recentLags.length > 0 
+            avgLag: recentLags.length > 0
                 ? Math.round(recentLags.reduce((sum, e) => sum + e.lag, 0) / recentLags.length)
                 : 0,
             maxLag: recentLags.length > 0
