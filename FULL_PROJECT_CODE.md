@@ -1,6 +1,6 @@
 # PWA-TorServe Project Code
 
-This document contains the complete source code for the PWA-TorServe project, updated with recent performance optimizations (LagMonitor, async disk cache, debounced DB writes).
+This document contains the complete source code for the PWA-TorServe project, updated with recent performance optimizations (LagMonitor, async disk cache, debounced DB writes, status caching, memory fixes).
 
 ## Project Structure
 
@@ -811,6 +811,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
             engines.set(magnetURI, engine)
             engines.set(engine.infoHash, engine)
+            
+            // 🔄 Invalidate status cache on new torrent
+            invalidateStatusCache()
 
             // Save to DB for persistence (unless restoring)
             if (!skipSave) {
@@ -840,6 +843,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 export const removeTorrent = (infoHash, forceDestroy = false) => {
     const engine = engines.get(infoHash)
     if (!engine) return false
+    
+    // 🔄 Invalidate status cache on torrent removal
+    invalidateStatusCache()
 
     // Find magnetURI for this engine
     let magnetURI = null
@@ -871,6 +877,9 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
         })
     }
 
+    // 🔥 Memory fix: clear disk cache for this torrent
+    diskDownloadCache.delete(infoHash)
+
     // Remove from persistent storage
     removeTorrentFromDB(infoHash)
 
@@ -888,9 +897,33 @@ export const getRawTorrent = (infoHash) => {
     return engines.get(infoHash) || null
 }
 
+// ────────────────────────────────────────────────────────
+// 🚀 Status Cache: Reduce CPU load from frequent polling
+// ────────────────────────────────────────────────────────
+let statusCache = null
+let statusCacheTime = 0
+const STATUS_CACHE_TTL = 2000 // 2 seconds
+
 export const getAllTorrents = () => {
+    const now = Date.now()
+    
+    // Return cached result if fresh
+    if (statusCache && now - statusCacheTime < STATUS_CACHE_TTL) {
+        return statusCache
+    }
+    
+    // Recalculate and cache
     const uniqueEngines = new Set(engines.values())
-    return Array.from(uniqueEngines).map(formatEngine)
+    statusCache = Array.from(uniqueEngines).map(formatEngine)
+    statusCacheTime = now
+    
+    return statusCache
+}
+
+// Invalidate cache when torrents change
+export const invalidateStatusCache = () => {
+    statusCache = null
+    statusCacheTime = 0
 }
 
 // ────────────────────────────────────────────────────────
@@ -903,6 +936,13 @@ const DISK_CACHE_TTL = 30000 // 30 seconds
 // Non-blocking: returns cached value, schedules background update
 function getDownloadedFromDisk(engine) {
     const infoHash = engine.infoHash
+    
+    // 🔥 Memory fix: hard cap on cache size
+    if (diskDownloadCache.size > 50) {
+        console.log('[Memory] Clearing diskDownloadCache (size exceeded 50)')
+        diskDownloadCache.clear()
+    }
+    
     const cached = diskDownloadCache.get(infoHash)
     const now = Date.now()
 
@@ -1422,31 +1462,31 @@ export class LagMonitor {
 
     start() {
         if (this.intervalId) return // Already running
-        
+
         this.intervalId = setInterval(() => {
             const now = Date.now()
-            const expected = 100
+            const expected = 250  // 🔥 Memory fix: 250ms interval instead of 100ms
             const lag = now - this.lastCheck - expected
-            
+
             if (lag > this.threshold) {
                 const event = {
                     timestamp: now,
                     lag: lag,
                     memory: Math.round(process.memoryUsage().rss / 1024 / 1024)
                 }
-                
+
                 this.lagEvents.push(event)
                 console.warn(`[LagMonitor] Event loop lag: ${lag}ms, RAM: ${event.memory}MB`)
-                
-                // Keep only last 100 events
-                if (this.lagEvents.length > 100) {
+
+                // 🔥 Memory fix: keep only last 50 events (was 100)
+                if (this.lagEvents.length > 50) {
                     this.lagEvents.shift()
                 }
             }
-            
+
             this.lastCheck = now
-        }, 100)
-        
+        }, 250)  // 🔥 Memory fix: 250ms instead of 100ms (4x less allocations)
+
         console.log('[LagMonitor] Started')
     }
 
@@ -1460,14 +1500,14 @@ export class LagMonitor {
 
     getStats() {
         const now = Date.now()
-        const recentLags = this.lagEvents.filter(e => 
+        const recentLags = this.lagEvents.filter(e =>
             now - e.timestamp < 60000
         )
-        
+
         return {
             totalLags: this.lagEvents.length,
             recentLags: recentLags.length,
-            avgLag: recentLags.length > 0 
+            avgLag: recentLags.length > 0
                 ? Math.round(recentLags.reduce((sum, e) => sum + e.lag, 0) / recentLags.length)
                 : 0,
             maxLag: recentLags.length > 0
