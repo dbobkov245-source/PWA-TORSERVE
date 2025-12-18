@@ -20,14 +20,28 @@ const PUBLIC_TRACKERS = [
 ]
 
 // ────────────────────────────────────────────────────────
-// Keep-Alive: Frozen torrents for instant resume (30 min TTL)
+// Keep-Alive: Frozen torrents for instant resume (5 min TTL)
+// 🔥 Memory fix: reduced from 30min to 5min, max 3 frozen
 // ────────────────────────────────────────────────────────
 const frozenTorrents = new Map() // infoHash -> { engine, frozenAt, magnetURI }
-const FROZEN_TTL = 30 * 60 * 1000 // 30 minutes
+const FROZEN_TTL = 5 * 60 * 1000 // 🔥 5 minutes (was 30)
+const MAX_FROZEN_TORRENTS = 3    // 🔥 Limit frozen count
 
-// Cleanup expired frozen torrents every 5 minutes
+// Cleanup expired frozen torrents every 2 minutes
 setInterval(() => {
     const now = Date.now()
+
+    // 🔥 Memory fix: destroy oldest if over limit
+    while (frozenTorrents.size > MAX_FROZEN_TORRENTS) {
+        const oldest = [...frozenTorrents.entries()]
+            .sort((a, b) => a[1].frozenAt - b[1].frozenAt)[0]
+        if (oldest) {
+            console.log(`[Keep-Alive] Over limit, destroying oldest: ${oldest[0]}`)
+            oldest[1].engine.destroy()
+            frozenTorrents.delete(oldest[0])
+        }
+    }
+
     for (const [hash, frozen] of frozenTorrents.entries()) {
         if (now - frozen.frozenAt > FROZEN_TTL) {
             console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
@@ -35,7 +49,7 @@ setInterval(() => {
             frozenTorrents.delete(hash)
         }
     }
-}, 5 * 60 * 1000)
+}, 2 * 60 * 1000) // Check every 2 minutes
 
 // ────────────────────────────────────────────────────────
 // Persistence: Save/Remove torrents to db.json
@@ -304,8 +318,9 @@ export const invalidateStatusCache = () => {
 // ────────────────────────────────────────────────────────
 // Calculate actual downloaded bytes from disk (CACHED)
 // Uses background updates to avoid blocking event loop
+// 🔥 Memory fix: added async dedup to prevent parallel storms
 // ────────────────────────────────────────────────────────
-const diskDownloadCache = new Map() // infoHash -> { bytes, updatedAt }
+const diskDownloadCache = new Map() // infoHash -> { bytes, updatedAt, updating }
 const DISK_CACHE_TTL = 30000 // 30 seconds
 
 // Non-blocking: returns cached value, schedules background update
@@ -326,8 +341,19 @@ function getDownloadedFromDisk(engine) {
         return cached.bytes
     }
 
-    // Schedule async update (fire-and-forget)
-    updateDiskCacheAsync(engine).catch(() => { })
+    // 🔥 Memory fix: prevent parallel async updates (async dedup)
+    if (!cached?.updating) {
+        diskDownloadCache.set(infoHash, {
+            bytes: cached?.bytes || 0,
+            updatedAt: cached?.updatedAt || 0,
+            updating: true
+        })
+
+        updateDiskCacheAsync(engine).finally(() => {
+            const entry = diskDownloadCache.get(infoHash)
+            if (entry) entry.updating = false
+        })
+    }
 
     // Return stale cache or 0 while updating
     return cached?.bytes || 0
@@ -418,11 +444,14 @@ const formatEngine = (engine) => {
         uploadSpeed: engine.swarm?.uploadSpeed() || 0,
         numPeers: engine.swarm?.wires?.length || 0,
         eta: eta, // seconds remaining
+        // 🔥 Memory fix: only include file count, not full array
+        // Full files array available via getTorrent(hash) on demand
+        fileCount: engine.files?.length || 0,
         files: engine.files ? engine.files.map((file, index) => ({
             name: file.name,
             length: file.length,
-            path: file.path,
             index: index
+            // 🔥 Removed: path (not needed for UI list)
         })) : []
     }
 }
