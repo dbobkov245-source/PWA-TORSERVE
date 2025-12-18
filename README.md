@@ -1,179 +1,82 @@
 # 📺 PWA-TorServe
+**Self-Healing Streaming Torrent Server for Home**
 
-**Самовосстанавливающийся стриминговый сервис торрентов для Android TV, мобильных устройств и браузера.**
-
-Позволяет смотреть торренты **онлайн без полного скачивания**, с поддержкой внешних плееров (Vimu, VLC, MX Player) прямо из PWA. Работает на Synology NAS, Raspberry Pi, домашнем сервере или в Docker.
+Listen to audiobooks, watch movies and TV shows **online without full downloading** on Android TV, phone, browser, or any device. Works on Synology NAS, Raspberry Pi, home server, or in Docker. Starts in seconds.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
----
+### ✨ Why PWA-TorServe?
+- **Instant Start** — Video plays in 5–10 seconds (even 4K HDR)
+- **Self-Healing** — Watchdog + Circuit Breaker + RAM monitoring to prevent crashes
+- **Turbo Mode** — Automatically boosts connections during playback
+- **Smart Priority** — Prioritizes first video chunks for instant start
+- **Native Players** — Vimu, VLC, MX Player launch directly from PWA (Capacitor)
+- **TV-Friendly UI** — Netflix-like interface with remote control/focus support
+- **Docker-First** — Single `docker-compose up` → ready on NAS
 
-## ✨ Почему PWA-TorServe?
+### 🚀 Features
+| Feature | Description |
+| :--- | :--- |
+| 📺 **Streaming** | Stream without full download (torrent-stream + on-demand priority) |
+| 🔍 **Search** | Jacred (multi-mirror) + TMDB/Kinopoisk posters |
+| 🎬 **Turbo & Priority** | Auto-boost peers + prioritize required chunks for playback start |
+| 🖼️ **Posters & Metadata** | TMDB/Kinopoisk with DoH bypass for blocks |
+| 📋 **M3U Playlist** | For Kodi, Plex, VLC integration |
+| 🧹 **File Hygiene** | Auto-delete files when removing torrents |
+| 🛡️ **Watchdog** | RAM/Storage monitoring, auto-pause, circuit breaker |
+| ⚡ **PWA + Native** | Installable as an app on Android TV/Phone |
 
-- **Мгновенный старт** — видео начинает играть через 5–10 секунд (даже 4K HDR)
-- **Self-Healing** — watchdog с circuit breaker, RAM-мониторингом и автоочисткой файлов
-- **Native плееры** — Vimu/VLC/MX запускаются из PWA (Capacitor bridge)
-- **TV-friendly UI** — Netflix-подобный интерфейс с фокусом и большими кнопками
-- **Docker-first** — один файл `docker-compose.yml` → работает на NAS за 1 минуту
+### 🛠 Tech Stack
+- **Backend**: Node.js, Express, torrent-stream, lowdb
+- **Frontend**: React 19, Vite 7, TailwindCSS 4
+- **Mobile/TV**: Capacitor 6 (APK + native intents)
+- **DevOps**: Docker multi-stage, docker-compose
+- **Bypass**: DoH, insecureAgent, Cloudflare Worker (optional)
 
----
-
-## 🚀 Возможности
-
-| Функция | Описание |
-|---------|----------|
-| 📺 **Стриминг** | Воспроизведение без полного скачивания (torrent-stream) |
-| 🔍 **Поиск** | Jacred (множественные зеркала) |
-| ⚡ **Turbo Mode** | Автоматическое увеличение соединений при просмотре |
-| 🎬 **Smart Priority** | Приоритизация первых кусков видео для мгновенного старта |
-| 🖼️ **Постеры** | TMDB/Kinopoisk с обходом блокировок |
-| 📋 **M3U Playlist** | Для Kodi/Plex/VLC |
-| 🧹 **File Hygiene** | Автоудаление файлов при удалении торрента |
-| 🛡️ **Watchdog** | Мониторинг RAM, хранилища, auto-restart |
-
----
-
-## 🛠 Технологии
-
-| Компонент | Технологии |
-|-----------|------------|
-| **Backend** | Node.js, Express, torrent-stream, lowdb |
-| **Frontend** | React 19, Vite 7, TailwindCSS 4 |
-| **Mobile/TV** | Capacitor 6 (APK + native bridge) |
-| **DevOps** | Docker, Docker Compose (multi-stage) |
-| **Обход блокировок** | DoH, Cloudflare Worker, wsrv.nl |
-
----
-
-## 📦 Установка
-
-### Вариант 1: Docker (рекомендуется)
-
+### 📦 Installation (1 Minute)
+**Docker (Synology / Raspberry Pi / Any NAS)**
 ```bash
-# Создайте папку для загрузок
+# Create download folder
 mkdir -p /volume1/docker/pwa-torserve/downloads
 
-# Запустите
+# Start container
 docker-compose up -d
 ```
 
-Доступ: `http://ваш-ip:3000`
+**Access:** `http://your-nas-ip:3000`
 
-### Вариант 2: Raspberry Pi / Linux
-
-```bash
-git clone https://github.com/yourusername/pwa-torserve.git
-cd pwa-torserve
-npm install
-npm run client:build
-npm start
-```
-
-### Клиент (Android TV / Phone)
-
-1. В папке `client`:
+### 📱 Android TV / Mobile Client
+1. Open `http://your-nas-ip:3000` in Chrome
+2. Tap "Add to Home Screen" (PWA)
+3. **Or build native APK:**
    ```bash
-   npm install
-   npm run build
+   cd client && npm install && npm run build
    npx cap sync
+   cd android && ./gradlew assembleDebug
    ```
-2. Соберите APK:
-   ```bash
-   cd android
-   ./gradlew assembleDebug
-   ```
-3. Установите `app-debug.apk` на ТВ-бокс.
 
-**Web/PWA**: Откройте `http://ваш-ip:3000` → "Добавить на главный экран".
+### ⚡ Usage
+1. Open the app
+2. Paste **magnet link** → **Add**
+3. Wait for metadata (5-10 sec)
+4. Press **▶ WATCH** → Video opens in Vimu/VLC/MX Player
 
----
+### ❓ FAQ
+**Q: Does it work on Android TV?**
+A: Yes! Use the PWA or build the APK. Supports Vimu/VLC/MX Player via native intents.
 
-## ⚡ Использование
+**Q: How much RAM is needed?**
+A: 512MB–1GB is sufficient. The watchdog prevents OOM issues.
 
-1. Откройте приложение
-2. Вставьте **magnet-ссылку** → **Add**
-3. Дождитесь метаданных (5-10 сек)
-4. Нажмите **▶ WATCH** → видео откроется в Vimu/VLC/MX Player
-
----
-
-## 🧱 Структура проекта
-
-```
-pwa-torserve/
-├── server/              # Backend + API + Watchdog
-│   ├── index.js         # Express API
-│   ├── torrent.js       # Torrent engine
-│   ├── watchdog.js      # Self-healing система
-│   ├── jacred.js        # Поиск торрентов
-│   └── utils/           # Helpers (logger, DoH)
-├── client/              # React PWA
-│   ├── src/components/  # UI компоненты
-│   └── android/         # Native Capacitor bridge
-├── Dockerfile           # Multi-stage build
-├── docker-compose.yml   # Production deploy
-└── README.md
-```
+**Q: TMDB is blocked?**
+A: Use Cloudflare Worker or Kinopoisk API (see `.env.example`).
 
 ---
 
-## 🆕 Недавние улучшения
+### 📄 License
+MIT License — Free to use, modify, and distribute.
 
-- ✅ **Structured Logger** — ISO timestamps, уровни логов, модульный контекст
-- ✅ **Unit Tests** — 13 тестов без внешних зависимостей
-- ✅ **Debug API** — `/api/db/torrents` для управления персистентностью
-- ✅ **isReady Fix** — правильное отображение завершённых торрентов
-- ✅ **SSL Documentation** — документирование security tradeoffs
+### ❤️ Contribute
+If this project helped you, please star it on GitHub!
 
----
-
-## 🔒 Безопасность
-
-- Нет хардкода API ключей
-- Конфигурация через `.env`
-- DoH для обхода DNS-блокировок
-- Документированные security tradeoffs
-
----
-
-## ❓ Частые вопросы
-
-**Q: Работает ли на Android TV?**  
-A: Да! Поддержка Vimu/VLC/MX Player через native intent.
-
-**Q: Как обойти блокировку TMDB?**  
-A: Используйте Cloudflare Worker или Kinopoisk API (см. `.env.example`).
-
-**Q: Сколько RAM нужно?**  
-A: 512 МБ–1 ГБ достаточно (watchdog защитит от OOM).
-
-**Q: Как запустить тесты?**  
-A: `node server/__tests__/run-tests.js`
-
----
-
-## 📋 API Endpoints
-
-| Endpoint | Метод | Описание |
-|----------|-------|----------|
-| `/api/status` | GET | Статус сервера и торрентов |
-| `/api/add` | POST | Добавить magnet |
-| `/api/delete/:hash` | DELETE | Удалить торрент |
-| `/stream/:hash/:index` | GET | Стриминг файла |
-| `/api/db/torrents` | GET | Список в БД (debug) |
-| `/api/db/torrents` | DELETE | Очистить БД |
-| `/playlist.m3u` | GET | M3U плейлист |
-
----
-
-## 📄 Лицензия
-
-MIT License — можно использовать, модифицировать, распространять бесплатно.
-
----
-
-## ❤️ Контрибьют
-
-Если проект помог — поставьте ⭐ на GitHub.
-
-**Сделано с ❤️ для домашнего кинотеатра.
+**Made with ❤️ for home cinema.**
