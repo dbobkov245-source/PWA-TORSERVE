@@ -9,6 +9,13 @@ import fs from 'fs'
 import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
+import { LagMonitor } from './utils/lag-monitor.js'
+
+// ────────────────────────────────────────────────────────
+// 📊 Lag Monitor: Detect event loop blocking
+// ────────────────────────────────────────────────────────
+const lagMonitor = new LagMonitor(50) // 50ms threshold
+lagMonitor.start()
 
 dotenv.config()
 
@@ -88,6 +95,11 @@ app.get('/api/health', (req, res) => {
         serverStatus: state.serverStatus,
         lastStateChange: state.lastStateChange
     })
+})
+
+// API: Lag Stats (performance monitoring)
+app.get('/api/lag-stats', (req, res) => {
+    res.json(lagMonitor.getStats())
 })
 
 // API: Status (with server state)
@@ -372,7 +384,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const duration = parseFloat(req.query.duration) || 0
         const progressTime = duration > 0 ? (start / file.length) * duration : 0
 
-        // Save to DB (Throttled: max once per 10s per file)
+        // 🔥 Debounced DB save (fire-and-forget, no await)
         const trackKey = `${infoHash}_${fileIndex}`
         const now = Date.now()
         const lastUpdate = db.data.progress[trackKey]?.timestamp || 0
@@ -384,7 +396,8 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
                 progressTime: progressTime,
                 percentage: (start / file.length) * 100
             }
-            await db.write()
+            // Fire-and-forget: don't block streaming
+            db.write().catch(e => console.warn('[DB] Write failed:', e.message))
         }
 
         const head = {
@@ -439,8 +452,9 @@ const gracefulShutdown = async (signal) => {
         console.log('[Shutdown] HTTP server closed')
     })
 
-    // 2. Stop watchdog
+    // 2. Stop watchdog and lag monitor
     stopWatchdog()
+    lagMonitor.stop()
 
     // 3. Destroy all torrent engines
     destroyAllTorrents()
