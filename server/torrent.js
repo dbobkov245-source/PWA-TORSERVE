@@ -269,37 +269,59 @@ export const getAllTorrents = () => {
 }
 
 // ────────────────────────────────────────────────────────
-// Calculate actual downloaded bytes from disk
-// This ensures correct progress after server restart
+// Calculate actual downloaded bytes from disk (CACHED)
+// Uses background updates to avoid blocking event loop
 // ────────────────────────────────────────────────────────
+const diskDownloadCache = new Map() // infoHash -> { bytes, updatedAt }
+const DISK_CACHE_TTL = 30000 // 30 seconds
+
+// Non-blocking: returns cached value, schedules background update
 function getDownloadedFromDisk(engine) {
+    const infoHash = engine.infoHash
+    const cached = diskDownloadCache.get(infoHash)
+    const now = Date.now()
+
+    // Return cached value if fresh
+    if (cached && now - cached.updatedAt < DISK_CACHE_TTL) {
+        return cached.bytes
+    }
+
+    // Schedule async update (fire-and-forget)
+    updateDiskCacheAsync(engine).catch(() => { })
+
+    // Return stale cache or 0 while updating
+    return cached?.bytes || 0
+}
+
+// Background async update (doesn't block event loop)
+async function updateDiskCacheAsync(engine) {
     const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
-    const torrentName = engine.torrent?.name
-    if (!torrentName || !engine.files) return 0
+    const infoHash = engine.infoHash
+
+    if (!engine.torrent?.name || !engine.files) {
+        diskDownloadCache.set(infoHash, { bytes: 0, updatedAt: Date.now() })
+        return
+    }
 
     let totalDownloaded = 0
 
+    // Use async fs for non-blocking I/O
+    const fsPromises = await import('fs/promises')
+
     for (const file of engine.files) {
         try {
-            // For single-file torrents, file.path might be just the filename
-            // For multi-file torrents, it includes subfolder
             const filePath = path.join(downloadPath, file.path)
-            if (fs.existsSync(filePath)) {
-                const stats = fs.statSync(filePath)
-                // 🔥 FIX: Use blocks * 512 for actual data on disk
-                // This works with sparse files and pre-allocated files
-                // Falls back to size if blocks not available (Windows)
-                const actualBytes = (stats.blocks !== undefined)
-                    ? stats.blocks * 512
-                    : stats.size
-                // Cap at file.length to avoid over-counting
-                totalDownloaded += Math.min(actualBytes, file.length)
-            }
+            const stats = await fsPromises.stat(filePath)
+            const actualBytes = (stats.blocks !== undefined)
+                ? stats.blocks * 512
+                : stats.size
+            totalDownloaded += Math.min(actualBytes, file.length)
         } catch (e) {
             // File doesn't exist or not accessible
         }
     }
-    return totalDownloaded
+
+    diskDownloadCache.set(infoHash, { bytes: totalDownloaded, updatedAt: Date.now() })
 }
 
 const formatEngine = (engine) => {
