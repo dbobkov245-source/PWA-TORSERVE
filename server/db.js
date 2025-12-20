@@ -7,6 +7,7 @@ const defaultData = {
     lastStateChange: Date.now(),
     storageFailures: 0,
     progress: {},
+    seenFiles: {},             // { [infoHash]: [fileName1, fileName2, ...] } - for new episode detection
     torrents: []               // Array of { magnet, name, addedAt } for persistence
 }
 const dbPath = process.env.DB_PATH || 'db.json'
@@ -21,6 +22,7 @@ db.data = { ...defaultData, ...db.data }
 
 // Ensure nested objects are initialized
 db.data.progress ||= {}
+db.data.seenFiles ||= {}
 
 await db.write()
 

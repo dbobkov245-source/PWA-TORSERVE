@@ -27,6 +27,8 @@ const SettingsPanel = ({
     const [showPosterTest, setShowPosterTest] = useState(false)
     const [testResult, setTestResult] = useState(null)
     const [testLoading, setTestLoading] = useState(false)
+    const [speedMode, setSpeedModeState] = useState(localStorage.getItem('speedMode') || 'balanced')
+    const [speedLoading, setSpeedLoading] = useState(false)
 
     const handleClearCache = () => {
         const keys = Object.keys(localStorage).filter(k => k.startsWith('poster_'))
@@ -169,6 +171,45 @@ const SettingsPanel = ({
                         >
                             <div className="font-bold">{p.name}</div>
                             <div className="text-xs opacity-75 mt-1">{p.id || 'System Default'}</div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Speed Mode Toggle */}
+            <div className="mb-6">
+                <label className="text-gray-400 text-sm mb-3 block">⚡ Speed Mode</label>
+                <div className="grid grid-cols-3 gap-2">
+                    {[{ id: 'eco', name: '🌱 Eco', desc: '20 peers' }, { id: 'balanced', name: '⚖️ Balance', desc: '40 peers' }, { id: 'turbo', name: '🚀 Turbo', desc: '65 peers' }].map(m => (
+                        <button
+                            key={m.id}
+                            disabled={speedLoading}
+                            onClick={async () => {
+                                setSpeedLoading(true)
+                                try {
+                                    const baseUrl = serverUrl || ''
+                                    const res = await fetch(`${baseUrl}/api/speed-mode`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ mode: m.id })
+                                    })
+                                    if (res.ok) {
+                                        setSpeedModeState(m.id)
+                                        localStorage.setItem('speedMode', m.id)
+                                    }
+                                } catch (e) {
+                                    console.error('Speed mode error:', e)
+                                } finally {
+                                    setSpeedLoading(false)
+                                }
+                            }}
+                            className={`p-3 rounded-lg border text-center transition-all disabled:opacity-50 ${speedMode === m.id
+                                    ? 'bg-green-600 border-green-500 text-white'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+                                }`}
+                        >
+                            <div className="font-bold text-sm">{m.name}</div>
+                            <div className="text-xs opacity-75 mt-1">{m.desc}</div>
                         </button>
                     ))}
                 </div>

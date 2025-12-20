@@ -106,3 +106,35 @@ export const BufferingBanner = ({ name, progress }) => {
         </div>
     )
 }
+
+/**
+ * ServerStatusBar - Small indicator showing server health
+ */
+export const ServerStatusBar = ({ status, onDiagnosticsClick }) => {
+    const getStatusInfo = () => {
+        switch (status) {
+            case 'ok':
+                return { icon: '🟢', text: 'Server OK', color: 'bg-green-900/50 border-green-700 text-green-300' }
+            case 'degraded':
+                return { icon: '🟡', text: 'High RAM', color: 'bg-yellow-900/50 border-yellow-700 text-yellow-300' }
+            case 'circuit_open':
+                return { icon: '🔴', text: 'Storage Error', color: 'bg-red-900/50 border-red-700 text-red-300' }
+            case 'error':
+                return { icon: '🔴', text: 'Server Error', color: 'bg-red-900/50 border-red-700 text-red-300' }
+            default:
+                return { icon: '⚪', text: 'Connecting...', color: 'bg-gray-800/50 border-gray-600 text-gray-400' }
+        }
+    }
+
+    const info = getStatusInfo()
+
+    return (
+        <button
+            onClick={onDiagnosticsClick}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-2 transition-colors hover:opacity-80 ${info.color}`}
+        >
+            <span>{info.icon}</span>
+            <span>{info.text}</span>
+        </button>
+    )
+}

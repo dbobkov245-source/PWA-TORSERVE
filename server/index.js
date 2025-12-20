@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode } from './torrent.js'
 import { db } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
@@ -100,6 +100,16 @@ app.get('/api/health', (req, res) => {
 // API: Lag Stats (performance monitoring)
 app.get('/api/lag-stats', (req, res) => {
     res.json(lagMonitor.getStats())
+})
+
+// API: Speed Mode (eco/balanced/turbo)
+app.post('/api/speed-mode', (req, res) => {
+    const { mode } = req.body
+    if (!['eco', 'balanced', 'turbo'].includes(mode)) {
+        return res.status(400).json({ error: 'Invalid mode. Use: eco, balanced, or turbo' })
+    }
+    const result = setSpeedMode(mode)
+    res.json(result)
 })
 
 // API: Status (with server state)

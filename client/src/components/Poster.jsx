@@ -6,7 +6,7 @@ import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
 import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient } from '../utils/helpers'
 
-const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta }) => {
+const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount }) => {
     const [bgImage, setBgImage] = useState(null)
     const cleanedName = cleanTitle(name)
 
@@ -176,6 +176,11 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/10 flex flex-col justify-end p-3 text-left">
                 {/* Status Badge */}
                 <div className="absolute top-2 right-2 flex gap-1">
+                    {newFilesCount > 0 && (
+                        <span className="bg-purple-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm animate-pulse">
+                            🆕 {newFilesCount} NEW
+                        </span>
+                    )}
                     {isReady ? (
                         <span className="bg-green-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm">READY</span>
                     ) : (

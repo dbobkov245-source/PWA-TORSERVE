@@ -75,6 +75,27 @@ async function markTorrentCompleted(infoHash) {
     }
 }
 
+// ────────────────────────────────────────────────────────
+// 📺 Watchlist: Track seen files to detect new episodes
+// ────────────────────────────────────────────────────────
+function getNewFilesCount(infoHash, currentFiles) {
+    const seenFiles = db.data.seenFiles?.[infoHash] || []
+    if (seenFiles.length === 0) {
+        // First time seeing this torrent, mark all as seen
+        updateSeenFiles(infoHash, currentFiles)
+        return 0
+    }
+    // Count files not in seenFiles
+    const newFiles = currentFiles.filter(f => !seenFiles.includes(f.name))
+    return newFiles.length
+}
+
+function updateSeenFiles(infoHash, currentFiles) {
+    db.data.seenFiles ||= {}
+    db.data.seenFiles[infoHash] = currentFiles.map(f => f.name)
+    db.write().catch(e => console.warn('[Watchlist] Failed to save seenFiles:', e.message))
+}
+
 // Check if torrent is marked as completed in DB
 function isTorrentCompleted(infoHash) {
     const hashLower = infoHash.toLowerCase()
@@ -433,6 +454,10 @@ const formatEngine = (engine) => {
         eta = Math.round(remaining / downloadSpeed)
     }
 
+    // 📺 Watchlist: count new files since last check
+    const currentFiles = engine.files || []
+    const newFilesCount = getNewFilesCount(engine.infoHash, currentFiles)
+
     return {
         infoHash: engine.infoHash,
         name: engine.torrent?.name || 'Unknown Torrent',
@@ -444,6 +469,7 @@ const formatEngine = (engine) => {
         uploadSpeed: engine.swarm?.uploadSpeed() || 0,
         numPeers: engine.swarm?.wires?.length || 0,
         eta: eta, // seconds remaining
+        newFilesCount: newFilesCount, // 📺 Watchlist: new episodes since last check
         // 🔥 Memory fix: only include file count, not full array
         // Full files array available via getTorrent(hash) on demand
         fileCount: engine.files?.length || 0,
@@ -551,6 +577,30 @@ export const boostTorrent = (infoHash) => {
     } else {
         console.log(`[Turbo] Already boosted (${currentMax}), skipping`)
     }
+}
+
+// ────────────────────────────────────────────────────────
+// ⚡ Speed Mode: Eco / Balanced / Turbo
+// ────────────────────────────────────────────────────────
+const SPEED_MODES = {
+    eco: 20,
+    balanced: 40,
+    turbo: 65
+}
+
+export const setSpeedMode = (mode) => {
+    const connections = SPEED_MODES[mode] || SPEED_MODES.balanced
+    const uniqueEngines = new Set(engines.values())
+
+    for (const engine of uniqueEngines) {
+        if (engine.swarm) {
+            engine.swarm.maxConnections = connections
+            console.log(`[SpeedMode] Set ${engine.infoHash?.slice(0, 8)} to ${mode} (${connections} connections)`)
+        }
+    }
+
+    console.log(`[SpeedMode] Applied ${mode} mode to ${uniqueEngines.size} torrents`)
+    return { mode, connections, torrentsAffected: uniqueEngines.size }
 }
 
 // ────────────────────────────────────────────────────────

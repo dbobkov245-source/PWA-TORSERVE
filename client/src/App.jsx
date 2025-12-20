@@ -9,7 +9,8 @@ import { Capacitor } from '@capacitor/core'
 
 // Components
 import Poster from './components/Poster'
-import { DegradedBanner, ErrorScreen, BufferingBanner } from './components/StatusBanners'
+import { DegradedBanner, ErrorScreen, BufferingBanner, ServerStatusBar } from './components/StatusBanners'
+import DiagnosticsPanel from './components/DiagnosticsPanel'
 import SettingsPanel from './components/SettingsPanel'
 import SearchPanel from './components/SearchPanel'
 import TorrentModal from './components/TorrentModal'
@@ -68,6 +69,7 @@ function App() {
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
   const [buffering, setBuffering] = useState(null)
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
 
   // State: Server Health
   const [serverStatus, setServerStatus] = useState('ok')
@@ -83,6 +85,13 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
+
+  // State: Last Played (for auto-continue)
+  const [lastPlayed, setLastPlayed] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('lastPlayed')) || null
+    } catch { return null }
+  })
 
   // ─── Helpers ───
   const getCategory = (torrent) => {
@@ -229,6 +238,24 @@ function App() {
     const streamUrl = getStreamUrl(infoHash, fileIndex)
     const title = cleanTitle(fileName)
     const pkg = preferredPlayer
+
+    // 🎥 Save lastPlayed for Continue feature
+    const torrent = torrents.find(t => t.infoHash === infoHash)
+    if (torrent) {
+      const videoFiles = torrent.files?.filter(f => /\.(mp4|mkv|avi|webm|mov)$/i.test(f.name)) || []
+      const currentIdx = videoFiles.findIndex(f => f.index === fileIndex)
+      const nextFile = videoFiles[currentIdx + 1]
+      const playData = {
+        infoHash,
+        fileIndex,
+        fileName,
+        torrentName: torrent.name,
+        nextFile: nextFile ? { index: nextFile.index, name: nextFile.name } : null,
+        timestamp: Date.now()
+      }
+      localStorage.setItem('lastPlayed', JSON.stringify(playData))
+      setLastPlayed(playData)
+    }
 
     console.log(`[Play] URL: ${streamUrl} | Package: ${pkg} | Title: ${title}`)
 
@@ -423,11 +450,20 @@ function App() {
         <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-500">
           PWA-TorServe
         </h1>
-        <div className="flex gap-4">
+        <div className="flex gap-3 items-center">
+          <ServerStatusBar status={serverStatus} onDiagnosticsClick={() => setShowDiagnostics(true)} />
           <button onClick={fetchStatus} className="p-2 hover:bg-gray-800 rounded-full transition-colors">🔄</button>
           <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-800 rounded-full transition-colors">⚙️</button>
         </div>
       </div>
+
+      {/* Diagnostics Modal */}
+      {showDiagnostics && (
+        <DiagnosticsPanel
+          serverUrl={getApiUrl('')}
+          onClose={() => setShowDiagnostics(false)}
+        />
+      )}
 
       {/* Status Banner */}
       {serverStatus === 'degraded' && <DegradedBanner lastStateChange={lastStateChange} />}
@@ -447,6 +483,30 @@ function App() {
 
       {/* Content Grid */}
       <div className="px-6 py-4">
+
+        {/* Continue Watching Banner */}
+        {lastPlayed?.nextFile && torrents.find(t => t.infoHash === lastPlayed.infoHash) && (
+          <div className="mb-6 bg-gradient-to-r from-purple-900/50 to-blue-900/50 border border-purple-500/30 rounded-xl p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">▶ Continue Watching</div>
+                <div className="text-white font-bold truncate">{cleanTitle(lastPlayed.torrentName)}</div>
+                <div className="text-gray-400 text-sm truncate">Next: {cleanTitle(lastPlayed.nextFile.name)}</div>
+              </div>
+              <button
+                onClick={() => handlePlay(
+                  lastPlayed.infoHash,
+                  lastPlayed.nextFile.index,
+                  lastPlayed.nextFile.name
+                )}
+                className="ml-4 bg-purple-600 hover:bg-purple-500 px-5 py-3 rounded-lg font-bold text-white flex items-center gap-2 transition-colors"
+              >
+                ▶ Play Next
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-200">My List</h2>
@@ -568,6 +628,7 @@ function App() {
               downloadSpeed={t.downloadSpeed || 0}
               downloaded={t.downloaded || 0}
               eta={t.eta || 0}
+              newFilesCount={t.newFilesCount || 0}
               onClick={() => setSelectedTorrent(t)}
             />
           ))}

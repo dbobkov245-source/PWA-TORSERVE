@@ -22,7 +22,7 @@ const TorrentModal = ({
             onClick={onClose}
         >
             <div
-                className="bg-[#181818] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative"
+                className="bg-[#181818] rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl relative flex flex-col"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Modal Header */}
@@ -38,7 +38,7 @@ const TorrentModal = ({
                     </h2>
                 </div>
 
-                <div className="p-6">
+                <div className="p-6 overflow-y-auto flex-1">
                     {/* Original name */}
                     <div className="text-sm text-gray-400 mb-6 font-mono break-all text-xs border-l-2 border-gray-700 pl-3">
                         {torrent.name}
