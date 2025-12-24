@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
 import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode } from './torrent.js'
-import { db } from './db.js'
+import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
 import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
@@ -243,7 +243,7 @@ app.delete('/api/db/torrents/:hash', async (req, res) => {
     const removed = before - db.data.torrents.length
 
     if (removed > 0) {
-        await db.write()
+        await safeWrite(db)
         console.log(`[DB API] Force removed ${removed} torrent(s) by hash: ${hash}`)
         res.json({ success: true, removed })
     } else {
@@ -256,7 +256,7 @@ app.delete('/api/db/torrents', async (req, res) => {
     await db.read()
     const count = db.data.torrents?.length || 0
     db.data.torrents = []
-    await db.write()
+    await safeWrite(db)
     console.log(`[DB API] Cleared ALL ${count} torrents from DB`)
     res.json({ success: true, cleared: count })
 })
@@ -473,7 +473,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
                 percentage: (start / file.length) * 100
             }
             // Fire-and-forget: don't block streaming
-            db.write().catch(e => console.warn('[DB] Write failed:', e.message))
+            safeWrite(db)
         }
 
         const head = {
@@ -484,7 +484,13 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         }
 
         res.writeHead(206, head)
-        file.createReadStream({ start, end }).pipe(res)
+
+        // CRITICAL: Cleanup stream on client disconnect to prevent resource leaks
+        const stream = file.createReadStream({ start, end })
+        res.on('close', () => {
+            stream.destroy()
+        })
+        stream.pipe(res)
     }
 })
 
@@ -542,7 +548,7 @@ const gracefulShutdown = async (signal) => {
 
     // 4. Save DB state
     try {
-        await db.write()
+        await safeWrite(db)
         console.log('[Shutdown] Database saved')
     } catch (e) {
         console.error('[Shutdown] DB save failed:', e.message)

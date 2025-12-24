@@ -2,7 +2,7 @@ import torrentStream from 'torrent-stream'
 import process from 'process'
 import fs from 'fs'
 import path from 'path'
-import { db } from './db.js'
+import { db, safeWrite } from './db.js'
 
 const engines = new Map()
 
@@ -59,7 +59,7 @@ async function saveTorrentToDB(magnetURI, name) {
     // Avoid duplicates
     if (!db.data.torrents.find(t => t.magnet === magnetURI)) {
         db.data.torrents.push({ magnet: magnetURI, name, addedAt: Date.now(), completed: false })
-        await db.write()
+        await safeWrite(db)
         console.log('[Persistence] Saved torrent:', name)
     }
 }
@@ -70,7 +70,7 @@ async function markTorrentCompleted(infoHash) {
     const torrent = db.data.torrents?.find(t => t.magnet.toLowerCase().includes(hashLower))
     if (torrent && !torrent.completed) {
         torrent.completed = true
-        await db.write()
+        await safeWrite(db)
         console.log('[Persistence] Marked as completed:', torrent.name)
     }
 }
@@ -93,7 +93,7 @@ function getNewFilesCount(infoHash, currentFiles) {
 function updateSeenFiles(infoHash, currentFiles) {
     db.data.seenFiles ||= {}
     db.data.seenFiles[infoHash] = currentFiles.map(f => f.name)
-    db.write().catch(e => console.warn('[Watchlist] Failed to save seenFiles:', e.message))
+    safeWrite(db).catch(e => console.warn('[Watchlist] Failed to save seenFiles:', e.message))
 }
 
 // Check if torrent is marked as completed in DB
@@ -120,7 +120,7 @@ async function removeTorrentFromDB(infoHash) {
     })
 
     if (db.data.torrents.length < before) {
-        await db.write()
+        await safeWrite(db)
         console.log(`[Persistence] Removed ${before - db.data.torrents.length} torrent(s) from DB:`, infoHash)
     } else {
         console.log('[Persistence] WARNING: No torrent found in DB for hash:', infoHash)

@@ -13,7 +13,7 @@
  * - Сериал (2024) - S01E05
  */
 
-import { db } from './db.js'
+import { db, safeWrite } from './db.js'
 import { searchJacred } from './jacred.js'
 import { addTorrent } from './torrent.js'
 import { logger } from './utils/logger.js'
@@ -137,12 +137,12 @@ function matchesRule(parsed, rule) {
     // Title match (fuzzy: includes the query)
     const queryLower = rule.query.toLowerCase()
     const titleLower = parsed.title.toLowerCase()
-    
+
     if (!titleLower.includes(queryLower) && !queryLower.includes(titleLower)) {
         // Try matching individual words (at least 2 must match)
         const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2)
         const titleWords = titleLower.split(/\s+/).filter(w => w.length > 2)
-        const matchCount = queryWords.filter(qw => 
+        const matchCount = queryWords.filter(qw =>
             titleWords.some(tw => tw.includes(qw) || qw.includes(tw))
         ).length
         if (matchCount < Math.min(2, queryWords.length)) {
@@ -187,7 +187,7 @@ function matchesRule(parsed, rule) {
  */
 export async function checkRules() {
     await db.read()
-    
+
     const settings = db.data.autoDownloadSettings || { enabled: false }
     const rules = db.data.autoDownloadRules || []
 
@@ -222,12 +222,12 @@ export async function checkRules() {
                 }
 
                 const parsed = parseTorrentTitle(torrent.title)
-                
+
                 if (matchesRule(parsed, rule)) {
-                    log.info('Match found!', { 
-                        title: parsed.title, 
-                        episode: parsed.episode, 
-                        torrent: torrent.title 
+                    log.info('Match found!', {
+                        title: parsed.title,
+                        episode: parsed.episode,
+                        torrent: torrent.title
                     })
 
                     try {
@@ -236,15 +236,15 @@ export async function checkRules() {
 
                         // Update rule's last episode
                         rule.lastEpisode = Math.max(rule.lastEpisode, parsed.episode)
-                        
+
                         // Track downloaded hash
                         if (magnetHash) {
                             downloadedHashes.add(magnetHash)
                         }
 
-                        log.info('Downloaded new episode', { 
-                            title: rule.query, 
-                            episode: parsed.episode 
+                        log.info('Downloaded new episode', {
+                            title: rule.query,
+                            episode: parsed.episode
                         })
                     } catch (err) {
                         log.error('Failed to add torrent', { error: err.message })
@@ -260,7 +260,7 @@ export async function checkRules() {
 
     // Save updated rules and history
     db.data.autoDownloadHistory = [...downloadedHashes].slice(-500) // Keep last 500
-    await db.write()
+    await safeWrite(db)
 
     log.info('Auto-download check complete', { downloaded, errors })
     return { checked: rules.length, downloaded, errors }
@@ -296,7 +296,7 @@ export async function getRules() {
 export async function addRule(rule) {
     await db.read()
     db.data.autoDownloadRules ||= []
-    
+
     const newRule = {
         id: Date.now(),
         query: rule.query,
@@ -307,10 +307,10 @@ export async function addRule(rule) {
         enabled: true,
         createdAt: Date.now()
     }
-    
+
     db.data.autoDownloadRules.push(newRule)
-    await db.write()
-    
+    await safeWrite(db)
+
     log.info('Added rule', { query: newRule.query })
     return newRule
 }
@@ -322,14 +322,14 @@ export async function updateRule(id, updates) {
     await db.read()
     const rules = db.data.autoDownloadRules || []
     const index = rules.findIndex(r => r.id === id)
-    
+
     if (index === -1) {
         throw new Error('Rule not found')
     }
-    
+
     rules[index] = { ...rules[index], ...updates }
-    await db.write()
-    
+    await safeWrite(db)
+
     log.info('Updated rule', { id, updates })
     return rules[index]
 }
@@ -341,9 +341,9 @@ export async function deleteRule(id) {
     await db.read()
     const before = db.data.autoDownloadRules?.length || 0
     db.data.autoDownloadRules = (db.data.autoDownloadRules || []).filter(r => r.id !== id)
-    
+
     if (db.data.autoDownloadRules.length < before) {
-        await db.write()
+        await safeWrite(db)
         log.info('Deleted rule', { id })
         return true
     }
@@ -359,7 +359,7 @@ export async function updateSettings(settings) {
         ...db.data.autoDownloadSettings,
         ...settings
     }
-    await db.write()
+    await safeWrite(db)
     log.info('Updated settings', settings)
     return db.data.autoDownloadSettings
 }

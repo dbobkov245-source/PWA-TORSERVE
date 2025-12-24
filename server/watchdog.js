@@ -9,7 +9,7 @@
  * - Automatic counter reset on recovery
  */
 
-import { db } from './db.js'
+import { db, safeWrite } from './db.js'
 import fs from 'fs'
 import path from 'path'
 import { checkRules } from './autodownloader.js'
@@ -124,7 +124,7 @@ const updateStatus = async (newStatus) => {
             console.log('[Watchdog] Recovery complete, counters reset')
         }
 
-        await db.write()
+        await safeWrite(db)
     }
 }
 
@@ -157,7 +157,7 @@ const performCheck = async () => {
             circuitOpenUntil = now + CONFIG.CIRCUIT_BREAKER_COOLDOWN_MS
             // Update lastStateChange so client shows correct elapsed time
             db.data.lastStateChange = now
-            await db.write()
+            await safeWrite(db)
             console.warn('[Watchdog] Circuit breaker: recovery failed, extending cooldown')
         }
         return
@@ -180,7 +180,7 @@ const performCheck = async () => {
         // Storage OK, reset failure counter
         if (db.data.storageFailures > 0) {
             db.data.storageFailures = 0
-            await db.write()
+            await safeWrite(db)
         }
     }
 

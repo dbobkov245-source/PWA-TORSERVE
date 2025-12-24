@@ -1,5 +1,6 @@
 import { Low } from 'lowdb'
 import { JSONFile } from 'lowdb/node'
+import { safeWrite } from './dbQueue.js'
 
 // Initialize DB
 const defaultData = {
@@ -36,4 +37,5 @@ db.data.autoDownloadHistory ||= []
 
 await db.write()
 
-export { db }
+export { db, safeWrite }
+
