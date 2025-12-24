@@ -25,6 +25,8 @@ Listen to audiobooks, watch movies and TV shows **online without full downloadin
 | 🧹 **File Hygiene** | Auto-delete files when removing torrents |
 | 🛡️ **Watchdog** | RAM/Storage monitoring, auto-pause, circuit breaker |
 | ⚡ **PWA + Native** | Installable as an app on Android TV/Phone |
+| 📥 **Auto-Downloader** | Automatic series tracking with customizable rules (6h/12h/24h intervals) |
+| 🎮 **TV Remote Support** | Full D-pad navigation with focus trap in modals |
 
 ### 🛠 Tech Stack
 - **Backend**: Node.js, Express, torrent-stream, lowdb

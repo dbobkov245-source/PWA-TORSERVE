@@ -8,7 +8,14 @@ const defaultData = {
     storageFailures: 0,
     progress: {},
     seenFiles: {},             // { [infoHash]: [fileName1, fileName2, ...] } - for new episode detection
-    torrents: []               // Array of { magnet, name, addedAt } for persistence
+    torrents: [],              // Array of { magnet, name, addedAt } for persistence
+    // Auto-Downloader
+    autoDownloadSettings: {
+        enabled: false,
+        intervalMinutes: 720  // 12 hours
+    },
+    autoDownloadRules: [],     // [{ id, query, resolution, group, season, lastEpisode, enabled }]
+    autoDownloadHistory: []    // Array of magnet hashes to prevent duplicates
 }
 const dbPath = process.env.DB_PATH || 'db.json'
 const adapter = new JSONFile(dbPath)
@@ -23,6 +30,9 @@ db.data = { ...defaultData, ...db.data }
 // Ensure nested objects are initialized
 db.data.progress ||= {}
 db.data.seenFiles ||= {}
+db.data.autoDownloadSettings ||= { enabled: false, intervalMinutes: 30 }
+db.data.autoDownloadRules ||= []
+db.data.autoDownloadHistory ||= []
 
 await db.write()
 

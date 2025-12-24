@@ -14,6 +14,7 @@ import DiagnosticsPanel from './components/DiagnosticsPanel'
 import SettingsPanel from './components/SettingsPanel'
 import SearchPanel from './components/SearchPanel'
 import TorrentModal from './components/TorrentModal'
+import AutoDownloadPanel from './components/AutoDownloadPanel'
 
 // Helpers
 import { cleanTitle } from './utils/helpers'
@@ -85,6 +86,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
+
+  // State: Auto-Download
+  const [showAutoDownload, setShowAutoDownload] = useState(false)
 
   // State: Last Played (for auto-continue)
   const [lastPlayed, setLastPlayed] = useState(() => {
@@ -452,6 +456,7 @@ function App() {
         </h1>
         <div className="flex gap-3 items-center">
           <ServerStatusBar status={serverStatus} onDiagnosticsClick={() => setShowDiagnostics(true)} />
+          <button onClick={() => setShowAutoDownload(true)} className="p-2 hover:bg-gray-800 rounded-full transition-colors" title="Авто-загрузка">📺</button>
           <button onClick={fetchStatus} className="p-2 hover:bg-gray-800 rounded-full transition-colors">🔄</button>
           <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-800 rounded-full transition-colors">⚙️</button>
         </div>
@@ -462,6 +467,15 @@ function App() {
         <DiagnosticsPanel
           serverUrl={getApiUrl('')}
           onClose={() => setShowDiagnostics(false)}
+        />
+      )}
+
+      {/* Auto-Download Panel */}
+      {showAutoDownload && (
+        <AutoDownloadPanel
+          serverUrl={getApiUrl('')}
+          torrents={torrents}
+          onClose={() => setShowAutoDownload(false)}
         />
       )}
 

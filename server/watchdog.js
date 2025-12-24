@@ -12,6 +12,7 @@
 import { db } from './db.js'
 import fs from 'fs'
 import path from 'path'
+import { checkRules } from './autodownloader.js'
 
 // ─────────────────────────────────────────────────────────────
 // Configuration Constants
@@ -34,6 +35,7 @@ const CONFIG = {
 let degradedSince = null              // Timestamp when RAM first exceeded threshold
 let circuitOpenUntil = null           // Timestamp when circuit breaker will retry
 let isWatchdogRunning = false
+let lastAutoDownloadCheck = 0         // Timestamp of last auto-download check
 
 // ─────────────────────────────────────────────────────────────
 // Helper Functions
@@ -200,6 +202,36 @@ const performCheck = async () => {
 
     // Log current state
     console.log(`[Watchdog] RAM: ${ramMB}MB | Status: ${db.data.serverStatus} | Storage Failures: ${db.data.storageFailures}`)
+
+    // ─── Auto-Downloader Check ───
+    await runAutoDownloadCheck()
+}
+
+// ─────────────────────────────────────────────────────────────
+// 📺 Auto-Downloader Integration
+// ─────────────────────────────────────────────────────────────
+
+const runAutoDownloadCheck = async () => {
+    const settings = db.data.autoDownloadSettings || { enabled: false, intervalMinutes: 30 }
+
+    if (!settings.enabled) return
+
+    const intervalMs = (settings.intervalMinutes || 30) * 60 * 1000
+    const now = Date.now()
+
+    if (now - lastAutoDownloadCheck < intervalMs) return
+
+    lastAutoDownloadCheck = now
+
+    try {
+        console.log('[Watchdog] Running auto-download check...')
+        const result = await checkRules()
+        if (result.downloaded > 0) {
+            console.log(`[Watchdog] Auto-downloaded ${result.downloaded} new episode(s)`)
+        }
+    } catch (err) {
+        console.error('[Watchdog] Auto-download check failed:', err.message)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, r
 import { db } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
+import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor: Detect event loop blocking
@@ -258,6 +259,76 @@ app.delete('/api/db/torrents', async (req, res) => {
     await db.write()
     console.log(`[DB API] Cleared ALL ${count} torrents from DB`)
     res.json({ success: true, cleared: count })
+})
+
+// ─────────────────────────────────────────────────────────────
+// 📺 Auto-Downloader API: Manage auto-download rules
+// ─────────────────────────────────────────────────────────────
+
+// Get all rules and settings
+app.get('/api/autodownload/rules', async (req, res) => {
+    try {
+        const data = await getRules()
+        res.json(data)
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+// Add new rule
+app.post('/api/autodownload/rules', async (req, res) => {
+    const { query, resolution, group, season, lastEpisode } = req.body
+    if (!query) {
+        return res.status(400).json({ error: 'Query (series name) is required' })
+    }
+    try {
+        const rule = await addRule({ query, resolution, group, season, lastEpisode })
+        res.json(rule)
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+// Update rule
+app.put('/api/autodownload/rules/:id', async (req, res) => {
+    const id = parseInt(req.params.id, 10)
+    try {
+        const rule = await updateRule(id, req.body)
+        res.json(rule)
+    } catch (err) {
+        res.status(err.message === 'Rule not found' ? 404 : 500).json({ error: err.message })
+    }
+})
+
+// Delete rule
+app.delete('/api/autodownload/rules/:id', async (req, res) => {
+    const id = parseInt(req.params.id, 10)
+    const deleted = await deleteRule(id)
+    if (deleted) {
+        res.json({ success: true })
+    } else {
+        res.status(404).json({ error: 'Rule not found' })
+    }
+})
+
+// Update global settings (enable/disable, interval)
+app.put('/api/autodownload/settings', async (req, res) => {
+    try {
+        const settings = await updateSettings(req.body)
+        res.json(settings)
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+// Trigger manual check
+app.post('/api/autodownload/check', async (req, res) => {
+    try {
+        const result = await checkRules()
+        res.json(result)
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
 })
 
 // API: Generate M3U Playlist for Video Files
