@@ -96,12 +96,37 @@ function updateSeenFiles(infoHash, currentFiles) {
     safeWrite(db).catch(e => console.warn('[Watchlist] Failed to save seenFiles:', e.message))
 }
 
-// Check if torrent is marked as completed in DB
+// ────────────────────────────────────────────────────────
+// 🔥 v2.3: Cache for isTorrentCompleted (expensive string search)
+// ────────────────────────────────────────────────────────
+const completedCache = new Map()  // infoHash -> { value, time }
+const COMPLETED_CACHE_TTL = 60000 // 1 minute
+
+// Check if torrent is marked as completed in DB (CACHED)
 function isTorrentCompleted(infoHash) {
     const hashLower = infoHash.toLowerCase()
-    return db.data.torrents?.some(t =>
+
+    // Check cache first
+    const cached = completedCache.get(hashLower)
+    if (cached && Date.now() - cached.time < COMPLETED_CACHE_TTL) {
+        return cached.value
+    }
+
+    // Expensive search
+    const result = db.data.torrents?.some(t =>
         t.magnet.toLowerCase().includes(hashLower) && t.completed === true
     ) || false
+
+    // Cache result
+    completedCache.set(hashLower, { value: result, time: Date.now() })
+
+    // 🔥 Limit cache size
+    if (completedCache.size > 100) {
+        const firstKey = completedCache.keys().next().value
+        completedCache.delete(firstKey)
+    }
+
+    return result
 }
 
 async function removeTorrentFromDB(infoHash) {
@@ -312,7 +337,7 @@ export const getRawTorrent = (infoHash) => {
 // ────────────────────────────────────────────────────────
 let statusCache = null
 let statusCacheTime = 0
-const STATUS_CACHE_TTL = 2000 // 2 seconds
+const STATUS_CACHE_TTL = 5000 // 🔥 v2.3: increased from 2s to 5s for ARM CPU optimization
 
 export const getAllTorrents = () => {
     const now = Date.now()
@@ -631,3 +656,9 @@ export const destroyAllTorrents = () => {
 
     console.log('[Shutdown] All torrents destroyed')
 }
+
+// ────────────────────────────────────────────────────────
+// 📊 v2.3: Diagnostics helpers
+// ────────────────────────────────────────────────────────
+export const getActiveTorrentsCount = () => engines.size
+export const getFrozenTorrentsCount = () => frozenTorrents.size

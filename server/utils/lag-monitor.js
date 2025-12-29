@@ -1,19 +1,29 @@
 /**
- * Event Loop Lag Monitor
+ * Event Loop Lag Monitor v2.3
  * Detects when Node.js event loop is blocked
+ * 
+ * v2.3: Adaptive settings for production (less sensitive, less overhead)
  * 
  * Usage:
  *   import { LagMonitor } from './utils/lag-monitor.js'
- *   const lagMonitor = new LagMonitor(50) // 50ms threshold
+ *   const lagMonitor = new LagMonitor()  // Auto-detects prod/dev
  *   lagMonitor.start()
  */
 
 export class LagMonitor {
-    constructor(threshold = 50) {
-        this.threshold = threshold
+    constructor(threshold = null) {
+        // 🔥 v2.3: Adaptive settings based on environment
+        const isProd = process.env.NODE_ENV === 'production'
+        
+        // Production: less sensitive (200ms threshold, 1s interval)
+        // Development: more sensitive for debugging (50ms threshold, 250ms interval)
+        this.threshold = threshold ?? (isProd ? 200 : 50)
+        this.checkInterval = isProd ? 1000 : 250
+        
         this.lastCheck = Date.now()
         this.lagEvents = []
         this.intervalId = null
+        this.isProd = isProd
     }
 
     start() {
@@ -21,7 +31,8 @@ export class LagMonitor {
 
         this.intervalId = setInterval(() => {
             const now = Date.now()
-            const expected = 250  // 🔥 Memory fix: 250ms interval instead of 100ms
+            // 🔥 v2.3: expected = interval + 50ms tolerance for I/O delays
+            const expected = this.checkInterval + 50
             const lag = now - this.lastCheck - expected
 
             if (lag > this.threshold) {
@@ -32,18 +43,22 @@ export class LagMonitor {
                 }
 
                 this.lagEvents.push(event)
-                console.warn(`[LagMonitor] Event loop lag: ${lag}ms, RAM: ${event.memory}MB`)
+                
+                // 🔥 v2.3: Only log warnings in dev, or critical lags (>1s) in prod
+                if (!this.isProd || lag > 1000) {
+                    console.warn(`[LagMonitor] Event loop lag: ${lag}ms, RAM: ${event.memory}MB`)
+                }
 
-                // 🔥 Memory fix: keep only last 50 events (was 100)
+                // Keep only last 50 events
                 if (this.lagEvents.length > 50) {
                     this.lagEvents.shift()
                 }
             }
 
             this.lastCheck = now
-        }, 250)  // 🔥 Memory fix: 250ms instead of 100ms (4x less allocations)
+        }, this.checkInterval)
 
-        console.log('[LagMonitor] Started')
+        console.log(`[LagMonitor] Started (${this.isProd ? 'prod' : 'dev'} mode: ${this.checkInterval}ms interval, ${this.threshold}ms threshold)`)
     }
 
     stop() {

@@ -124,6 +124,45 @@ const DiagnosticsPanel = ({ serverUrl, onClose }) => {
                                 <span className="font-mono text-lg">{data.lagStats.totalLags || 0}</span>
                             </div>
 
+                            {/* 🔥 v2.3: Enhanced Server Diagnostics */}
+                            {data.lagStats.server && (
+                                <div className="bg-gray-800 rounded-lg p-4">
+                                    <div className="text-gray-400 text-xs uppercase mb-3">Server Info</div>
+                                    <div className="grid grid-cols-2 gap-3 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Uptime:</span>
+                                            <span className="text-white font-mono">
+                                                {Math.floor(data.lagStats.server.uptime / 60)}m
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">RAM:</span>
+                                            <span className="text-white font-mono">
+                                                {data.lagStats.server.ram?.rss || 0}MB
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Active:</span>
+                                            <span className="text-green-400 font-mono">
+                                                {data.lagStats.server.torrents?.active || 0}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Frozen:</span>
+                                            <span className="text-blue-400 font-mono">
+                                                {data.lagStats.server.torrents?.frozen || 0}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between col-span-2">
+                                            <span className="text-gray-500">Heap:</span>
+                                            <span className="text-white font-mono">
+                                                {data.lagStats.server.ram?.heapUsed || 0}/{data.lagStats.server.ram?.heapTotal || 0}MB
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Refresh button */}
                             <button
                                 onClick={fetchDiagnostics}

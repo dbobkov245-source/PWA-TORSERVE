@@ -6,16 +6,17 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount } from './torrent.js'
 import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
 import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
 
 // ────────────────────────────────────────────────────────
-// 📊 Lag Monitor: Detect event loop blocking
+// 📊 Lag Monitor v2.3: Detect event loop blocking
+// Auto-detects production mode for adaptive thresholds
 // ────────────────────────────────────────────────────────
-const lagMonitor = new LagMonitor(50) // 50ms threshold
+const lagMonitor = new LagMonitor()  // v2.3: auto-detects prod/dev
 lagMonitor.start()
 
 dotenv.config()
@@ -36,7 +37,7 @@ app.use(express.json())
 // ────────────────────────────────────────────────────────
 const rateLimitMap = new Map()
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 30 // requests per window
+const RATE_LIMIT_MAX = 60 // 🔥 v2.3: increased from 30 for diagnostics polling
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
@@ -98,9 +99,31 @@ app.get('/api/health', (req, res) => {
     })
 })
 
-// API: Lag Stats (performance monitoring)
+// API: Lag Stats (enhanced performance monitoring v2.3)
 app.get('/api/lag-stats', (req, res) => {
-    res.json(lagMonitor.getStats())
+    const memUsage = process.memoryUsage()
+    const stats = lagMonitor.getStats()
+
+    res.json({
+        ...stats,
+        // 🔥 v2.3: Enhanced server diagnostics
+        server: {
+            uptime: Math.round(process.uptime()),
+            nodeVersion: process.version,
+            platform: process.platform,
+            pid: process.pid,
+            ram: {
+                rss: Math.round(memUsage.rss / 1024 / 1024),
+                heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+                heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+                external: Math.round(memUsage.external / 1024 / 1024)
+            },
+            torrents: {
+                active: getActiveTorrentsCount(),
+                frozen: getFrozenTorrentsCount()
+            }
+        }
+    })
 })
 
 // API: Speed Mode (eco/balanced/turbo)
@@ -487,6 +510,16 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // CRITICAL: Cleanup stream on client disconnect to prevent resource leaks
         const stream = file.createReadStream({ start, end })
+
+        // 🔥 v2.3: Handle stream errors to prevent hanging responses
+        stream.on('error', (err) => {
+            console.error(`[Stream] Error for ${infoHash}/${fileIndex}:`, err.message)
+            if (!res.headersSent) {
+                res.status(500).send('Stream error')
+            }
+            stream.destroy()
+        })
+
         res.on('close', () => {
             stream.destroy()
         })

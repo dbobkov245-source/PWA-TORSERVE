@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { registerPlugin } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
+import { Preferences } from '@capacitor/preferences'
 
 // Components
 import Poster from './components/Poster'
@@ -51,13 +52,36 @@ function App() {
     return ''
   })
 
-  const [preferredPlayer, setPreferredPlayer] = useState(
-    localStorage.getItem('preferredPlayer') || 'net.gtvbox.videoplayer'
-  )
+  // 🔥 v2.3: Use Capacitor Preferences for Android 9 compatibility
+  const [preferredPlayer, setPreferredPlayer] = useState('net.gtvbox.videoplayer')
+  const [prefsLoaded, setPrefsLoaded] = useState(false)
 
   const [tmdbProxyUrl, setTmdbProxyUrl] = useState(
     localStorage.getItem('tmdbProxyUrl') || ''
   )
+
+  // Load preferences on mount (async for Capacitor Preferences)
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        if (Capacitor.isNativePlatform()) {
+          const { value } = await Preferences.get({ key: 'preferredPlayer' })
+          if (value) {
+            console.log('[Prefs] Loaded player:', value)
+            setPreferredPlayer(value)
+          }
+        } else {
+          const stored = localStorage.getItem('preferredPlayer')
+          if (stored) setPreferredPlayer(stored)
+        }
+      } catch (e) {
+        console.warn('[Prefs] Failed to load:', e)
+      } finally {
+        setPrefsLoaded(true)
+      }
+    }
+    loadPreferences()
+  }, [])
 
   // State: Torrents
   const [torrents, setTorrents] = useState([])
@@ -134,9 +158,20 @@ function App() {
   const displayTorrents = getFilteredAndSortedTorrents()
 
   // ─── Settings Handlers ───
-  const savePreferredPlayer = (playerId) => {
+  // 🔥 v2.3: Use Capacitor Preferences for Android 9 compatibility
+  const savePreferredPlayer = async (playerId) => {
     setPreferredPlayer(playerId)
-    localStorage.setItem('preferredPlayer', playerId)
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Preferences.set({ key: 'preferredPlayer', value: playerId })
+        console.log('[Prefs] Saved player:', playerId)
+      } else {
+        localStorage.setItem('preferredPlayer', playerId)
+      }
+    } catch (e) {
+      console.warn('[Prefs] Failed to save:', e)
+      localStorage.setItem('preferredPlayer', playerId) // Fallback
+    }
   }
 
   const saveSortBy = (sort) => {
@@ -428,7 +463,13 @@ function App() {
     })
 
     const keyListener = (e) => {
-      if (e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009) {
+      // 🔥 v2.3: Don't intercept backspace when typing in input/textarea
+      const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)
+
+      if (e.key === 'Escape' || e.keyCode === 10009) {
+        handleBack()
+      } else if (e.key === 'Backspace' && !isTyping) {
+        // Only trigger back on Backspace if NOT typing
         handleBack()
       }
     }

@@ -204,8 +204,8 @@ const SettingsPanel = ({
                                 }
                             }}
                             className={`p-3 rounded-lg border text-center transition-all disabled:opacity-50 ${speedMode === m.id
-                                    ? 'bg-green-600 border-green-500 text-white'
-                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+                                ? 'bg-green-600 border-green-500 text-white'
+                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
                                 }`}
                         >
                             <div className="font-bold text-sm">{m.name}</div>
@@ -279,17 +279,28 @@ const SettingsPanel = ({
                     <div className="mt-3 p-4 bg-gray-800 rounded-lg border border-gray-700 animate-fade-in">
                         <p className="text-gray-400 text-sm mb-3">Выберите фильм для теста:</p>
 
-                        {/* Torrent List - TV-friendly buttons */}
-                        <div className="max-h-48 overflow-y-auto space-y-2 mb-4">
+                        {/* Torrent List - TV-friendly buttons with D-pad navigation */}
+                        <div className="max-h-48 overflow-y-auto space-y-2 mb-4" role="listbox">
                             {torrents.length === 0 ? (
                                 <p className="text-gray-500 text-sm">Нет загруженных торрентов</p>
                             ) : (
-                                torrents.map(t => (
+                                torrents.map((t, idx) => (
                                     <button
                                         key={t.infoHash}
+                                        tabIndex={0}
+                                        autoFocus={idx === 0}
                                         onClick={() => runPosterTest(cleanTitle(t.name) || t.name)}
                                         disabled={testLoading}
-                                        className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 focus:bg-blue-600 focus:outline-none rounded-lg transition-all text-sm truncate disabled:opacity-50"
+                                        className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 focus:bg-blue-600 focus:ring-2 focus:ring-blue-500 focus:outline-none rounded-lg transition-all text-sm truncate disabled:opacity-50"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'ArrowDown') {
+                                                e.preventDefault()
+                                                e.target.nextElementSibling?.focus()
+                                            } else if (e.key === 'ArrowUp') {
+                                                e.preventDefault()
+                                                e.target.previousElementSibling?.focus()
+                                            }
+                                        }}
                                     >
                                         🎬 {cleanTitle(t.name) || t.name}
                                     </button>

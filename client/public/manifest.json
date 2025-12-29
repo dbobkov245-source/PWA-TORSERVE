@@ -1,11 +1,11 @@
 {
-    "name": "PWA-TorServe",
-    "short_name": "TorServe",
-    "description": "Home Media Server Client",
+    "name": "MediaBox",
+    "short_name": "MediaBox",
+    "description": "Home Media Streaming Server",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#111827",
-    "theme_color": "#2563eb",
+    "background_color": "#141E30",
+    "theme_color": "#00c6ff",
     "icons": [
         {
             "src": "/icon-192.png",
