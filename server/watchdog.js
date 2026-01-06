@@ -250,6 +250,25 @@ export const startWatchdog = async () => {
     isWatchdogRunning = true
     console.log('[Watchdog] Starting async monitoring loop...')
 
+    // 🔥 v2.3.2: Reset circuit_open on startup (it persisted from previous session)
+    if (db.data.serverStatus === 'circuit_open') {
+        console.log('[Watchdog] Detected persisted circuit_open, checking storage...')
+        const storageOk = await checkStorage()
+        if (storageOk) {
+            db.data.serverStatus = 'ok'
+            db.data.storageFailures = 0
+            circuitOpenUntil = null
+            await safeWrite(db)
+            console.log('[Watchdog] Storage OK, reset to normal status')
+        } else {
+            // Storage still broken, keep circuit open with fresh cooldown
+            circuitOpenUntil = Date.now() + CONFIG.CIRCUIT_BREAKER_COOLDOWN_MS
+            db.data.lastStateChange = Date.now()
+            await safeWrite(db)
+            console.warn('[Watchdog] Storage still unavailable, circuit remains open')
+        }
+    }
+
     // Initial check
     try {
         await performCheck()
