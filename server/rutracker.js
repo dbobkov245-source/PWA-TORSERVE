@@ -1,10 +1,12 @@
 /**
  * RuTracker Search API
  * Парсинг поиска RuTracker через HTTP
+ * 🆕 v2.3.3: Added retry logic with exponential backoff
  */
 
 import https from 'https'
 import http from 'http'
+import { withRetry, retryPredicates } from './utils/retry.js'
 
 // RuTracker credentials from .env
 const RUTRACKER_LOGIN = process.env.RUTRACKER_LOGIN || ''
@@ -53,19 +55,9 @@ const login = async () => {
 }
 
 /**
- * Search RuTracker
+ * Raw search request (used by retry wrapper)
  */
-export const searchRuTracker = async (query) => {
-    // Ensure we're logged in
-    if (!sessionCookie) {
-        try {
-            await login()
-        } catch (err) {
-            console.error('[RuTracker] Login failed:', err.message)
-            return { error: 'Login failed', results: [] }
-        }
-    }
-
+const doSearchRequest = (query) => {
     return new Promise((resolve, reject) => {
         const searchUrl = `/forum/tracker.php?nm=${encodeURIComponent(query)}`
 
@@ -88,21 +80,61 @@ export const searchRuTracker = async (query) => {
             res.on('end', () => {
                 try {
                     const results = parseSearchResults(data)
-                    resolve({ results })
+                    resolve(results)
                 } catch (err) {
-                    console.error('[RuTracker] Parse error:', err.message)
-                    resolve({ error: 'Parse failed', results: [] })
+                    reject(new Error(`Parse failed: ${err.message}`))
                 }
             })
         })
 
-        req.on('error', (err) => {
-            console.error('[RuTracker] Request error:', err.message)
-            resolve({ error: err.message, results: [] })
-        })
-
+        req.on('error', reject)
         req.end()
     })
+}
+
+/**
+ * Search RuTracker with retry logic
+ */
+export const searchRuTracker = async (query) => {
+    // Ensure we're logged in
+    if (!sessionCookie) {
+        try {
+            await withRetry(() => login(), {
+                maxRetries: 2,
+                baseDelayMs: 1000,
+                onRetry: (err, attempt, delay) => {
+                    console.log(`[RuTracker] Login retry #${attempt} after ${Math.round(delay)}ms: ${err.message}`)
+                }
+            })
+        } catch (err) {
+            console.error('[RuTracker] Login failed after retries:', err.message)
+            return { error: 'Login failed', results: [] }
+        }
+    }
+
+    try {
+        const results = await withRetry(() => doSearchRequest(query), {
+            maxRetries: 3,
+            baseDelayMs: 1000,
+            shouldRetry: (err) => {
+                // Retry on network errors or if session expired
+                if (retryPredicates.networkError(err)) return true
+                if (err.message.includes('Parse failed')) return false // Don't retry parse errors
+                return true
+            },
+            onRetry: (err, attempt, delay) => {
+                console.log(`[RuTracker] Search retry #${attempt} after ${Math.round(delay)}ms: ${err.message}`)
+                // Reset session on auth errors
+                if (err.message.includes('Login') || err.message.includes('cookie')) {
+                    sessionCookie = null
+                }
+            }
+        })
+        return { results }
+    } catch (err) {
+        console.error('[RuTracker] Search failed after retries:', err.message)
+        return { error: err.message, results: [] }
+    }
 }
 
 /**

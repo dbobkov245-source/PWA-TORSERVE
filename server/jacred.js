@@ -1,7 +1,8 @@
 /**
  * Jacred Torrent Search API
  * Использует публичные Jacred сервисы (как в Lampa)
- * 
+ * 🆕 v2.3.3: Added retry logic with exponential backoff
+ *
  * ┌─────────────────────────────────────────────────────────────────────────────┐
  * │                        🔒 SECURITY NOTICE                                   │
  * ├─────────────────────────────────────────────────────────────────────────────┤
@@ -26,6 +27,7 @@
 import https from 'https'
 import http from 'http'
 import { logger } from './utils/logger.js'
+import { withRetry, retryPredicates } from './utils/retry.js'
 
 const log = logger.child('Jacred')
 
@@ -39,14 +41,23 @@ const JACRED_MIRRORS = [
 let currentMirror = JACRED_MIRRORS[0]
 
 /**
- * Search torrents via Jacred API
+ * Search torrents via Jacred API with retry logic
  */
 export const searchJacred = async (query) => {
     const results = []
 
     for (const mirror of JACRED_MIRRORS) {
         try {
-            const data = await doSearch(mirror, query)
+            // Retry each mirror up to 2 times before moving to next
+            const data = await withRetry(() => doSearch(mirror, query), {
+                maxRetries: 2,
+                baseDelayMs: 500,
+                shouldRetry: retryPredicates.transient,
+                onRetry: (err, attempt, delay) => {
+                    log.debug('Mirror retry', { mirror, attempt, delay: Math.round(delay), error: err.message })
+                }
+            })
+
             if (data && data.length > 0) {
                 currentMirror = mirror
                 log.info('Mirror connected', { mirror, resultsCount: data.length })

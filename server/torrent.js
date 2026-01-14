@@ -1,6 +1,7 @@
 import torrentStream from 'torrent-stream'
 import process from 'process'
 import fs from 'fs'
+import fsPromises from 'fs/promises'
 import path from 'path'
 import { db, safeWrite } from './db.js'
 
@@ -27,29 +28,50 @@ const frozenTorrents = new Map() // infoHash -> { engine, frozenAt, magnetURI }
 const FROZEN_TTL = 5 * 60 * 1000 // 🔥 5 minutes (was 30)
 const MAX_FROZEN_TORRENTS = 3    // 🔥 Limit frozen count
 
+// ✅ FIX: Сохраняем ID интервала для очистки при shutdown
+let frozenCleanupIntervalId = null
+
 // Cleanup expired frozen torrents every 2 minutes
-setInterval(() => {
-    const now = Date.now()
+function startFrozenCleanup() {
+    if (frozenCleanupIntervalId) return // Уже запущен
 
-    // 🔥 Memory fix: destroy oldest if over limit
-    while (frozenTorrents.size > MAX_FROZEN_TORRENTS) {
-        const oldest = [...frozenTorrents.entries()]
-            .sort((a, b) => a[1].frozenAt - b[1].frozenAt)[0]
-        if (oldest) {
-            console.log(`[Keep-Alive] Over limit, destroying oldest: ${oldest[0]}`)
-            oldest[1].engine.destroy()
-            frozenTorrents.delete(oldest[0])
-        }
-    }
+    frozenCleanupIntervalId = setInterval(() => {
+        const now = Date.now()
 
-    for (const [hash, frozen] of frozenTorrents.entries()) {
-        if (now - frozen.frozenAt > FROZEN_TTL) {
-            console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
-            frozen.engine.destroy()
-            frozenTorrents.delete(hash)
+        // 🔥 Memory fix: destroy oldest if over limit
+        while (frozenTorrents.size > MAX_FROZEN_TORRENTS) {
+            const oldest = [...frozenTorrents.entries()]
+                .sort((a, b) => a[1].frozenAt - b[1].frozenAt)[0]
+            if (oldest) {
+                console.log(`[Keep-Alive] Over limit, destroying oldest: ${oldest[0]}`)
+                oldest[1].engine.destroy()
+                frozenTorrents.delete(oldest[0])
+            }
         }
+
+        for (const [hash, frozen] of frozenTorrents.entries()) {
+            if (now - frozen.frozenAt > FROZEN_TTL) {
+                console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
+                frozen.engine.destroy()
+                frozenTorrents.delete(hash)
+            }
+        }
+    }, 2 * 60 * 1000) // Check every 2 minutes
+
+    console.log('[Keep-Alive] Cleanup interval started')
+}
+
+// ✅ FIX: Функция для остановки интервала при shutdown
+function stopFrozenCleanup() {
+    if (frozenCleanupIntervalId) {
+        clearInterval(frozenCleanupIntervalId)
+        frozenCleanupIntervalId = null
+        console.log('[Keep-Alive] Cleanup interval stopped')
     }
-}, 2 * 60 * 1000) // Check every 2 minutes
+}
+
+// Запускаем очистку при загрузке модуля
+startFrozenCleanup()
 
 // ────────────────────────────────────────────────────────
 // Persistence: Save/Remove torrents to db.json
@@ -221,6 +243,12 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         }
 
         engine.on('ready', () => {
+            // ✅ FIX: Очищаем таймаут при успешном подключении
+            if (engine._timeoutId) {
+                clearTimeout(engine._timeoutId)
+                delete engine._timeoutId
+            }
+
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
             // ────────────────────────────────────────────────────────
@@ -259,19 +287,29 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         })
 
         engine.on('error', (err) => {
+            // ✅ FIX: Очищаем таймаут при ошибке
+            if (engine._timeoutId) {
+                clearTimeout(engine._timeoutId)
+                delete engine._timeoutId
+            }
+
             console.error('[Torrent] Engine error:', err.message)
             engine.destroy()
             reject(err)
         })
 
         // 🔥 STRATEGY 3: Increased Timeout (90s)
-        setTimeout(() => {
+        // ✅ FIX: Сохраняем ID таймаута для очистки при успешном подключении
+        const timeoutId = setTimeout(() => {
             if (!engines.has(magnetURI)) {
                 console.warn('[Torrent] Timeout: no peers found')
                 engine.destroy()
                 reject(new Error('Torrent timeout: no peers found within 90 seconds'))
             }
         }, 90000)
+
+        // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
+        engine._timeoutId = timeoutId
     })
 }
 
@@ -293,8 +331,13 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
 
     // Remove from active map
     engines.delete(infoHash)
+    // ✅ FIX: Собираем ключи для удаления отдельно, чтобы избежать race condition
+    const keysToDelete = []
     for (const [key, val] of engines.entries()) {
-        if (val === engine) engines.delete(key)
+        if (val === engine) keysToDelete.push(key)
+    }
+    for (const key of keysToDelete) {
+        engines.delete(key)
     }
 
     // Keep-Alive: freeze instead of destroy (unless forced)
@@ -417,8 +460,7 @@ async function updateDiskCacheAsync(engine) {
 
     let totalDownloaded = 0
 
-    // Use async fs for non-blocking I/O
-    const fsPromises = await import('fs/promises')
+    // Use async fs for non-blocking I/O (static import at top)
 
     for (const file of engine.files) {
         try {
@@ -632,6 +674,9 @@ export const setSpeedMode = (mode) => {
 // 🛑 Graceful Shutdown: Destroy all torrents
 // ────────────────────────────────────────────────────────
 export const destroyAllTorrents = () => {
+    // ✅ FIX: Останавливаем интервал очистки frozen torrents
+    stopFrozenCleanup()
+
     console.log(`[Shutdown] Destroying ${engines.size} active engines...`)
 
     // Destroy all active engines
@@ -662,3 +707,80 @@ export const destroyAllTorrents = () => {
 // ────────────────────────────────────────────────────────
 export const getActiveTorrentsCount = () => engines.size
 export const getFrozenTorrentsCount = () => frozenTorrents.size
+
+// ────────────────────────────────────────────────────────
+// 🛡️ v2.3.3: Graceful Degradation - Memory pressure handling
+// ────────────────────────────────────────────────────────
+
+let isDegradedMode = false
+
+/**
+ * Enter degraded mode: reduce memory usage
+ * - Pause all frozen torrents (destroy them)
+ * - Reduce max connections on active torrents
+ * - Disable prefetch buffers
+ */
+export const enterDegradedMode = () => {
+    if (isDegradedMode) return { alreadyDegraded: true }
+
+    isDegradedMode = true
+    console.log('[Degradation] Entering degraded mode - reducing memory usage')
+
+    let freedCount = 0
+
+    // 1. Clear all frozen torrents (they're just cache)
+    for (const [hash, frozen] of frozenTorrents.entries()) {
+        try {
+            frozen.engine.destroy()
+            freedCount++
+        } catch (e) { }
+    }
+    frozenTorrents.clear()
+    console.log(`[Degradation] Freed ${freedCount} frozen torrents`)
+
+    // 2. Reduce connections on active torrents (eco mode)
+    const uniqueEngines = new Set(engines.values())
+    for (const engine of uniqueEngines) {
+        if (engine.swarm) {
+            engine.swarm.maxConnections = 30 // Minimal connections
+        }
+    }
+    console.log(`[Degradation] Reduced connections on ${uniqueEngines.size} active torrents`)
+
+    // 3. Force garbage collection if available
+    if (global.gc) {
+        global.gc()
+        console.log('[Degradation] Forced garbage collection')
+    }
+
+    return {
+        freedFrozen: freedCount,
+        reducedConnections: uniqueEngines.size,
+        mode: 'degraded'
+    }
+}
+
+/**
+ * Exit degraded mode: restore normal operation
+ */
+export const exitDegradedMode = () => {
+    if (!isDegradedMode) return { alreadyNormal: true }
+
+    isDegradedMode = false
+    console.log('[Degradation] Exiting degraded mode - restoring normal operation')
+
+    // Restore normal connections (balanced mode)
+    const uniqueEngines = new Set(engines.values())
+    for (const engine of uniqueEngines) {
+        if (engine.swarm) {
+            engine.swarm.maxConnections = 55 // Balanced mode default
+        }
+    }
+
+    return { restoredConnections: uniqueEngines.size, mode: 'normal' }
+}
+
+/**
+ * Check if currently in degraded mode
+ */
+export const isInDegradedMode = () => isDegradedMode

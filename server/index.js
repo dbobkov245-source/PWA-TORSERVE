@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
+import fsPromises from 'fs/promises'
 import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount } from './torrent.js'
 import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
@@ -39,8 +40,11 @@ const rateLimitMap = new Map()
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
 const RATE_LIMIT_MAX = 60 // 🔥 v2.3: increased from 30 for diagnostics polling
 
+// ✅ FIX: Сохраняем ID интервала для очистки при shutdown
+let rateLimitCleanupId = null
+
 // Cleanup old entries every 5 minutes
-setInterval(() => {
+rateLimitCleanupId = setInterval(() => {
     const now = Date.now()
     for (const [ip, data] of rateLimitMap.entries()) {
         if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
@@ -97,6 +101,52 @@ app.get('/api/health', (req, res) => {
         serverStatus: state.serverStatus,
         lastStateChange: state.lastStateChange
     })
+})
+
+// ────────────────────────────────────────────────────────
+// 🏥 v2.3.3: Health Endpoint for monitoring systems
+// Compatible with: Home Assistant, Uptime Robot, Kubernetes
+// ────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+    const state = getServerState()
+    const memUsage = process.memoryUsage()
+    const ramMB = Math.round(memUsage.rss / 1024 / 1024)
+
+    // Determine health status
+    const isHealthy = state.serverStatus === 'ok'
+    const isDegraded = state.serverStatus === 'degraded'
+    const isUnhealthy = state.serverStatus === 'circuit_open' || state.serverStatus === 'error'
+
+    const healthData = {
+        status: isHealthy ? 'healthy' : (isDegraded ? 'degraded' : 'unhealthy'),
+        timestamp: new Date().toISOString(),
+        uptime: Math.round(process.uptime()),
+        version: '2.3.3',
+        checks: {
+            memory: {
+                status: ramMB < 800 ? 'pass' : (ramMB < 1000 ? 'warn' : 'fail'),
+                rss_mb: ramMB,
+                heap_mb: Math.round(memUsage.heapUsed / 1024 / 1024)
+            },
+            storage: {
+                status: state.serverStatus === 'circuit_open' ? 'fail' : 'pass',
+                failures: state.storageFailures || 0
+            },
+            torrents: {
+                active: getActiveTorrentsCount(),
+                frozen: getFrozenTorrentsCount()
+            }
+        }
+    }
+
+    // Return appropriate HTTP status
+    if (isUnhealthy) {
+        res.status(503).json(healthData)
+    } else if (isDegraded) {
+        res.status(200).json(healthData) // 200 with degraded status
+    } else {
+        res.status(200).json(healthData)
+    }
 })
 
 // API: Lag Stats (enhanced performance monitoring v2.3)
@@ -355,6 +405,9 @@ app.post('/api/autodownload/check', async (req, res) => {
 })
 
 // API: Generate M3U Playlist for Video Files
+// Helper: sanitize filename for M3U metadata (remove newlines and control chars)
+const sanitizeM3U = (str) => str.replace(/[\r\n\x00-\x1f]/g, ' ').trim()
+
 app.get('/playlist.m3u', (req, res) => {
     // 1. Determine Host (Synology IP or Localhost)
     const host = req.get('host') || `localhost:${PORT}`
@@ -375,7 +428,7 @@ app.get('/playlist.m3u', (req, res) => {
             if (videoExtensions.includes(ext)) {
                 // Metadata for player
                 // Use -1 for live/unknown duration, or try to guess if available
-                m3u += `#EXTINF:-1,${file.name}\n`
+                m3u += `#EXTINF:-1,${sanitizeM3U(file.name)}\n`
 
                 // Stream URL: http://<NAS_IP>:3000/stream/<HASH>/<INDEX>
                 m3u += `${protocol}://${host}/stream/${torrent.infoHash}/${file.index}\n`
@@ -426,11 +479,9 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
             const fullPath = path.join(downloadPath, torrent.name)
 
             // Fire-and-forget async deletion to avoid blocking the server
-            import('fs/promises').then(fsPromises => {
-                fsPromises.rm(fullPath, { recursive: true, force: true })
-                    .then(() => console.log(`[File Hygiene] Successfully removed: ${fullPath}`))
-                    .catch(e => console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`))
-            })
+            fsPromises.rm(fullPath, { recursive: true, force: true })
+                .then(() => console.log(`[File Hygiene] Successfully removed: ${fullPath}`))
+                .catch(e => console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`))
         }
         res.json({ success: true, message: 'Deletion started asynchronously' })
     } else {
@@ -511,18 +562,26 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         // CRITICAL: Cleanup stream on client disconnect to prevent resource leaks
         const stream = file.createReadStream({ start, end })
 
+        // ✅ FIX: Функция гарантированной очистки стрима
+        const cleanup = () => {
+            if (!stream.destroyed) {
+                stream.destroy()
+            }
+        }
+
         // 🔥 v2.3: Handle stream errors to prevent hanging responses
         stream.on('error', (err) => {
             console.error(`[Stream] Error for ${infoHash}/${fileIndex}:`, err.message)
+            cleanup()
             if (!res.headersSent) {
                 res.status(500).send('Stream error')
             }
-            stream.destroy()
         })
 
-        res.on('close', () => {
-            stream.destroy()
-        })
+        // ✅ FIX: Очистка при закрытии соединения клиентом
+        res.on('close', cleanup)
+        res.on('error', cleanup)
+
         stream.pipe(res)
     }
 })
@@ -566,6 +625,12 @@ const gracefulShutdown = async (signal) => {
     isShuttingDown = true
 
     console.log(`\n[Shutdown] Received ${signal}, starting graceful shutdown...`)
+
+    // ✅ FIX: Очищаем интервал rate limit cleanup
+    if (rateLimitCleanupId) {
+        clearInterval(rateLimitCleanupId)
+        rateLimitCleanupId = null
+    }
 
     // 1. Stop accepting new connections
     server.close(() => {

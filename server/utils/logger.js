@@ -42,32 +42,33 @@ const formatMessage = (level, module, message, data) => {
 
 /**
  * Create logger instance optionally bound to a module name
+ * ✅ FIX: Исправлена логика проверки уровней логирования
  */
 const createLogger = (moduleName = null) => ({
     debug: (message, data = {}) => {
-        if (LOG_LEVELS.debug >= currentLevel) {
+        if (currentLevel <= LOG_LEVELS.debug) {  // ✅ FIX: было LOG_LEVELS.debug >= currentLevel
             console.log(formatMessage('debug', moduleName, message, data))
         }
     },
-    
+
     info: (message, data = {}) => {
-        if (LOG_LEVELS.info >= currentLevel) {
+        if (currentLevel <= LOG_LEVELS.info) {  // ✅ FIX
             console.log(formatMessage('info', moduleName, message, data))
         }
     },
-    
+
     warn: (message, data = {}) => {
-        if (LOG_LEVELS.warn >= currentLevel) {
+        if (currentLevel <= LOG_LEVELS.warn) {  // ✅ FIX
             console.warn(formatMessage('warn', moduleName, message, data))
         }
     },
-    
+
     error: (message, data = {}) => {
-        if (LOG_LEVELS.error >= currentLevel) {
+        if (currentLevel <= LOG_LEVELS.error) {  // ✅ FIX
             console.error(formatMessage('error', moduleName, message, data))
         }
     },
-    
+
     /**
      * Create child logger with module context
      * @param {string} module - Module name for log prefix

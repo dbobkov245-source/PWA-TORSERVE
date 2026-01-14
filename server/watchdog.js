@@ -1,18 +1,20 @@
 /**
  * Watchdog Module - Self-Healing Architecture
- * PWA-TorServe v2.1
- * 
+ * PWA-TorServe v2.3.3
+ *
  * Features:
  * - Non-blocking async monitoring loop
  * - RAM monitoring with hysteresis (30s delay for degraded)
  * - NFS Circuit Breaker (3 failures → 5min pause)
  * - Automatic counter reset on recovery
+ * - 🆕 Graceful Degradation: auto-reduce memory on pressure
  */
 
 import { db, safeWrite } from './db.js'
 import fs from 'fs'
 import path from 'path'
 import { checkRules } from './autodownloader.js'
+import { enterDegradedMode, exitDegradedMode } from './torrent.js'
 
 // ─────────────────────────────────────────────────────────────
 // Configuration Constants
@@ -117,10 +119,20 @@ const updateStatus = async (newStatus) => {
         db.data.serverStatus = newStatus
         db.data.lastStateChange = Date.now()
 
+        // 🆕 v2.3.3: Graceful Degradation - auto-reduce memory on pressure
+        if (newStatus === 'degraded') {
+            const result = enterDegradedMode()
+            console.log(`[Watchdog] Degradation applied:`, result)
+        }
+
         // Reset counters on recovery to OK
         if (newStatus === 'ok') {
             db.data.storageFailures = 0
             degradedSince = null
+
+            // 🆕 v2.3.3: Exit degraded mode on recovery
+            const result = exitDegradedMode()
+            console.log(`[Watchdog] Recovery applied:`, result)
             console.log('[Watchdog] Recovery complete, counters reset')
         }
 
