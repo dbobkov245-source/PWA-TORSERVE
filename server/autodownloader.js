@@ -1,16 +1,24 @@
 /**
- * Auto-Downloader Module
- * PWA-TorServe v2.2
- * 
- * Автоматический поиск и загрузка новых серий сериалов.
- * Использует встроенный regex-парсер (без внешних зависимостей).
- * 
- * Поддерживаемые форматы названий:
- * - Breaking.Bad.S05E16.1080p.BluRay.x264-GROUP
- * - Game of Thrones S08E06 720p WEB-DL
- * - [SubsPlease] One Punch Man - 06 (1080p)
- * - Ванпанчмен - 06 [1080p] [AniLibria]
- * - Сериал (2024) - S01E05
+ * Auto-Downloader Module v2.6.7 - PRODUCTION FINAL
+ * PWA-TorServe
+ *
+ * 🆕 v2.6.7 FIXES:
+ * - FIX: Translation now returns ARRAY ["Fallout", "Fallout S02"]
+ * - FIX: Base name searched first (finds Russian releases like "Фоллаут 2 сезон")
+ *
+ * 🆕 v2.6.6 FEATURES:
+ * - SMART QUERY: Auto-removes quality tags (DV, HDR, HMAX, WEB etc.)
+ * - MULTI-VARIANT: Tries multiple query variants for better results
+ * - FALLBACK: Tries original query if normalized fails
+ *
+ * 🆕 v2.6.4 FIXES:
+ * - FIX: extractHash now supports Base32 infohashes (32 chars)
+ * - FIX: Strict resolution filter (rejects torrents without resolution)
+ *
+ * 🆕 v2.6.3 OPTIMIZATIONS:
+ * - ATOMIC WRITES: Grouped DB updates to prevent race conditions & corruption
+ * - LOGIC FIX: lastEpisode is no longer updated by REPACK releases
+ * - STABILITY: REPACK detection for first episodes & timestamp safety
  */
 
 import { db, safeWrite } from './db.js'
@@ -20,34 +28,276 @@ import { logger } from './utils/logger.js'
 
 const log = logger.child('AutoDownloader')
 
+// Runtime DEBUG toggle
+const DEBUG = process.env.AUTO_DL_DEBUG === '1'
+const MAX_DOWNLOADS_PER_RULE = 1  // Only download the BEST torrent per episode
+
+// Keywords detection
+const BATCH_KEYWORDS = /complete|season|batch|pack|collection|全集|box[\s\.]?set/i
+const FIX_KEYWORDS = /repack|proper|rerip|real\.proper|internal/i
+
+// Global blacklist (defaults)
+const GLOBAL_BLACKLIST = [
+    'camrip', 'cam', 'hdcam',
+    'ts', 'hdts', 'telesync',
+    'tc', 'telecine',
+    'workprint', 'screener',
+    'hindi', 'tamil', 'telugu', 'dubbed',
+    'linedub', 'korean', 'chinese',
+    'sample', 'trailer'
+]
+
+// REPACK window (hours)
+const REPACK_WINDOW_HOURS = 72  // 3 days
+
 // ────────────────────────────────────────────────────────
-// 📺 Title Parser (Zero Dependencies)
+// � Query Normalization for Better Search Results
 // ────────────────────────────────────────────────────────
 
 /**
- * Parse torrent title to extract series info
- * @param {string} title - Torrent title
- * @returns {{ title: string, season: number, episode: number, resolution: string, group: string }}
+ * Normalize search query by removing quality tags, codecs, groups etc.
+ * This helps find results on jacred.xyz which doesn't parse these tags.
+ * 
+ * Examples:
+ * - "IT Welcome to Derry S01 HMAX DV HDR WEB" → "Welcome to Derry S01"
+ * - "Фоллаут 2" → "Фоллаут 2" (unchanged, but we'll try English too)
  */
-export function parseTorrentTitle(title) {
+function normalizeQuery(query) {
+    let normalized = query.trim()
+
+    // Remove quality/codec tags (case insensitive)
+    const removeTags = [
+        // Quality
+        /\b(2160p|1080p|720p|480p|4k|uhd)\b/gi,
+        // HDR variants
+        /\b(hdr10\+?|hdr|dv|dolby\s*vision|hlg)\b/gi,
+        // Codecs
+        /\b(hevc|h\.?265|x\.?265|h\.?264|x\.?264|av1|avc)\b/gi,
+        // Audio
+        /\b(atmos|truehd|dts-?hd|dts|aac|ac3|eac3|flac)\b/gi,
+        // Source tags (including standalone WEB)
+        /\b(web-?dl|web-?rip|webrip|web|blu-?ray|bdrip|hdtv|dvdrip|hdrip|remux)\b/gi,
+        // Streaming services
+        /\b(hmax|hbo|netflix|nf|amzn|amazon|atvp|dsnp|disney\+?|hulu|paramount\+?)\b/gi,
+        // Release groups (at end)
+        /-[a-z0-9]+$/i,
+        // Release groups in brackets
+        /\[[^\]]+\]$/g,
+        // "IT" prefix (often means International)
+        /^IT\s+/i,
+    ]
+
+    for (const pattern of removeTags) {
+        normalized = normalized.replace(pattern, '')
+    }
+
+    // Clean up multiple spaces and trim
+    normalized = normalized.replace(/\s+/g, ' ').trim()
+
+    // Remove trailing/leading dashes and dots
+    normalized = normalized.replace(/^[\s.\-]+|[\s.\-]+$/g, '').trim()
+
+    return normalized
+}
+
+// ────────────────────────────────────────────────────────
+// 🌐 RU→EN Translation Dictionary for Popular Titles
+// ────────────────────────────────────────────────────────
+
+const RU_EN_TRANSLATIONS = {
+    // Popular series
+    'фоллаут': 'Fallout',
+    'fallout': 'Fallout',
+    'ведьмак': 'The Witcher',
+    'игра престолов': 'Game of Thrones',
+    'дом дракона': 'House of the Dragon',
+    'мандалорец': 'The Mandalorian',
+    'локи': 'Loki',
+    'ванда вижн': 'WandaVision',
+    'соколиный глаз': 'Hawkeye',
+    'лунный рыцарь': 'Moon Knight',
+    'мисс марвел': 'Ms Marvel',
+    'женщина халк': 'She Hulk',
+    'секретное вторжение': 'Secret Invasion',
+    'агата': 'Agatha All Along',
+    'звёздные войны': 'Star Wars',
+    'звездные войны': 'Star Wars',
+    'оби ван': 'Obi-Wan Kenobi',
+    'асока': 'Ahsoka',
+    'андор': 'Andor',
+    'аколит': 'The Acolyte',
+    'скелетон крю': 'Skeleton Crew',
+    'кольца власти': 'Rings of Power',
+    'властелин колец': 'Lord of the Rings',
+    'последние из нас': 'The Last of Us',
+    'одни из нас': 'The Last of Us',
+    'последний из нас': 'The Last of Us',
+    'ходячие мертвецы': 'The Walking Dead',
+    'очень странные дела': 'Stranger Things',
+    'чёрное зеркало': 'Black Mirror',
+    'черное зеркало': 'Black Mirror',
+    'бумажный дом': 'Money Heist',
+    'ла каса де папель': 'Money Heist',
+    'во все тяжкие': 'Breaking Bad',
+    'лучше звоните солу': 'Better Call Saul',
+    'острые козырьки': 'Peaky Blinders',
+    'викинги': 'Vikings',
+    'корона': 'The Crown',
+    'эйфория': 'Euphoria',
+    'сукасияние': 'The Shining', // :)
+    'сияние': 'The Shining',
+    'оно': 'IT',
+    'пенниуайз': 'Pennywise',
+    'добро пожаловать в дерри': 'Welcome to Derry',
+    // Movies
+    'дюна': 'Dune',
+    'аватар': 'Avatar',
+    'мстители': 'Avengers',
+    'человек паук': 'Spider-Man',
+    'бэтмен': 'Batman',
+    'джокер': 'Joker',
+    'супермен': 'Superman',
+    // Add more as needed
+}
+
+/**
+ * Translate Russian query to English using dictionary
+ * 🆕 v2.6.7: Returns array of variants (with season AND without)
+ */
+function translateRuToEn(query) {
+    const lowerQuery = query.toLowerCase().trim()
+    const variants = []
+
+    // Check for exact match first
+    if (RU_EN_TRANSLATIONS[lowerQuery]) {
+        variants.push(RU_EN_TRANSLATIONS[lowerQuery])
+        return variants
+    }
+
+    // Check for partial matches (title + season)
+    for (const [ru, en] of Object.entries(RU_EN_TRANSLATIONS)) {
+        if (lowerQuery.startsWith(ru)) {
+            // Always add base English name first (most likely to find results)
+            variants.push(en)
+
+            // Extract season/episode info after the title
+            const suffix = lowerQuery.slice(ru.length).trim()
+            const seasonMatch = suffix.match(/(?:сезон\s*)?(\d+)/i)
+            if (seasonMatch) {
+                // Also add with season format (e.g., "Fallout S02")
+                variants.push(`${en} S${seasonMatch[1].padStart(2, '0')}`)
+            }
+
+            return variants
+        }
+    }
+
+    return []  // Return empty array if no translation found
+}
+
+/**
+ * Generate query variants to try (for better search coverage)
+ * Returns array of queries to try in order
+ * 🆕 v2.6.7: Translation returns array of variants
+ */
+function generateQueryVariants(query) {
+    const variants = []
+    const normalized = normalizeQuery(query)
+
+    // 1. Try English translations first (most likely to find results)
+    const englishTranslations = translateRuToEn(normalized || query)
+    if (englishTranslations.length > 0) {
+        variants.push(...englishTranslations)
+    }
+
+    // 2. Normalized query (without tags)
+    if (normalized && normalized !== query && !variants.includes(normalized)) {
+        variants.push(normalized)
+    }
+
+    // 3. Original query (might work if user entered it correctly)
+    if (!variants.includes(query)) {
+        variants.push(query)
+    }
+
+    // 4. If query has season info, try without it
+    const seasonMatch = query.match(/S(\d{1,2})/i) || query.match(/Season\s*(\d+)/i)
+    if (seasonMatch) {
+        const withoutSeason = normalized
+            .replace(/S\d{1,2}/i, '')
+            .replace(/Season\s*\d+/i, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        if (withoutSeason && !variants.includes(withoutSeason)) {
+            // Also try English translation without season
+            const enWithoutSeason = translateRuToEn(withoutSeason)
+            for (const tr of enWithoutSeason) {
+                if (!variants.includes(tr)) {
+                    variants.push(tr)
+                }
+            }
+            variants.push(withoutSeason)
+        }
+    }
+
+    // Remove duplicates while preserving order
+    return [...new Set(variants)]
+}
+
+// ────────────────────────────────────────────────────────
+// �📺 Enhanced Title Parser
+// ────────────────────────────────────────────────────────
+
+export function parseTorrentTitle(title, sizeFromAPI = 0) {
     const result = {
         title: '',
-        season: 1,
+        season: null,
         episode: 0,
         resolution: '',
-        group: ''
+        group: '',
+        qualityScore: 0,
+        sizeGB: sizeFromAPI,
+        isHevc: false,
+        isBatch: false,
+        isRepack: false,
+        _raw: title
     }
 
-    // Normalize: remove extra spaces, trim
     let cleanTitle = title.trim()
 
-    // Extract resolution (1080p, 720p, 2160p, 4K, etc.)
-    const resolutionMatch = cleanTitle.match(/\b(2160p|1080p|720p|480p|4K|UHD)\b/i)
-    if (resolutionMatch) {
-        result.resolution = resolutionMatch[1].toLowerCase()
+    // Detect REPACK/PROPER
+    result.isRepack = FIX_KEYWORDS.test(cleanTitle)
+
+    // Batch detection
+    result.isBatch = BATCH_KEYWORDS.test(cleanTitle)
+
+    // Quality score extraction
+    if (/2160p|4k|uhd/i.test(cleanTitle)) {
+        result.qualityScore = 4
+        result.resolution = '2160p'
+    } else if (/1080p/i.test(cleanTitle)) {
+        result.qualityScore = 3
+        result.resolution = '1080p'
+    } else if (/720p/i.test(cleanTitle)) {
+        result.qualityScore = 2
+        result.resolution = '720p'
+    } else if (/480p/i.test(cleanTitle)) {
+        result.qualityScore = 1
+        result.resolution = '480p'
     }
 
-    // Extract release group: [GroupName] or -GROUP at end
+    // HEVC detection
+    result.isHevc = /x265|hevc/i.test(cleanTitle)
+
+    // Size extraction
+    if (!result.sizeGB) {
+        const sizeMatch = cleanTitle.match(/(\d+(?:\.\d+)?)\s*(GB|GiB)/i)
+        if (sizeMatch) {
+            result.sizeGB = parseFloat(sizeMatch[1])
+        }
+    }
+
+    // Release group extraction
     const groupBracketMatch = cleanTitle.match(/^\[([^\]]+)\]/)
     const groupDashMatch = cleanTitle.match(/-([A-Za-z0-9]+)(?:\.[a-z]{2,4})?$/)
     if (groupBracketMatch) {
@@ -56,19 +306,17 @@ export function parseTorrentTitle(title) {
         result.group = groupDashMatch[1]
     }
 
-    // Pattern 1: SxxExx format (Western series)
-    // Breaking.Bad.S05E16, Game of Thrones S08E06
-    const sxxexxMatch = cleanTitle.match(/[.\s]S(\d{1,2})E(\d{1,3})/i)
+    // Pattern 1: SxxExx
+    const sxxexxMatch = cleanTitle.match(/[\.\s]S(\d{1,2})E(\d{1,3})/i)
     if (sxxexxMatch) {
         result.season = parseInt(sxxexxMatch[1], 10)
         result.episode = parseInt(sxxexxMatch[2], 10)
-        // Extract title before SxxExx
         const titlePart = cleanTitle.split(/S\d{1,2}E\d{1,3}/i)[0]
         result.title = cleanTitlePart(titlePart)
         return result
     }
 
-    // Pattern 2: Season X Episode Y (verbose)
+    // Pattern 2: Season X Episode Y
     const verboseMatch = cleanTitle.match(/Season\s*(\d+)\s*Episode\s*(\d+)/i)
     if (verboseMatch) {
         result.season = parseInt(verboseMatch[1], 10)
@@ -78,9 +326,7 @@ export function parseTorrentTitle(title) {
         return result
     }
 
-    // Pattern 3: Anime style - "Title - 06" or "Title - 06v2"
-    // [SubsPlease] One Punch Man - 06 (1080p)
-    // Ванпанчмен - 06 [1080p]
+    // Pattern 3: Anime style
     const animeMatch = cleanTitle.match(/(.+?)\s*[-–]\s*(\d{1,4})(?:v\d)?(?:\s|$|\[|\()/)
     if (animeMatch) {
         result.episode = parseInt(animeMatch[2], 10)
@@ -88,7 +334,7 @@ export function parseTorrentTitle(title) {
         return result
     }
 
-    // Pattern 4: Episode at end: "Title Episode 5" or "Title Ep.5"
+    // Pattern 4: Episode keyword
     const epMatch = cleanTitle.match(/(.+?)\s*(?:Episode|Ep\.?|E)\s*(\d{1,3})/i)
     if (epMatch) {
         result.episode = parseInt(epMatch[2], 10)
@@ -96,8 +342,7 @@ export function parseTorrentTitle(title) {
         return result
     }
 
-    // Pattern 5: Just a number at the end (fallback for simple numbering)
-    // "Название сериала 05 1080p"
+    // Pattern 5: Simple number
     const simpleNumberMatch = cleanTitle.match(/(.+?)\s+(\d{1,3})\s+(?:\d{3,4}p|\[|$)/i)
     if (simpleNumberMatch) {
         result.episode = parseInt(simpleNumberMatch[2], 10)
@@ -105,86 +350,205 @@ export function parseTorrentTitle(title) {
         return result
     }
 
-    // Fallback: use full title
+    // Generic fallback
     result.title = cleanTitlePart(cleanTitle)
     return result
 }
 
-/**
- * Clean title part: remove dots, brackets, extra info
- */
 function cleanTitlePart(title) {
     return title
-        .replace(/^\[([^\]]+)\]\s*/, '')     // Remove [Group] at start
-        .replace(/\./g, ' ')                  // Dots to spaces
-        .replace(/\s*\([^)]+\)\s*/g, ' ')    // Remove (year), (1080p), etc.
-        .replace(/\s*\[[^\]]+\]\s*/g, ' ')   // Remove [info] blocks
-        .replace(/\s+/g, ' ')                 // Multiple spaces to one
+        .replace(/^\[([^\]]+)\]\s*/, '')
+        .replace(/\./g, ' ')
+        .replace(/\s*\([^)]+\)\s*/g, ' ')
+        .replace(/\s*\[[^\]]+\]\s*/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim()
 }
 
 // ────────────────────────────────────────────────────────
-// 🔍 Rule Matching
+// 🔍 Enhanced Rule Matching
 // ────────────────────────────────────────────────────────
 
-/**
- * Check if parsed torrent matches a rule
- * @param {object} parsed - Parsed torrent info
- * @param {object} rule - Auto-download rule
- * @returns {boolean}
- */
 function matchesRule(parsed, rule) {
-    // Title match (fuzzy: includes the query)
+    // 1. Blacklist Check
+    const globalBlacklist = db.data.autoDownloadSettings?.globalBlacklist || GLOBAL_BLACKLIST
+    const ruleBlacklist = rule.excludeKeywords || []
+    const combinedBlacklist = [...globalBlacklist, ...ruleBlacklist]
+
+    if (combinedBlacklist.length > 0) {
+        const lowerTitle = parsed._raw.toLowerCase()
+        const blockedKeyword = combinedBlacklist.find(keyword =>
+            lowerTitle.includes(keyword.toLowerCase())
+        )
+        if (blockedKeyword) {
+            if (DEBUG) log.debug('❌ Excluded by keyword', { keyword: blockedKeyword })
+            return false
+        }
+    }
+
+    // 2. Batch detection
+    if (parsed.isBatch && rule.lastEpisode > 0) {
+        if (DEBUG) log.debug('❌ Batch detected, skipping')
+        return false
+    }
+
+    // 3. Block REPACKs if no original downloaded yet
+    if (parsed.isRepack && rule.lastEpisode === 0) {
+        if (DEBUG) log.debug('❌ REPACK not allowed (no original downloaded yet)', { episode: parsed.episode })
+        return false
+    }
+
+    // 4. Title fuzzy matching
     const queryLower = rule.query.toLowerCase()
     const titleLower = parsed.title.toLowerCase()
 
-    if (!titleLower.includes(queryLower) && !queryLower.includes(titleLower)) {
-        // Try matching individual words (at least 2 must match)
+    const hasExactMatch =
+        queryLower.length > 3 &&
+        (titleLower.includes(queryLower) || queryLower.includes(titleLower))
+
+    if (!hasExactMatch) {
         const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2)
         const titleWords = titleLower.split(/\s+/).filter(w => w.length > 2)
+
+        if (queryWords.length === 0) {
+            if (DEBUG) log.debug('❌ Query too short')
+            return false
+        }
+
         const matchCount = queryWords.filter(qw =>
             titleWords.some(tw => tw.includes(qw) || qw.includes(tw))
         ).length
-        if (matchCount < Math.min(2, queryWords.length)) {
+
+        const minMatches = Math.max(1, Math.ceil(queryWords.length * 0.5))
+
+        if (matchCount < minMatches) {
+            if (DEBUG) log.debug('❌ Title mismatch')
             return false
         }
     }
 
-    // Resolution filter (if specified)
-    if (rule.resolution && parsed.resolution) {
+    // 5. Quality/Resolution Filters
+    if (rule.quality && rule.quality !== 'any') {
+        const requiredQuality = {
+            '4k': 4, '2160p': 4,
+            '1080p': 3, '720p': 2, '480p': 1
+        }[rule.quality.toLowerCase()]
+
+        // Strict mode: Allow equal or better quality
+        if (rule.strictQuality && requiredQuality) {
+            if (parsed.qualityScore < requiredQuality) {
+                if (DEBUG) log.debug('❌ Strict quality filter (below minimum)', {
+                    required: rule.quality,
+                    requiredScore: requiredQuality,
+                    gotScore: parsed.qualityScore
+                })
+                return false
+            }
+        }
+    }
+
+    // 6. Resolution filter (strict: if rule requires resolution, torrent must have it)
+    if (rule.resolution && rule.resolution.trim() !== '') {
+        if (!parsed.resolution) {
+            if (DEBUG) log.debug('❌ Resolution required but not found')
+            return false
+        }
         if (!parsed.resolution.includes(rule.resolution.toLowerCase())) {
+            if (DEBUG) log.debug('❌ Resolution mismatch')
             return false
         }
     }
 
-    // Group filter (if specified)
-    if (rule.group && parsed.group) {
-        if (!parsed.group.toLowerCase().includes(rule.group.toLowerCase())) {
+    // 7. Group Filter
+    if (rule.group && rule.group.trim() !== '') {
+        if (parsed.group && !parsed.group.toLowerCase().includes(rule.group.toLowerCase())) {
+            if (DEBUG) log.debug('❌ Group mismatch')
             return false
         }
     }
 
-    // Season filter (if specified)
-    if (rule.season && parsed.season !== rule.season) {
+    // 8. Season Filter
+    if (rule.season && rule.season > 0) {
+        if (parsed.season === null) {
+            if (DEBUG) log.debug('❌ Season required but not parsed')
+            return false
+        }
+        if (parsed.season !== rule.season) {
+            if (DEBUG) log.debug('❌ Season mismatch')
+            return false
+        }
+    }
+
+    // 9. Episode Check with Smart REPACK Handling
+    if (parsed.episode > 0 && parsed.episode <= rule.lastEpisode) {
+        if (parsed.isRepack) {
+            const timestampKey = `${rule.id}_${parsed.episode}`
+            const lastDownloadTime = db.data.autoDownloadTimestamps?.[timestampKey] || 0
+            const hoursSinceDownload = (Date.now() - lastDownloadTime) / (1000 * 60 * 60)
+
+            if (hoursSinceDownload < REPACK_WINDOW_HOURS) {
+                if (DEBUG) log.debug('✅ REPACK allowed (within window)', {
+                    hoursSince: Math.round(hoursSinceDownload)
+                })
+                return true
+            } else {
+                if (DEBUG) log.debug('❌ REPACK too old', {
+                    hoursSince: Math.round(hoursSinceDownload)
+                })
+                return false
+            }
+        }
+
+        if (DEBUG) log.debug('❌ Episode too old')
         return false
     }
 
-    // Episode must be newer than last downloaded
-    if (parsed.episode <= rule.lastEpisode) {
-        return false
+    if (parsed.episode === 0 && rule.lastEpisode > 0 && !parsed.isBatch) {
+        if (DEBUG) log.debug('⚠️ Unknown episode detected, allowing')
     }
 
     return true
 }
 
 // ────────────────────────────────────────────────────────
+// 🏆 Smart Candidate Selection
+// ────────────────────────────────────────────────────────
+
+function selectBestCandidate(candidates, rule) {
+    if (candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]
+
+    candidates.sort((a, b) => {
+        // 1. Quality
+        if (b.parsed.qualityScore !== a.parsed.qualityScore) {
+            return b.parsed.qualityScore - a.parsed.qualityScore
+        }
+        // 2. HEVC Preference
+        if (rule.preferHevc) {
+            if (b.parsed.isHevc !== a.parsed.isHevc) {
+                return (b.parsed.isHevc ? 1 : 0) - (a.parsed.isHevc ? 1 : 0)
+            }
+        }
+        // 3. Size
+        if (b.parsed.sizeGB !== a.parsed.sizeGB) {
+            return b.parsed.sizeGB - a.parsed.sizeGB
+        }
+        // 4. Non-HEVC Fallback
+        if (!rule.preferHevc) {
+            if (a.parsed.isHevc !== b.parsed.isHevc) {
+                return (a.parsed.isHevc ? 1 : 0) - (b.parsed.isHevc ? 1 : 0)
+            }
+        }
+        return 0
+    })
+
+    return candidates[0]
+}
+
+// ────────────────────────────────────────────────────────
 // 🚀 Main Check Logic
 // ────────────────────────────────────────────────────────
 
-/**
- * Check all rules and download new episodes
- * @returns {Promise<{checked: number, downloaded: number, errors: number}>}
- */
 export async function checkRules() {
     await db.read()
 
@@ -192,107 +556,191 @@ export async function checkRules() {
     const rules = db.data.autoDownloadRules || []
 
     if (!settings.enabled || rules.length === 0) {
-        log.debug('Auto-downloader disabled or no rules', { enabled: settings.enabled, rulesCount: rules.length })
         return { checked: 0, downloaded: 0, errors: 0 }
     }
 
-    log.info('Starting auto-download check', { rulesCount: rules.length })
+    db.data.autoDownloadTimestamps ||= {}
+
+    log.info('🔍 Starting auto-download check', { rulesCount: rules.length })
 
     let downloaded = 0
     let errors = 0
+    let totalTorrentsChecked = 0
     const downloadedHashes = new Set(db.data.autoDownloadHistory || [])
 
     for (const rule of rules) {
         if (!rule.enabled) continue
 
         try {
-            log.debug('Checking rule', { query: rule.query })
-            const { results, error } = await searchJacred(rule.query)
+            // Generate query variants (normalized, original, without season)
+            const queryVariants = generateQueryVariants(rule.query)
 
-            if (error || !results?.length) {
-                log.warn('Search failed or empty', { query: rule.query, error })
+            log.info('🔍 Checking rule', {
+                query: rule.query,
+                variants: queryVariants,
+                lastEpisode: rule.lastEpisode
+            })
+
+            // Try each query variant until we get results
+            let results = []
+            let usedQuery = null
+
+            for (const variant of queryVariants) {
+                log.info('🔎 Trying query variant', { variant })
+                const searchResult = await searchJacred(variant)
+
+                if (!searchResult.error && searchResult.results && searchResult.results.length > 0) {
+                    results = searchResult.results
+                    usedQuery = variant
+                    log.info('✅ Found results with variant', { variant, count: results.length })
+                    break
+                }
+
+                // Small delay between variants to avoid rate limiting
+                await new Promise(r => setTimeout(r, 1000))
+            }
+
+            if (results.length === 0) {
+                log.warn('⚠️ No results found for any variant', {
+                    originalQuery: rule.query,
+                    triedVariants: queryVariants
+                })
                 continue
             }
 
+            log.info('📦 Search results', { usedQuery, count: results.length })
+
+            // Group candidates
+            const episodeCandidates = new Map()
+            let unknownEpisodeCounter = 0
+
             for (const torrent of results) {
-                // Skip if already downloaded
+                totalTorrentsChecked++
+
                 const magnetHash = extractHash(torrent.magnet)
                 if (magnetHash && downloadedHashes.has(magnetHash)) {
+                    if (DEBUG) log.debug('⏭️ Already downloaded')
                     continue
                 }
 
-                const parsed = parseTorrentTitle(torrent.title)
+                const sizeGB = torrent.Size ? parseFloat(torrent.Size) / (1024 ** 3) : 0
+                const parsed = parseTorrentTitle(torrent.title, sizeGB)
 
                 if (matchesRule(parsed, rule)) {
-                    log.info('Match found!', {
-                        title: parsed.title,
-                        episode: parsed.episode,
-                        torrent: torrent.title
-                    })
-
-                    try {
-                        await addTorrent(torrent.magnet)
-                        downloaded++
-
-                        // Update rule's last episode
-                        rule.lastEpisode = Math.max(rule.lastEpisode, parsed.episode)
-
-                        // Track downloaded hash
-                        if (magnetHash) {
-                            downloadedHashes.add(magnetHash)
-                        }
-
-                        log.info('Downloaded new episode', {
-                            title: rule.query,
-                            episode: parsed.episode
-                        })
-                    } catch (err) {
-                        log.error('Failed to add torrent', { error: err.message })
-                        errors++
+                    let episodeKey
+                    if (parsed.episode > 0) {
+                        episodeKey = `e${parsed.episode}`
+                    } else {
+                        episodeKey = `unknown_${unknownEpisodeCounter++}`
                     }
+
+                    if (!episodeCandidates.has(episodeKey)) {
+                        episodeCandidates.set(episodeKey, [])
+                    }
+                    episodeCandidates.get(episodeKey).push({ torrent, parsed })
                 }
             }
+
+            // Process best candidates
+            let downloadsThisRule = 0
+
+            for (const [episodeKey, candidates] of episodeCandidates.entries()) {
+                if (downloadsThisRule >= MAX_DOWNLOADS_PER_RULE) break
+
+                const best = selectBestCandidate(candidates, rule)
+                if (!best) continue
+
+                log.info('🎯 MATCH FOUND', {
+                    title: best.parsed.title,
+                    episode: best.parsed.episode,
+                    repack: best.parsed.isRepack
+                })
+
+                try {
+                    await addTorrent(best.torrent.magnet)
+                    downloaded++
+                    downloadsThisRule++
+
+                    // 🚀 ATOMIC WRITE BLOCK
+                    let dbChanged = false
+
+                    // 1. Update lastEpisode (Only for originals)
+                    // Prevents REPACKs from incorrectly advancing the episode counter
+                    if (best.parsed.episode > 0 && !best.parsed.isRepack) {
+                        rule.lastEpisode = Math.max(rule.lastEpisode, best.parsed.episode)
+                        dbChanged = true
+                    }
+
+                    // 2. Update Timestamp (Only for originals or safety fill)
+                    if (best.parsed.episode > 0 && !best.parsed.isRepack) {
+                        const timestampKey = `${rule.id}_${best.parsed.episode}`
+                        if (!db.data.autoDownloadTimestamps[timestampKey]) {
+                            db.data.autoDownloadTimestamps[timestampKey] = Date.now()
+                            dbChanged = true
+                        }
+                    }
+
+                    // 3. Update History
+                    const magnetHash = extractHash(best.torrent.magnet)
+                    if (magnetHash) {
+                        downloadedHashes.add(magnetHash)
+                        db.data.autoDownloadHistory = [...downloadedHashes].slice(-500)
+                        dbChanged = true
+                    }
+
+                    // 4. Perform Atomic Write
+                    if (dbChanged) {
+                        await safeWrite(db)
+                    }
+
+                    log.info('✅ Download started')
+                } catch (err) {
+                    log.error('❌ Failed to add torrent', { error: err.message })
+                    errors++
+                }
+            }
+
         } catch (err) {
-            log.error('Rule check failed', { query: rule.query, error: err.message })
+            log.error('❌ Rule check error', { error: err.message })
             errors++
         }
     }
 
-    // Save updated rules and history
-    db.data.autoDownloadHistory = [...downloadedHashes].slice(-500) // Keep last 500
-    await safeWrite(db)
-
-    log.info('Auto-download check complete', { downloaded, errors })
+    log.info('✅ Check complete', { downloaded, errors, torrentsChecked: totalTorrentsChecked })
     return { checked: rules.length, downloaded, errors }
 }
 
 /**
  * Extract infohash from magnet link
+ * Supports both hex (40 chars) and base32 (32 chars) formats
  */
 function extractHash(magnet) {
     if (!magnet) return null
-    const match = magnet.match(/urn:btih:([a-fA-F0-9]{40})/i)
-    return match ? match[1].toLowerCase() : null
+    // Try hex format first (40 chars)
+    const hexMatch = magnet.match(/urn:btih:([a-fA-F0-9]{40})/i)
+    if (hexMatch) return hexMatch[1].toLowerCase()
+    // Try base32 format (32 chars)
+    const base32Match = magnet.match(/urn:btih:([A-Z2-7]{32})/i)
+    if (base32Match) return base32Match[1].toLowerCase()
+    return null
 }
 
 // ────────────────────────────────────────────────────────
 // 📋 Rule Management API
 // ────────────────────────────────────────────────────────
 
-/**
- * Get all auto-download rules
- */
 export async function getRules() {
     await db.read()
     return {
-        settings: db.data.autoDownloadSettings || { enabled: false, intervalMinutes: 30 },
+        settings: db.data.autoDownloadSettings || {
+            enabled: false,
+            intervalMinutes: 30,
+            globalBlacklist: GLOBAL_BLACKLIST
+        },
         rules: db.data.autoDownloadRules || []
     }
 }
 
-/**
- * Add new auto-download rule
- */
 export async function addRule(rule) {
     await db.read()
     db.data.autoDownloadRules ||= []
@@ -300,6 +748,10 @@ export async function addRule(rule) {
     const newRule = {
         id: Date.now(),
         query: rule.query,
+        quality: rule.quality || '',
+        strictQuality: rule.strictQuality || false,
+        preferHevc: rule.preferHevc || false,
+        excludeKeywords: rule.excludeKeywords || [],
         resolution: rule.resolution || '',
         group: rule.group || '',
         season: rule.season || 0,
@@ -310,33 +762,21 @@ export async function addRule(rule) {
 
     db.data.autoDownloadRules.push(newRule)
     await safeWrite(db)
-
-    log.info('Added rule', { query: newRule.query })
     return newRule
 }
 
-/**
- * Update existing rule
- */
 export async function updateRule(id, updates) {
     await db.read()
     const rules = db.data.autoDownloadRules || []
     const index = rules.findIndex(r => r.id === id)
 
-    if (index === -1) {
-        throw new Error('Rule not found')
-    }
+    if (index === -1) throw new Error('Rule not found')
 
     rules[index] = { ...rules[index], ...updates }
     await safeWrite(db)
-
-    log.info('Updated rule', { id, updates })
     return rules[index]
 }
 
-/**
- * Delete rule
- */
 export async function deleteRule(id) {
     await db.read()
     const before = db.data.autoDownloadRules?.length || 0
@@ -344,15 +784,11 @@ export async function deleteRule(id) {
 
     if (db.data.autoDownloadRules.length < before) {
         await safeWrite(db)
-        log.info('Deleted rule', { id })
         return true
     }
     return false
 }
 
-/**
- * Update global settings
- */
 export async function updateSettings(settings) {
     await db.read()
     db.data.autoDownloadSettings = {
@@ -360,6 +796,5 @@ export async function updateSettings(settings) {
         ...settings
     }
     await safeWrite(db)
-    log.info('Updated settings', settings)
     return db.data.autoDownloadSettings
 }

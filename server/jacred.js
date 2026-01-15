@@ -1,6 +1,10 @@
 /**
  * Jacred Torrent Search API
  * Использует публичные Jacred сервисы (как в Lampa)
+ * 
+ * 🆕 v2.3.6: Removed dead mirrors, added User-Agent rotation for rate limit bypass
+ * 🆕 v2.3.5: Redirect support, rate limiting (429) with retries, delays between mirrors
+ * 🆕 v2.3.4: Added jacred.ru mirror, HTTP fallbacks, improved logging
  * 🆕 v2.3.3: Added retry logic with exponential backoff
  *
  * ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -31,82 +35,160 @@ import { withRetry, retryPredicates } from './utils/retry.js'
 
 const log = logger.child('Jacred')
 
-// List of Jacred mirrors (try in order)
+// List of Jacred mirrors (only working ones)
+// 🆕 v2.3.6: Removed dead mirrors, added User-Agent rotation
 const JACRED_MIRRORS = [
-    'jacred.xyz',
-    'jacred.pro',
-    'jac.red'
+    { host: 'jacred.xyz', port: 443, protocol: 'https' },
+    // Fallback: try with different port (some ISPs block 443)
+    { host: 'jacred.xyz', port: 80, protocol: 'http' },
 ]
 
-let currentMirror = JACRED_MIRRORS[0]
+// User-Agent rotation to avoid rate limiting
+const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+]
+
+const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+
+let currentMirror = JACRED_MIRRORS[0].host
 
 /**
  * Search torrents via Jacred API with retry logic
+ * 🆕 v2.3.6: Enhanced logging for production debugging
  */
 export const searchJacred = async (query) => {
-    const results = []
+    log.info('🔍 Starting search', { query, mirrorsCount: JACRED_MIRRORS.length })
 
-    for (const mirror of JACRED_MIRRORS) {
+    for (let i = 0; i < JACRED_MIRRORS.length; i++) {
+        const mirror = JACRED_MIRRORS[i]
+        const mirrorId = `${mirror.protocol}://${mirror.host}:${mirror.port}`
+        log.info('Trying mirror', { mirror: mirrorId, attempt: i + 1 })
+
         try {
-            // Retry each mirror up to 2 times before moving to next
+            // Retry each mirror up to 3 times with 5s delay (as server requests for 429)
             const data = await withRetry(() => doSearch(mirror, query), {
-                maxRetries: 2,
-                baseDelayMs: 500,
-                shouldRetry: retryPredicates.transient,
+                maxRetries: 3,
+                baseDelayMs: 5000,  // 5 seconds as requested by Retry-After header
+                shouldRetry: (err) => {
+                    // Retry on transient errors OR rate limiting
+                    if (err.message.includes('Rate limited')) return true
+                    return retryPredicates.transient(err)
+                },
                 onRetry: (err, attempt, delay) => {
-                    log.debug('Mirror retry', { mirror, attempt, delay: Math.round(delay), error: err.message })
+                    log.warn('Mirror retry', { mirror: mirrorId, attempt, delay: Math.round(delay), error: err.message })
                 }
             })
 
             if (data && data.length > 0) {
-                currentMirror = mirror
-                log.info('Mirror connected', { mirror, resultsCount: data.length })
+                currentMirror = mirror.host
+                log.info('✅ Mirror connected', { mirror: mirrorId, resultsCount: data.length })
                 return { results: data }
+            } else {
+                log.warn('Mirror returned empty results', { mirror: mirrorId })
             }
         } catch (err) {
-            log.warn('Mirror failed', { mirror, error: err.message })
+            log.warn('❌ Mirror failed', { mirror: mirrorId, error: err.message })
+        }
+
+        // Add delay between mirrors to avoid rate limiting
+        if (i < JACRED_MIRRORS.length - 1) {
+            await sleep(500)
         }
     }
 
-    log.error('All mirrors failed', { query })
+    log.error('❌ All mirrors failed', { query, triedMirrors: JACRED_MIRRORS.length })
     return { error: 'All mirrors failed', results: [] }
 }
 
+// Helper: sleep function
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
 /**
  * Do search request to specific mirror
+ * 🆕 v2.3.5: Supports redirects (301/302), rate limiting (429), HTTP/HTTPS
  */
-const doSearch = (mirror, query) => {
+const doSearch = (mirror, query, redirectCount = 0) => {
+    const MAX_REDIRECTS = 3
+
     return new Promise((resolve, reject) => {
         // Jacred uses Jackett-compatible API
         const searchPath = `/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
 
         const options = {
-            hostname: mirror,
-            port: 443,
+            hostname: mirror.host,
+            port: mirror.port,
             path: searchPath,
             method: 'GET',
             // ⚠️ SECURITY: See module header for explanation
             rejectUnauthorized: false,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': getRandomUserAgent(),
                 'Accept': 'application/json'
             },
-            timeout: 10000
+            timeout: 15000
         }
 
-        const req = https.request(options, (res) => {
+        const protocol = mirror.protocol === 'https' ? https : http
+
+        const req = protocol.request(options, (res) => {
+            // Handle redirects (301, 302, 307, 308)
+            if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
+                if (redirectCount >= MAX_REDIRECTS) {
+                    reject(new Error('Too many redirects'))
+                    return
+                }
+
+                try {
+                    const redirectUrl = new URL(res.headers.location, `${mirror.protocol}://${mirror.host}`)
+                    const newMirror = {
+                        host: redirectUrl.hostname,
+                        port: redirectUrl.port || (redirectUrl.protocol === 'https:' ? 443 : 80),
+                        protocol: redirectUrl.protocol.replace(':', '')
+                    }
+                    log.debug('Following redirect', { to: redirectUrl.href })
+                    resolve(doSearch(newMirror, query, redirectCount + 1))
+                } catch (e) {
+                    reject(new Error(`Invalid redirect: ${res.headers.location}`))
+                }
+                return
+            }
+
+            // Handle rate limiting (429)
+            if (res.statusCode === 429) {
+                const retryAfter = parseInt(res.headers['retry-after'] || '5', 10)
+                reject(new Error(`Rate limited (retry after ${retryAfter}s)`))
+                return
+            }
+
+            // Check for non-200 status codes
+            if (res.statusCode !== 200) {
+                reject(new Error(`HTTP ${res.statusCode}`))
+                return
+            }
+
             let data = ''
             res.setEncoding('utf8')
 
             res.on('data', chunk => data += chunk)
             res.on('end', () => {
                 try {
+                    // Check if response is HTML (Cloudflare block, etc.)
+                    if (data.trim().startsWith('<')) {
+                        reject(new Error('Received HTML instead of JSON (possible Cloudflare block)'))
+                        return
+                    }
+
                     const json = JSON.parse(data)
                     // Jackett returns { Results: [...] }
-                    const results = (json.Results || json.results || []).slice(0, 20).map(r => ({
+                    const results = (json.Results || json.results || []).slice(0, 50).map(r => ({
                         id: r.Guid || r.guid || Math.random().toString(36),
                         title: r.Title || r.title || 'Unknown',
                         size: formatSize(r.Size || r.size || 0),
+                        Size: r.Size || r.size || 0,  // Raw bytes for autodownloader
                         seeders: r.Seeders || r.seeders || 0,
                         tracker: r.Tracker || r.tracker || 'Unknown',
                         magnet: r.MagnetUri || r.magnetUri || r.Link || r.link || null,
