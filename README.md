@@ -18,14 +18,14 @@ Listen to audiobooks, watch movies and TV shows **online without full downloadin
 | Feature | Description |
 | :--- | :--- |
 | 📺 **Streaming** | Stream without full download (torrent-stream + on-demand priority) |
-| 🔍 **Search** | Jacred (multi-mirror) + TMDB/Kinopoisk posters |
+| 🔍 **Multi-Source Search** | Parallel search: Jacred (mirrors) + RuTracker (DoH) + Rutor + TorLook |
 | 🎬 **Turbo & Priority** | Auto-boost peers + prioritize required chunks for playback start |
 | 🖼️ **Posters & Metadata** | TMDB/Kinopoisk with DoH bypass for blocks |
 | 📋 **M3U Playlist** | For Kodi, Plex, VLC integration |
-| 🧹 **File Hygiene** | Auto-delete files when removing torrents |
-| 🛡️ **Watchdog** | RAM/Storage monitoring, auto-pause, circuit breaker |
+| 🧠 **Aggregator** | Promise.allSettled + deduplication + 5m search cache |
+| 🛡️ **Hardening** | Circuit Breaker per provider + persistent sessions + Watchdog |
 | ⚡ **PWA + Native** | Installable as an app on Android TV/Phone |
-| 📥 **Auto-Downloader** | Automatic series tracking with customizable rules (6h/12h/24h intervals) |
+| 📥 **Auto-Downloader v2** | Multi-source tracking with customizable rules and smart candidate selection |
 | 🎮 **TV Remote Support** | Full D-pad navigation with focus trap in modals |
 
 ### 🛠 Tech Stack
