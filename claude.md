@@ -1,12 +1,12 @@
 # Code Review: PWA-TorServe
-**Дата начала:** 2026-01-14
+**Дата обновления:** 2026-01-16
 
 ## Информация о проекте
 - **Название**: PWA-TorServe
 - **Описание**: Домашний медиа-сервер для стриминга торрентов
 - **Стек**: Node.js, Express, React 19, torrent-stream, lowdb
 - **Ограничения**: 512MB RAM (слабое железо)
-- **Версия**: v2.3.2 (согласно последнему коммиту)
+- **Версия**: v2.8.0 (Multi-source Architecture)
 
 ---
 
@@ -15,25 +15,29 @@
 ```
 PWA-TorServe/
 ├── server/                    # Backend (Node.js + Express)
-│   ├── index.js              # Точка входа сервера (20KB)
-│   ├── torrent.js            # Управление торрентами (26KB) ⚠️ КРИТИЧНЫЙ
-│   ├── watchdog.js           # Watchdog/мониторинг (12KB) ⚠️ КРИТИЧНЫЙ
-│   ├── db.js                 # База данных lowdb (1.3KB)
-│   ├── dbQueue.js            # Очередь записи в БД (955B)
-│   ├── autodownloader.js     # Автозагрузчик (12KB)
-│   ├── jacred.js             # Jacred API клиент (5.9KB)
-│   ├── rutracker.js          # RuTracker парсер (6KB)
-│   └── utils/
-│       ├── logger.js         # Логирование
-│       ├── doh.js            # DNS over HTTPS
-│       └── lag-monitor.js    # Мониторинг лагов
+│   ├── index.js              # Точка входа сервера (23KB)
+│   ├── torrent.js            # Управление торрентами (31KB) ⚠️ КРИТИЧНЫЙ
+│   ├── watchdog.js           # Watchdog/мониторинг (12KB)
+│   ├── aggregator.js         # Агрегатор поиска (Multi-source) 🆕
+│   ├── searchCache.js        # Кеш поиска (5 min TTL) 🆕
+│   ├── providers/            # Провайдеры поиска 🆕
+│   │   ├── BaseProvider.js
+│   │   ├── ProviderManager.js
+│   │   ├── JacredProvider.js
+│   │   ├── RuTrackerProvider.js
+│   │   ├── RutorProvider.js
+│   │   └── TorLookProvider.js
+│   ├── utils/
+│   │       ├── logger.js         # Логирование
+│   │       ├── doh.js            # DNS over HTTPS
+│   │       ├── retry.js          # Retry logic (Exp backoff) 🆕
+│   │       └── lag-monitor.js    # Мониторинг лагов
+│   ├── db.js                 # База данных lowdb
+│   ├── autodownloader.js     # Автозагрузчик v2.7.0 🆕
+│   └── jacred.js             # Legacy wrapper
 ├── client/                    # Frontend (React 19 + Vite)
-│   └── src/
-│       ├── App.jsx
-│       ├── main.jsx
-│       └── components/
-├── db.json                    # База данных lowdb
-├── package.json
+├── roadmap.md                # Статус выполнения этапов
+├── project-code.md           # Весь код для AI
 └── docker-compose.yml
 ```
 
@@ -41,10 +45,24 @@ PWA-TorServe/
 
 ## Лог изменений
 
-### [2026-01-14 19:00] - Начало анализа
+### [2026-01-16] - Roadmap & Provider Architecture (v2.8.0)
+- **Multi-source**: Переход от жесткого Jacred к динамическим провайдерам.
+- **Aggregator**: Параллельный поиск через `Promise.allSettled`.
+- **Hardening**: Circuit Breaker и 5-мин кеш поиска.
+- **RuTracker**: Обход DNS-блокировок через DoH + persisted sessions.
+- **AutoDownloader**: Полная интеграция с агрегатором.
+- **CI/CD**: Код запушен на GitHub, README обновлен.
+
+### [2026-01-16] - Optimization Audit
+- Выявлено 5 ключевых зон оптимизации (см. `code_review.md`).
+- Реализован 5s статус-кеш для снижения нагрузки на ARM CPU.
+- Реализованы persisted cookies для RuTracker.
+
+### [2026-01-14] - Начало анализа (v2.3.2)
 - Создан файл claude.md
-- Изучена структура проекта
-- Определены критичные модули для анализа
+- Исправлено 7 критических проблем (Memory Leaks, Race Conditions, Stream leaks).
+- Добавлена санитизация M3U и логирование.
+- Исправлена инвертированная логика в Logger.
 
 ### [2026-01-14 19:05] - Priority 1: Критические ошибки
 - Проанализированы файлы: torrent.js, watchdog.js, db.js, dbQueue.js, index.js
