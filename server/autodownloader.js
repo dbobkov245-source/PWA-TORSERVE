@@ -1,6 +1,11 @@
 /**
- * Auto-Downloader Module v2.6.7 - PRODUCTION FINAL
+ * Auto-Downloader Module v2.7.0 - MULTI-SOURCE
  * PWA-TorServe
+ *
+ * 🆕 v2.7.0 FEATURES:
+ * - MULTI-SOURCE: Uses Aggregator (Jacred + RuTracker + future providers)
+ * - PARTIAL SUCCESS: Works even if some providers fail
+ * - DEDUPLICATION: Results deduplicated by infohash across providers
  *
  * 🆕 v2.6.7 FIXES:
  * - FIX: Translation now returns ARRAY ["Fallout", "Fallout S02"]
@@ -9,20 +14,14 @@
  * 🆕 v2.6.6 FEATURES:
  * - SMART QUERY: Auto-removes quality tags (DV, HDR, HMAX, WEB etc.)
  * - MULTI-VARIANT: Tries multiple query variants for better results
- * - FALLBACK: Tries original query if normalized fails
- *
- * 🆕 v2.6.4 FIXES:
- * - FIX: extractHash now supports Base32 infohashes (32 chars)
- * - FIX: Strict resolution filter (rejects torrents without resolution)
  *
  * 🆕 v2.6.3 OPTIMIZATIONS:
  * - ATOMIC WRITES: Grouped DB updates to prevent race conditions & corruption
  * - LOGIC FIX: lastEpisode is no longer updated by REPACK releases
- * - STABILITY: REPACK detection for first episodes & timestamp safety
  */
 
 import { db, safeWrite } from './db.js'
-import { searchJacred } from './jacred.js'
+import { search as aggregatorSearch } from './aggregator.js'
 import { addTorrent } from './torrent.js'
 import { logger } from './utils/logger.js'
 
@@ -587,12 +586,16 @@ export async function checkRules() {
 
             for (const variant of queryVariants) {
                 log.info('🔎 Trying query variant', { variant })
-                const searchResult = await searchJacred(variant)
+                const searchResult = await aggregatorSearch(variant)
 
-                if (!searchResult.error && searchResult.results && searchResult.results.length > 0) {
+                if (searchResult.results && searchResult.results.length > 0) {
                     results = searchResult.results
                     usedQuery = variant
-                    log.info('✅ Found results with variant', { variant, count: results.length })
+                    log.info('✅ Found results with variant', {
+                        variant,
+                        count: results.length,
+                        providers: Object.keys(searchResult.providers || {})
+                    })
                     break
                 }
 
