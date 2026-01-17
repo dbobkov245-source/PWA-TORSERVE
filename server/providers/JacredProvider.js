@@ -182,6 +182,7 @@ export class JacredProvider extends BaseProvider {
                                 title: r.Title || r.title || 'Unknown',
                                 size: formatSize(r.Size || r.size || 0),
                                 sizeBytes: r.Size || r.size || 0,
+                                date: r.PublishDate || r.publishDate || null,  // API v2: date support
                                 seeders: r.Seeders || r.seeders || 0,
                                 tracker: r.Tracker || r.tracker || 'Unknown',
                                 magnet: r.MagnetUri || r.magnetUri || r.Link || r.link || null

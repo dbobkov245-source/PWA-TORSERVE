@@ -105,10 +105,11 @@ function App() {
   const [sortBy, setSortBy] = useState(localStorage.getItem('sortBy') || 'name')
   const [categoryFilter, setCategoryFilter] = useState('all')
 
-  // State: Search
+  // State: Search (API v2 with provider status)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
+  const [searchProviders, setSearchProviders] = useState({})  // Provider health status
   const [searchLoading, setSearchLoading] = useState(false)
 
   // State: Auto-Download
@@ -379,15 +380,23 @@ function App() {
     }
   }
 
-  // ─── Search ───
+  // ─── Search (API v2 with Aggregator) ───
   const searchRuTracker = async () => {
     if (!searchQuery.trim()) return
     setSearchLoading(true)
     setSearchResults([])
+    setSearchProviders({})
     try {
-      const res = await fetch(getApiUrl(`/api/rutracker/search?query=${encodeURIComponent(searchQuery)}`))
+      // API v2: Uses Aggregator with envelope response
+      const res = await fetch(getApiUrl(`/api/v2/search?query=${encodeURIComponent(searchQuery)}&limit=100`))
       const data = await res.json()
-      setSearchResults(data.results || [])
+      setSearchResults(data.items || [])
+      setSearchProviders(data.meta?.providers || {})
+
+      // Log search stats
+      if (data.meta) {
+        console.log(`[Search] ${data.meta.totalResults} results in ${data.meta.ms}ms (cached: ${data.meta.cached})`)
+      }
     } catch (err) {
       console.error('[Search] Error:', err)
       setError('Ошибка поиска: ' + err.message)
@@ -589,10 +598,11 @@ function App() {
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             onSearch={searchRuTracker}
-            onClose={() => { setShowSearch(false); setSearchResults([]) }}
+            onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }}
             onAddTorrent={addFromSearch}
             searchResults={searchResults}
             searchLoading={searchLoading}
+            providers={searchProviders}
           />
         )}
 

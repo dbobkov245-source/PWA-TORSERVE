@@ -257,19 +257,83 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
         res.status(502).send('Image unavailable')
     }
 })
-// API: Jacred Torrent Search (like Lampa)
+// ─────────────────────────────────────────────────────────────
+// 🔍 API v2: Unified Torrent Search (Aggregator + Envelope)
+// Stage 5: Client/PWA Improvements
+// ─────────────────────────────────────────────────────────────
+
+import { search as aggregatorSearch, getProvidersStatus } from './aggregator.js'
+
+/**
+ * API v2 Search with envelope response pattern
+ * Response format:
+ * {
+ *   meta: { query, cached, ms, providers: { [name]: { status, count, error? } } },
+ *   items: AggregatedSearchItem[]
+ * }
+ */
+app.get('/api/v2/search', async (req, res) => {
+    const { query, limit = 100 } = req.query
+    if (!query) {
+        return res.status(400).json({ error: 'Query required' })
+    }
+
+    console.log(`[API v2] Search: ${query}`)
+    const startTime = Date.now()
+
+    try {
+        const { results, errors, providers, cached } = await aggregatorSearch(query)
+
+        // Transform providers to StatusMap with enhanced info
+        const providersMeta = {}
+        for (const [name, data] of Object.entries(providers)) {
+            providersMeta[name] = {
+                status: data.status,
+                count: data.count || 0,
+                error: data.error || null
+            }
+        }
+
+        const limitedResults = results.slice(0, parseInt(limit, 10))
+
+        res.json({
+            meta: {
+                query,
+                cached,
+                ms: Date.now() - startTime,
+                totalResults: results.length,
+                returnedResults: limitedResults.length,
+                providers: providersMeta
+            },
+            items: limitedResults
+        })
+    } catch (err) {
+        console.error('[API v2] Search error:', err)
+        res.status(500).json({
+            error: 'Search failed',
+            details: err.message,
+            meta: { query, ms: Date.now() - startTime, providers: {} },
+            items: []
+        })
+    }
+})
+
+// ─────────────────────────────────────────────────────────────
+// 🔍 API v1: Legacy Jacred Search (DEPRECATED - use /api/v2/search)
 // ─────────────────────────────────────────────────────────────
 
 import { searchJacred, getMagnetFromJacred } from './jacred.js'
 
-// Search torrents via Jacred
+// DEPRECATED: Search torrents via Jacred only
 app.get('/api/rutracker/search', async (req, res) => {
     const { query } = req.query
     if (!query) {
         return res.status(400).json({ error: 'Query required' })
     }
 
-    console.log(`[Jacred] Searching: ${query}`)
+    // Deprecation warning in logs
+    console.warn(`[DEPRECATED] /api/rutracker/search called - migrate to /api/v2/search. Query: ${query}`)
+
     const result = await searchJacred(query)
     res.json(result)
 })

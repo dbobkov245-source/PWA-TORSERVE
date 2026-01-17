@@ -1,10 +1,66 @@
 /**
  * Poster Component - Torrent card with dynamic poster loading
+ * Stage 6: Added enriched metadata caching (separate from poster cache)
  */
 import { useState, useEffect } from 'react'
 import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
 import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient } from '../utils/helpers'
+
+// ─── Metadata Cache ───────────────────────────────────────────
+// Separate from poster cache to avoid breaking existing functionality
+const METADATA_CACHE_PREFIX = 'metadata_v1_'
+const METADATA_CACHE_LIMIT = 300
+
+/**
+ * Save enriched metadata to localStorage with LRU eviction
+ */
+const saveMetadata = (name, data) => {
+    const key = METADATA_CACHE_PREFIX + name
+    const entry = { ...data, timestamp: Date.now() }
+
+    try {
+        localStorage.setItem(key, JSON.stringify(entry))
+
+        // LRU Eviction: check cache size periodically
+        const allKeys = Object.keys(localStorage).filter(k => k.startsWith(METADATA_CACHE_PREFIX))
+        if (allKeys.length > METADATA_CACHE_LIMIT) {
+            // Find oldest entries
+            const entries = allKeys.map(k => {
+                try {
+                    const val = JSON.parse(localStorage.getItem(k))
+                    return { key: k, timestamp: val?.timestamp || 0 }
+                } catch { return { key: k, timestamp: 0 } }
+            })
+            entries.sort((a, b) => a.timestamp - b.timestamp)
+
+            // Remove oldest 10%
+            const toRemove = Math.ceil(METADATA_CACHE_LIMIT * 0.1)
+            entries.slice(0, toRemove).forEach(e => localStorage.removeItem(e.key))
+            console.log(`[Metadata] LRU eviction: removed ${toRemove} oldest entries`)
+        }
+    } catch (e) {
+        console.warn('[Metadata] Failed to save:', e)
+    }
+}
+
+/**
+ * Get cached metadata for a title
+ * @param {string} name - Cleaned movie/show name
+ * @returns {object|null} - Cached metadata or null
+ */
+export const getMetadata = (name) => {
+    const key = METADATA_CACHE_PREFIX + name
+    try {
+        const cached = localStorage.getItem(key)
+        if (cached) {
+            return JSON.parse(cached)
+        }
+    } catch { }
+    return null
+}
+
+// ─── Poster Component ─────────────────────────────────────────
 
 const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount }) => {
     const [bgImage, setBgImage] = useState(null)
@@ -13,7 +69,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
     useEffect(() => {
         if (!cleanedName) return
 
-        const cacheKey = `poster_v3_${cleanedName}` // Bump cache version
+        const cacheKey = `poster_v3_${cleanedName}` // Existing poster cache - DO NOT CHANGE
         const cached = localStorage.getItem(cacheKey)
         if (cached) {
             setBgImage(cached)
@@ -95,6 +151,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
 
                 // 5️⃣ Fallback: Кинопоиск API (альтернатива TMDB)
                 let kpPoster = null
+                let kpData = null
                 if (!result && KP_API_KEY) {
                     try {
                         const kpProxy = 'https://cors.kp556.workers.dev:8443/'
@@ -109,6 +166,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                             const kpFilm = data.films?.find(f => f.posterUrlPreview)
                             if (kpFilm) {
                                 kpPoster = kpFilm.posterUrlPreview
+                                kpData = kpFilm
                                 console.log('[Poster] Kinopoisk Found:', cleanedName, kpFilm.nameRu || kpFilm.nameEn)
                             }
                         }
@@ -117,16 +175,45 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                     }
                 }
 
-                // Сохраняем постер (TMDB через wsrv.nl или Кинопоиск напрямую)
+                // ─── Save poster + enriched metadata ───
                 if (result) {
                     const directUrl = `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w500${result.poster_path}&output=webp`
                     localStorage.setItem(cacheKey, directUrl)
                     setBgImage(directUrl)
                     console.log('[Poster] Found:', cleanedName, result.title || result.name)
+
+                    // 🆕 Save enriched metadata (Stage 6)
+                    const backdropUrl = result.backdrop_path
+                        ? `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w1280${result.backdrop_path}&output=webp`
+                        : null
+
+                    saveMetadata(cleanedName, {
+                        poster: directUrl,
+                        backdrop: backdropUrl,
+                        overview: result.overview || null,
+                        rating: result.vote_average || null,
+                        year: (result.release_date || result.first_air_date || '').substring(0, 4) || null,
+                        title: result.title || result.name || cleanedName,
+                        source: 'tmdb'
+                    })
+
                 } else if (kpPoster) {
                     const kpUrl = `https://wsrv.nl/?url=${encodeURIComponent(kpPoster)}&output=webp`
                     localStorage.setItem(cacheKey, kpUrl)
                     setBgImage(kpUrl)
+
+                    // 🆕 Save Kinopoisk metadata (Stage 6)
+                    if (kpData) {
+                        saveMetadata(cleanedName, {
+                            poster: kpUrl,
+                            backdrop: null, // KP doesn't provide backdrop in search
+                            overview: kpData.description || null,
+                            rating: kpData.rating || kpData.ratingKinopoisk || null,
+                            year: kpData.year ? String(kpData.year) : null,
+                            title: kpData.nameRu || kpData.nameEn || cleanedName,
+                            source: 'kinopoisk'
+                        })
+                    }
                 } else {
                     console.log('[Poster] Not found:', cleanedName)
                 }

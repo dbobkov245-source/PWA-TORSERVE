@@ -56,9 +56,9 @@ export class BaseProvider {
     }
 
     /**
-     * Normalize result to standard SearchResult format
+     * Normalize result to standard SearchResult format (API v2)
      * @param {Object} raw - Raw result from provider
-     * @returns {Object} Normalized SearchResult
+     * @returns {Object} Normalized SearchResult with dateTs and tags
      */
     normalizeResult(raw) {
         return {
@@ -66,11 +66,86 @@ export class BaseProvider {
             title: raw.title || 'Unknown',
             size: raw.size || 'N/A',
             sizeBytes: raw.sizeBytes || raw.Size || 0,
+            dateTs: this.parseDate(raw.date),
+            tags: this.extractQualityTags(raw.title),
             seeders: raw.seeders || 0,
             tracker: raw.tracker || this.name,
             magnet: raw.magnet || raw.magnetUrl || null,
             provider: this.name
         }
+    }
+
+    /**
+     * Parse various date formats to Unix timestamp (milliseconds)
+     * Supports: Unix timestamp (seconds), ISO strings, Date objects
+     * @param {number|string|Date|null} dateValue
+     * @returns {number|null} Unix timestamp in milliseconds, or null
+     */
+    parseDate(dateValue) {
+        if (!dateValue) return null
+
+        // Unix timestamp in seconds (Jacred API format)
+        if (typeof dateValue === 'number') {
+            // If it looks like seconds (before year 3000), convert to ms
+            return dateValue < 32503680000 ? dateValue * 1000 : dateValue
+        }
+
+        // ISO string "2025-01-15T12:30:00Z" or other parseable formats
+        if (typeof dateValue === 'string') {
+            const parsed = Date.parse(dateValue)
+            if (!isNaN(parsed)) return parsed
+        }
+
+        // Date object
+        if (dateValue instanceof Date) {
+            return dateValue.getTime()
+        }
+
+        return null
+    }
+
+    /**
+     * Extract quality tags from torrent title
+     * Uses strict regex patterns to minimize false positives
+     * @param {string} title
+     * @returns {string[]} Array of quality tags: ['2160p', '1080p', '720p', 'hevc', 'hdr', 'cam']
+     */
+    extractQualityTags(title) {
+        if (!title) return []
+
+        const tags = []
+        const upper = title.toUpperCase()
+
+        // Resolution detection (mutually exclusive, highest wins)
+        if (/\b2160[pрPР]\b/.test(title) || /\b4K\b/i.test(title) || /\bUHD\b/i.test(title)) {
+            tags.push('2160p')
+        } else if (/\b1080[pрPР]\b/.test(title)) {
+            tags.push('1080p')
+        } else if (/\b720[pрPР]\b/.test(title)) {
+            tags.push('720p')
+        }
+
+        // Codec detection
+        if (/\b(HEVC|H\.?265|x265)\b/i.test(title)) {
+            tags.push('hevc')
+        }
+
+        // HDR detection (exclude HDRip which is different)
+        if (/\bHDR(10)?(\+|Plus)?\b/i.test(title) && !/\bHDRip\b/i.test(title)) {
+            tags.push('hdr')
+        }
+
+        // Dolby Vision
+        if (/\b(DV|Dolby\s*Vision)\b/i.test(title)) {
+            tags.push('dv')
+        }
+
+        // Low quality indicators
+        if (/\b(CAMRip|CAM|HDTS|TS|Telesync|TC)\b/i.test(title)) {
+            tags.push('cam')
+        }
+
+        return tags
     }
 }
 
