@@ -16,6 +16,7 @@ import SettingsPanel from './components/SettingsPanel'
 import SearchPanel from './components/SearchPanel'
 import TorrentModal from './components/TorrentModal'
 import AutoDownloadPanel from './components/AutoDownloadPanel'
+import HomePanel from './components/HomePanel'
 
 // Helpers
 import { cleanTitle } from './utils/helpers'
@@ -114,6 +115,9 @@ function App() {
 
   // State: Auto-Download
   const [showAutoDownload, setShowAutoDownload] = useState(false)
+
+  // State: Active View (v3.0 Discovery Home)
+  const [activeView, setActiveView] = useState('home') // 'home' | 'list'
 
   // State: Last Played (for auto-continue)
   const [lastPlayed, setLastPlayed] = useState(() => {
@@ -505,6 +509,25 @@ function App() {
           PWA-TorServe
         </h1>
         <div className="flex gap-3 items-center">
+          {/* View Switcher */}
+          <div className="flex bg-gray-800 rounded-full p-1">
+            <button
+              onClick={() => setActiveView('home')}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'home' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              title="Главная"
+            >
+              🏠
+            </button>
+            <button
+              onClick={() => setActiveView('list')}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              title="Мои торренты"
+            >
+              📚
+            </button>
+          </div>
           <ServerStatusBar status={serverStatus} onDiagnosticsClick={() => setShowDiagnostics(true)} />
           <button onClick={() => setShowAutoDownload(true)} className="p-2 hover:bg-gray-800 rounded-full transition-colors" title="Авто-загрузка">📺</button>
           <button onClick={fetchStatus} className="p-2 hover:bg-gray-800 rounded-full transition-colors">🔄</button>
@@ -545,168 +568,184 @@ function App() {
         />
       )}
 
-      {/* Content Grid */}
-      <div className="px-6 py-4">
+      {/* Home Panel (Discovery) */}
+      {activeView === 'home' && (
+        <HomePanel
+          onSearch={(query) => {
+            setSearchQuery(query)
+            setActiveView('list')
+            setShowSearch(true)
+            // Trigger search after state update
+            setTimeout(() => searchRuTracker(), 100)
+          }}
+          onClose={() => setActiveView('list')}
+        />
+      )}
 
-        {/* Continue Watching Banner */}
-        {lastPlayed?.nextFile && torrents.find(t => t.infoHash === lastPlayed.infoHash) && (
-          <div className="mb-6 bg-gradient-to-r from-purple-900/50 to-blue-900/50 border border-purple-500/30 rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">▶ Continue Watching</div>
-                <div className="text-white font-bold truncate">{cleanTitle(lastPlayed.torrentName)}</div>
-                <div className="text-gray-400 text-sm truncate">Next: {cleanTitle(lastPlayed.nextFile.name)}</div>
+      {/* Content Grid (My List) */}
+      {activeView === 'list' && (
+        <div className="px-6 py-4">
+
+          {/* Continue Watching Banner */}
+          {lastPlayed?.nextFile && torrents.find(t => t.infoHash === lastPlayed.infoHash) && (
+            <div className="mb-6 bg-gradient-to-r from-purple-900/50 to-blue-900/50 border border-purple-500/30 rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">▶ Continue Watching</div>
+                  <div className="text-white font-bold truncate">{cleanTitle(lastPlayed.torrentName)}</div>
+                  <div className="text-gray-400 text-sm truncate">Next: {cleanTitle(lastPlayed.nextFile.name)}</div>
+                </div>
+                <button
+                  onClick={() => handlePlay(
+                    lastPlayed.infoHash,
+                    lastPlayed.nextFile.index,
+                    lastPlayed.nextFile.name
+                  )}
+                  className="ml-4 bg-purple-600 hover:bg-purple-500 px-5 py-3 rounded-lg font-bold text-white flex items-center gap-2 transition-colors"
+                >
+                  ▶ Play Next
+                </button>
               </div>
-              <button
-                onClick={() => handlePlay(
-                  lastPlayed.infoHash,
-                  lastPlayed.nextFile.index,
-                  lastPlayed.nextFile.name
-                )}
-                className="ml-4 bg-purple-600 hover:bg-purple-500 px-5 py-3 rounded-lg font-bold text-white flex items-center gap-2 transition-colors"
-              >
-                ▶ Play Next
-              </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Header */}
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-gray-200">My List</h2>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowSearch(!showSearch)}
-              className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105"
-            >
-              🔍 Поиск
-            </button>
-            {!showServerInput && (
-              <button
-                onClick={() => setShowServerInput(true)}
-                className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105"
-              >
-                + Magnet
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Search Panel */}
-        {showSearch && (
-          <SearchPanel
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            onSearch={searchRuTracker}
-            onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }}
-            onAddTorrent={addFromSearch}
-            searchResults={searchResults}
-            searchLoading={searchLoading}
-            providers={searchProviders}
-          />
-        )}
-
-        {/* Magnet Input */}
-        {showServerInput && (
-          <form onSubmit={addTorrent} className="mb-6">
+          {/* Header */}
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-200">My List</h2>
             <div className="flex gap-2">
-              <input
-                value={magnet}
-                onChange={(e) => setMagnet(e.target.value)}
-                placeholder="Вставьте Magnet-ссылку..."
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
-              />
               <button
-                type="submit"
-                disabled={loading || !magnet}
-                className="bg-blue-600 px-6 py-3 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+                onClick={() => setShowSearch(!showSearch)}
+                className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105"
               >
-                {loading ? '...' : 'Add'}
+                🔍 Поиск
               </button>
-              <button
-                type="button"
-                onClick={() => setShowServerInput(false)}
-                className="bg-gray-800 px-4 rounded-lg"
-              >
-                ✕
-              </button>
+              {!showServerInput && (
+                <button
+                  onClick={() => setShowServerInput(true)}
+                  className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105"
+                >
+                  + Magnet
+                </button>
+              )}
             </div>
-          </form>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded-lg mb-4">
-            {error}
           </div>
-        )}
 
-        {/* Category Tabs */}
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-3 pt-1 px-1 -mx-1">
-          {CATEGORIES.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => setCategoryFilter(cat.id)}
-              className={`
+          {/* Search Panel */}
+          {showSearch && (
+            <SearchPanel
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              onSearch={searchRuTracker}
+              onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }}
+              onAddTorrent={addFromSearch}
+              searchResults={searchResults}
+              searchLoading={searchLoading}
+              providers={searchProviders}
+            />
+          )}
+
+          {/* Magnet Input */}
+          {showServerInput && (
+            <form onSubmit={addTorrent} className="mb-6">
+              <div className="flex gap-2">
+                <input
+                  value={magnet}
+                  onChange={(e) => setMagnet(e.target.value)}
+                  placeholder="Вставьте Magnet-ссылку..."
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !magnet}
+                  className="bg-blue-600 px-6 py-3 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {loading ? '...' : 'Add'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowServerInput(false)}
+                  className="bg-gray-800 px-4 rounded-lg"
+                >
+                  ✕
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div className="bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded-lg mb-4">
+              {error}
+            </div>
+          )}
+
+          {/* Category Tabs */}
+          <div className="flex gap-2 mb-4 overflow-x-auto pb-3 pt-1 px-1 -mx-1">
+            {CATEGORIES.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setCategoryFilter(cat.id)}
+                className={`
                 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all
                 focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-[#141414] focus:outline-none
                 ${categoryFilter === cat.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}
               `}
-            >
-              {cat.icon} {cat.name}
-            </button>
-          ))}
-        </div>
+              >
+                {cat.icon} {cat.name}
+              </button>
+            ))}
+          </div>
 
-        {/* Sort Buttons */}
-        <div className="flex gap-2 mb-6 text-xs px-1 -mx-1">
-          <span className="text-gray-500 self-center">Сортировка:</span>
-          {[{ id: 'name', label: 'Имя' }, { id: 'size', label: 'Размер' }, { id: 'peers', label: 'Пиры' }].map(s => (
-            <button
-              key={s.id}
-              onClick={() => saveSortBy(s.id)}
-              className={`
+          {/* Sort Buttons */}
+          <div className="flex gap-2 mb-6 text-xs px-1 -mx-1">
+            <span className="text-gray-500 self-center">Сортировка:</span>
+            {[{ id: 'name', label: 'Имя' }, { id: 'size', label: 'Размер' }, { id: 'peers', label: 'Пиры' }].map(s => (
+              <button
+                key={s.id}
+                onClick={() => saveSortBy(s.id)}
+                className={`
                 px-3 py-1 rounded transition-all
                 focus:ring-2 focus:ring-blue-400 focus:outline-none
                 ${sortBy === s.id
-                  ? 'bg-gray-700 text-white'
-                  : 'bg-gray-800/50 text-gray-500 hover:text-white'}
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-gray-800/50 text-gray-500 hover:text-white'}
               `}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
 
-        {/* Torrent Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {displayTorrents.map(t => (
-            <Poster
-              key={t.infoHash}
-              name={t.name}
-              progress={t.progress || 0}
-              peers={t.numPeers || 0}
-              isReady={t.isReady}
-              size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
-              downloadSpeed={t.downloadSpeed || 0}
-              downloaded={t.downloaded || 0}
-              eta={t.eta || 0}
-              newFilesCount={t.newFilesCount || 0}
-              onClick={() => setSelectedTorrent(t)}
-            />
-          ))}
+          {/* Torrent Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {displayTorrents.map(t => (
+              <Poster
+                key={t.infoHash}
+                name={t.name}
+                progress={t.progress || 0}
+                peers={t.numPeers || 0}
+                isReady={t.isReady}
+                size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
+                downloadSpeed={t.downloadSpeed || 0}
+                downloaded={t.downloaded || 0}
+                eta={t.eta || 0}
+                newFilesCount={t.newFilesCount || 0}
+                onClick={() => setSelectedTorrent(t)}
+              />
+            ))}
 
-          {/* Empty State */}
-          {displayTorrents.length === 0 && !loading && (
-            <div className="col-span-full py-20 text-center text-gray-600">
-              <div className="text-6xl mb-4">{categoryFilter === 'all' ? '🍿' : CATEGORIES.find(c => c.id === categoryFilter)?.icon}</div>
-              <p className="text-lg">{categoryFilter === 'all' ? 'Your list is empty.' : 'Нет торрентов в этой категории'}</p>
-            </div>
-          )}
+            {/* Empty State */}
+            {displayTorrents.length === 0 && !loading && (
+              <div className="col-span-full py-20 text-center text-gray-600">
+                <div className="text-6xl mb-4">{categoryFilter === 'all' ? '🍿' : CATEGORIES.find(c => c.id === categoryFilter)?.icon}</div>
+                <p className="text-lg">{categoryFilter === 'all' ? 'Your list is empty.' : 'Нет торрентов в этой категории'}</p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Torrent Modal */}
       {selectedTorrent && (
