@@ -11,6 +11,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import HomeRow from './HomeRow'
+import CategoryPage from './CategoryPage'
+import MovieDetail from './MovieDetail'
 import { fetchAllDiscovery, getBackdropUrl, getTitle, getSearchQuery, DISCOVERY_CATEGORIES } from '../utils/discover'
 
 const HomePanel = ({ onSearch, onClose }) => {
@@ -20,6 +22,8 @@ const HomePanel = ({ onSearch, onClose }) => {
     const [backdrop, setBackdrop] = useState(null)
     const [focusedRowIndex, setFocusedRowIndex] = useState(0)
     const [focusedItem, setFocusedItem] = useState(null)
+    const [activeCategoryId, setActiveCategoryId] = useState(null) // For full category view
+    const [selectedItem, setSelectedItem] = useState(null) // For movie detail view
 
     // Fetch all discovery categories on mount
     useEffect(() => {
@@ -48,15 +52,25 @@ const HomePanel = ({ onSearch, onClose }) => {
         loadDiscovery()
     }, [])
 
-    // Handle item click — search for torrents
+    // Handle item click — open movie detail
     const handleItemClick = useCallback((item) => {
-        const query = getSearchQuery(item)
-        console.log('[HomePanel] Searching for:', query)
+        console.log('[HomePanel] Opening movie detail:', getTitle(item))
+        setSelectedItem(item)
+    }, [])
 
+    // Handle search from movie detail
+    const handleSearchFromDetail = useCallback((query) => {
+        console.log('[HomePanel] Searching from detail:', query)
+        setSelectedItem(null) // Close detail first
         if (onSearch) {
             onSearch(query)
         }
     }, [onSearch])
+
+    // Handle back from movie detail
+    const handleDetailBack = useCallback(() => {
+        setSelectedItem(null)
+    }, [])
 
     // Handle focus change — update backdrop
     const handleFocusChange = useCallback((item) => {
@@ -67,8 +81,22 @@ const HomePanel = ({ onSearch, onClose }) => {
         }
     }, [])
 
+    // Handle "More" button click — open full category view
+    const handleMoreClick = useCallback((categoryId) => {
+        console.log('[HomePanel] Opening category:', categoryId)
+        setActiveCategoryId(categoryId)
+    }, [])
+
+    // Handle back from category view
+    const handleCategoryBack = useCallback(() => {
+        setActiveCategoryId(null)
+    }, [])
+
     // Keyboard navigation between rows
     const handleKeyDown = useCallback((e) => {
+        // Disable global navigation if viewing detail or category page
+        if (selectedItem || activeCategoryId) return
+
         const categoryIds = DISCOVERY_CATEGORIES.map(c => c.id)
         const rowCount = categoryIds.length
 
@@ -79,11 +107,8 @@ const HomePanel = ({ onSearch, onClose }) => {
                 break
             case 'ArrowUp':
                 e.preventDefault()
-                if (focusedRowIndex === 0) {
-                    // At top — close panel or go to search
-                    if (onClose) onClose()
-                } else {
-                    setFocusedRowIndex(prev => Math.max(prev - 1, 0))
+                if (focusedRowIndex > 0) {
+                    setFocusedRowIndex(prev => prev - 1)
                 }
                 break
             case 'Escape':
@@ -92,7 +117,15 @@ const HomePanel = ({ onSearch, onClose }) => {
                 if (onClose) onClose()
                 break
         }
-    }, [focusedRowIndex, onClose])
+    }, [focusedRowIndex, onClose, selectedItem, activeCategoryId])
+
+    // Validates scroll position when row changes
+    useEffect(() => {
+        if (focusedRowIndex === 0) {
+            // If focusing the first row, always scroll to top to show Header/Hero
+            window.scrollTo({ top: 0, behavior: 'auto' })
+        }
+    }, [focusedRowIndex])
 
     // Add global key listener
     useEffect(() => {
@@ -104,6 +137,31 @@ const HomePanel = ({ onSearch, onClose }) => {
     const orderedCategories = DISCOVERY_CATEGORIES
         .map(cat => categories[cat.id])
         .filter(Boolean)
+
+    // If viewing movie detail, show MovieDetail
+    if (selectedItem) {
+        return (
+            <MovieDetail
+                item={selectedItem}
+                onSearch={handleSearchFromDetail}
+                onBack={handleDetailBack}
+            />
+        )
+    }
+
+    // If viewing a full category, show CategoryPage
+    if (activeCategoryId) {
+        const categoryData = categories[activeCategoryId]
+        return (
+            <CategoryPage
+                categoryId={activeCategoryId}
+                items={categoryData?.items || []}
+                onItemClick={handleItemClick}
+                onBack={handleCategoryBack}
+                onFocusChange={handleFocusChange}
+            />
+        )
+    }
 
     return (
         <div className="home-panel relative min-h-screen bg-gray-900">
@@ -159,10 +217,7 @@ const HomePanel = ({ onSearch, onClose }) => {
                             </p>
                         )}
 
-                        {/* Action hint */}
-                        <p className="text-blue-400 text-xs mt-3 opacity-80">
-                            ↵ Enter — найти торренты
-                        </p>
+
                     </div>
                 )}
 
@@ -196,21 +251,19 @@ const HomePanel = ({ onSearch, onClose }) => {
                                 key={category.id}
                                 title={category.name}
                                 icon={category.icon}
+                                categoryId={category.id}
                                 items={category.items || []}
                                 onItemClick={handleItemClick}
                                 onFocusChange={handleFocusChange}
+                                onMoreClick={handleMoreClick}
                                 isRowFocused={focusedRowIndex === index}
+                                rowIndex={index}
                             />
                         ))}
                     </div>
                 )}
 
-                {/* Debug: Source info */}
-                {!loading && orderedCategories.length > 0 && (
-                    <div className="px-4 mt-8 text-gray-600 text-xs">
-                        Источники: {orderedCategories.map(c => `${c.name} (${c.method || c.source})`).join(' • ')}
-                    </div>
-                )}
+
             </div>
         </div>
     )

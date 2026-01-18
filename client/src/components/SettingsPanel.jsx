@@ -144,6 +144,34 @@ const SettingsPanel = ({
             results.push({ name: 'Кинопоиск', status: '⏭️', detail: 'нет API ключа' })
         }
 
+        // 6️⃣ Image CDN Test
+        try {
+            // Test image: The Beekeeper (or generic popular one)
+            const testPath = '/t6HIqrKwXtvO99k1nyh58x6aWS2.jpg'
+
+            // 6.1 Current Mirror
+            const mirrorUrl = `https://${localStorage.getItem('tmdb_img_mirror') || 'imagetmdb.com'}/t/p/w200${testPath}`
+            const imgRes = await fetch(mirrorUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+            results.push({
+                name: 'CDN Mirror',
+                status: imgRes.ok ? '✅' : '❌',
+                detail: imgRes.ok ? 'OK' : `HTTP ${imgRes.status}`
+            })
+
+            // 6.2 WSRV Proxy (Safety Layer)
+            const originalUrl = `https://image.tmdb.org/t/p/w200${testPath}`
+            const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(originalUrl)}`
+            const proxyRes = await fetch(wsrvUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+            results.push({
+                name: 'WSRV Proxy',
+                status: proxyRes.ok ? '✅' : '❌',
+                detail: proxyRes.ok ? 'OK (Backup Ready)' : `HTTP ${proxyRes.status}`
+            })
+
+        } catch (e) {
+            results.push({ name: 'Image CDN', status: '❌', detail: e.message })
+        }
+
         setTestResult({ name: testName, results })
         setTestLoading(false)
     }

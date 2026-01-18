@@ -14,16 +14,28 @@ import {
     getPopularMovies,
     getPopularTV,
     getTopRated,
-    filterDiscoveryResults
+    filterDiscoveryResults,
+    getImageUrl,
+    tmdbClient
 } from './tmdbClient.js'
 
-// ─── Discovery Categories ──────────────────────────────────────
+// ─── Discovery Categories (Lampa-style) ────────────────────────
+
+// Fetch helpers for new endpoints
+const fetchNowPlaying = () => tmdbClient('/movie/now_playing?', { cacheTTL: 10 * 60 * 1000 })
+const fetchTrendingDay = () => tmdbClient('/trending/movie/day?', { cacheTTL: 10 * 60 * 1000 })
+const fetchUpcoming = () => tmdbClient('/movie/upcoming?', { cacheTTL: 10 * 60 * 1000 })
+const fetchTopTV = () => tmdbClient('/tv/top_rated?', { cacheTTL: 10 * 60 * 1000 })
 
 export const DISCOVERY_CATEGORIES = [
-    { id: 'trending', name: 'Тренды', icon: '🔥', fetcher: getTrending },
-    { id: 'movies', name: 'Популярные фильмы', icon: '🎬', fetcher: getPopularMovies },
-    { id: 'tv', name: 'Сериалы', icon: '📺', fetcher: getPopularTV },
-    { id: 'top', name: 'Топ рейтинга', icon: '⭐', fetcher: getTopRated }
+    { id: 'now_playing', name: 'Сейчас смотрят', icon: '🎬', fetcher: fetchNowPlaying },
+    { id: 'trending_day', name: 'Тренды дня', icon: '📈', fetcher: fetchTrendingDay },
+    { id: 'trending', name: 'Тренды недели', icon: '🔥', fetcher: getTrending },
+    { id: 'upcoming', name: 'Скоро в кино', icon: '📅', fetcher: fetchUpcoming },
+    { id: 'movies', name: 'Популярные фильмы', icon: '⭐', fetcher: getPopularMovies },
+    { id: 'tv', name: 'Популярные сериалы', icon: '📺', fetcher: getPopularTV },
+    { id: 'top', name: 'Топ фильмов', icon: '🏆', fetcher: getTopRated },
+    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', fetcher: fetchTopTV }
 ]
 
 /**
@@ -93,9 +105,9 @@ export function getPosterUrl(item, size = 'w342') {
         return `https://wsrv.nl/?url=${encodeURIComponent(item._kp_data.posterUrlPreview)}&output=webp`
     }
 
-    // TMDB poster
+    // TMDB poster via CDN mirror
     if (item.poster_path) {
-        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${item.poster_path}&output=webp`
+        return getImageUrl(item.poster_path, size)
     }
 
     return null
@@ -108,7 +120,7 @@ export function getBackdropUrl(item, size = 'w1280') {
     if (!item) return null
 
     if (item.backdrop_path) {
-        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${item.backdrop_path}&output=webp`
+        return getImageUrl(item.backdrop_path, size)
     }
 
     return null
@@ -144,8 +156,8 @@ export function getSearchQuery(item) {
         return `${title} S01`
     }
 
-    // For movies, include year
-    return year ? `${title} ${year}` : title
+    // For movies, use only title (year often breaks search)
+    return title
 }
 
 export default {

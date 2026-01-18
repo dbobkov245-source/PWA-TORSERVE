@@ -71,4 +71,26 @@ export const formatGenres = (ids, limit = 2) => {
     return getGenreNames(ids).slice(0, limit).join(', ')
 }
 
+/**
+ * Get genre names for a movie/tv item
+ * Handles both genre_ids (list) and genres (detail)
+ * @param {Object} item - Movie/TV item
+ * @returns {string[]} Array of genre names
+ */
+export const getGenresForItem = (item) => {
+    if (!item) return []
+
+    // If item has genre_ids (common in list responses)
+    if (item.genre_ids && Array.isArray(item.genre_ids)) {
+        return getGenreNames(item.genre_ids)
+    }
+
+    // If item has genres array (common in detail responses)
+    if (item.genres && Array.isArray(item.genres)) {
+        return item.genres.map(g => g.name || g)
+    }
+
+    return []
+}
+
 export default GENRES

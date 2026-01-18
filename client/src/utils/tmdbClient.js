@@ -29,6 +29,107 @@ const CACHE_PREFIX = 'tmdb_cache_v1_'
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for search
 const DISCOVERY_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for discovery
 
+// ─── Image Mirrors (from Lampa) ────────────────────────────────
+// 5 CDN mirrors with automatic failover and ban system
+// 5 CDN mirrors with automatic failover and ban system
+const IMAGE_MIRRORS = [
+    'imagetmdb.com',
+    'nl.imagetmdb.com',
+    'de.imagetmdb.com',
+    'pl.imagetmdb.com',
+    'lampa.byskaz.ru/tmdb/img'
+]
+
+const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
+
+// Mirror error tracking - auto-ban after 20 errors in 10 seconds
+const mirrorStats = {}
+IMAGE_MIRRORS.forEach(mirror => {
+    mirrorStats[mirror] = { errors: [], banned: false }
+})
+
+/**
+ * Get current active image mirror (Lampa-style ImageMirror)
+ * @returns {string} - Current mirror hostname
+ */
+export function getCurrentImageMirror() {
+    const freeMirrors = IMAGE_MIRRORS.filter(m => !mirrorStats[m].banned)
+    const lastMirror = localStorage.getItem('tmdb_img_mirror') || ''
+
+    if (freeMirrors.includes(lastMirror)) {
+        return lastMirror
+    } else if (freeMirrors.length > 0) {
+        localStorage.setItem('tmdb_img_mirror', freeMirrors[0])
+        return freeMirrors[0]
+    }
+
+    // All mirrors banned - reset and try first
+    IMAGE_MIRRORS.forEach(m => { mirrorStats[m].banned = false })
+    return IMAGE_MIRRORS[0]
+}
+
+/**
+ * Report broken image URL - triggers mirror ban after 20 errors in 10s
+ * @param {string} url - Failed image URL
+ */
+export function reportBrokenImage(url) {
+    IMAGE_MIRRORS.forEach(mirror => {
+        if (url && url.includes(mirror)) {
+            const now = Date.now()
+            const stats = mirrorStats[mirror]
+
+            stats.errors.push(now)
+            // Keep only errors from last 10 seconds
+            stats.errors = stats.errors.filter(t => now - t < 10000)
+
+            console.log(`[ImageMirror] ${mirror} errors: ${stats.errors.length}`)
+
+            if (stats.errors.length >= 20) {
+                stats.banned = true
+                stats.errors = []
+                console.warn(`[ImageMirror] BANNED: ${mirror}`)
+                // Clear saved mirror to trigger switch
+                localStorage.removeItem('tmdb_img_mirror')
+
+                // Check if ALL mirrors are banned
+                const allBanned = IMAGE_MIRRORS.every(m => mirrorStats[m].banned)
+                if (allBanned) {
+                    console.warn('[ImageMirror] 🚨 ALL MIRRORS BANNED! Switching to WSRV.NL Proxy Mode.')
+                    localStorage.setItem(PROXY_MODE_KEY, 'true')
+                    // Optional: force reload or event to allow UI to update immediately
+                    // window.location.reload() 
+                }
+            }
+        }
+    })
+}
+
+/**
+ * Get image URL through CDN mirror (Lampa-style)
+ * @param {string} path - TMDB image path (e.g., /abcd123.jpg)
+ * @param {string} size - Image size (default: w342)
+ * @returns {string} - Full image URL through CDN mirror
+ */
+export function getImageUrl(path, size = 'w342') {
+    if (!path) return ''
+
+    // If already full URL (e.g., Kinopoisk), return as-is
+    if (path.startsWith('http')) return path
+
+    // Check proxy mode (safe fallback)
+    const useProxy = localStorage.getItem(PROXY_MODE_KEY) === 'true'
+
+    if (useProxy) {
+        // Wrap with wsrv.nl (European Image Proxy)
+        // Use ORIGINAL TMDB domain as source, as wsrv.nl can unblock it
+        const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
+        return `https://wsrv.nl/?url=${encodeURIComponent(originalUrl)}`
+    }
+
+    const mirror = getCurrentImageMirror()
+    return `https://${mirror}/t/p/${size}${path}`
+}
+
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────
 const dohCache = new Map()
 

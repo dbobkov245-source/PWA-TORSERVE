@@ -76,7 +76,20 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
             return
         }
 
+        // Check metadata cache (Stage 6) - may have poster from previous session
+        const metadata = getMetadata(cleanedName)
+        if (metadata?.poster) {
+            setBgImage(metadata.poster)
+            // Also save to poster cache for faster access next time
+            localStorage.setItem(cacheKey, metadata.poster)
+            return
+        }
+
         const fetchPoster = async () => {
+            // AbortController for timeouts
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 5000) // 5 sec timeout
+
             try {
                 let result = null
                 const query = encodeURIComponent(cleanedName)
@@ -91,7 +104,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         const proxyUrl = `${CUSTOM_PROXY}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
                         console.log('[Poster] Custom Proxy:', cleanedName)
 
-                        const res = await fetch(proxyUrl)
+                        const res = await fetch(proxyUrl, { signal: controller.signal })
                         if (res.ok) {
                             const data = await res.json()
                             result = data.results?.find(r => r.poster_path)
@@ -109,7 +122,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         const lampaUrl = `https://apn-latest.onrender.com/${targetUrl}`
                         console.log('[Poster] Lampa Proxy:', cleanedName)
 
-                        const res = await fetch(lampaUrl)
+                        const res = await fetch(lampaUrl, { signal: controller.signal })
                         if (res.ok) {
                             const data = await res.json()
                             result = data.results?.find(r => r.poster_path)
@@ -139,7 +152,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
                         const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
                         console.log('[Poster] CorsProxy:', cleanedName)
-                        const res = await fetch(proxyUrl)
+                        const res = await fetch(proxyUrl, { signal: controller.signal })
                         if (res.ok) {
                             const data = await res.json()
                             result = data.results?.find(r => r.poster_path)
@@ -159,7 +172,8 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         console.log('[Poster] Kinopoisk:', cleanedName)
 
                         const res = await fetch(kpUrl, {
-                            headers: { 'X-API-KEY': KP_API_KEY }
+                            headers: { 'X-API-KEY': KP_API_KEY },
+                            signal: controller.signal
                         })
                         if (res.ok) {
                             const data = await res.json()
@@ -218,12 +232,16 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                     console.log('[Poster] Not found:', cleanedName)
                 }
             } catch (err) {
-                console.warn('[Poster] Error:', cleanedName, err)
+                if (err.name !== 'AbortError') {
+                    console.warn('[Poster] Error:', cleanedName, err)
+                }
+            } finally {
+                clearTimeout(timeout)
             }
         }
 
-        // Рандомная задержка (0-2 сек) чтобы не бомбить API при загрузке списка
-        const timer = setTimeout(fetchPoster, Math.random() * 2000)
+        // Stagger requests (0-300ms) to avoid API flood
+        const timer = setTimeout(fetchPoster, Math.random() * 300)
         return () => clearTimeout(timer)
     }, [cleanedName])
 
@@ -245,6 +263,8 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                     src={bgImage}
                     alt={name}
                     className="w-full h-full object-cover transition-opacity duration-500"
+                    loading="lazy"
+                    decoding="async"
                     onError={() => setBgImage(null)} // Revert to gradient on load error
                 />
             ) : (
