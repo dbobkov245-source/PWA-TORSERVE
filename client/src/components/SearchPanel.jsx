@@ -3,9 +3,10 @@
  * Stage 6: TV Navigation Hook, Enhanced Provider Status, Accessibility
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import { useTVNavigation } from '../hooks/useTVNavigation'
+import { useDebounce } from '../hooks/useDebounce'
 
 // ─── Helper Functions ─────────────────────────────────────────
 
@@ -47,6 +48,15 @@ const getTagStyle = (tag) => {
     return styles[tag] || 'bg-gray-700/50 text-gray-400 border-gray-500/30'
 }
 
+const getHealthIcon = (health) => {
+    switch (health) {
+        case 'excellent': return '🟢'
+        case 'good': return '🟡'
+        case 'poor': return '🟠'
+        default: return '🔴'
+    }
+}
+
 // ─── Main Component ───────────────────────────────────────────
 
 const SearchPanel = ({
@@ -72,22 +82,31 @@ const SearchPanel = ({
     const closeBtnRef = useRef(null)
     const resultRefs = useRef([])
 
-    // Filter and sort
-    const filteredResults = searchResults.filter(r => {
-        if (activeFilters.length === 0) return true
-        return activeFilters.every(filter => (r.tags || []).includes(filter))
-    })
+    // UX-01: Debounce filter changes for performance
+    const debouncedFilters = useDebounce(activeFilters, 150)
 
-    const sortedResults = [...filteredResults].sort((a, b) => {
-        switch (sortBy) {
-            case 'seeders': return (b.seeders || 0) - (a.seeders || 0)
-            case 'size': return (b.sizeBytes || 0) - (a.sizeBytes || 0)
-            case 'date': return (b.dateTs || 0) - (a.dateTs || 0)
-            default: return 0
-        }
-    })
+    // Filter and sort with useMemo for performance (UX-01)
+    const filteredResults = useMemo(() => {
+        return searchResults.filter(r => {
+            if (debouncedFilters.length === 0) return true
+            return debouncedFilters.every(filter => (r.tags || []).includes(filter))
+        })
+    }, [searchResults, debouncedFilters])
 
-    const availableTags = [...new Set(searchResults.flatMap(r => r.tags || []))]
+    const sortedResults = useMemo(() => {
+        return [...filteredResults].sort((a, b) => {
+            switch (sortBy) {
+                case 'seeders': return (b.seeders || 0) - (a.seeders || 0)
+                case 'size': return (b.sizeBytes || 0) - (a.sizeBytes || 0)
+                case 'date': return (b.dateTs || 0) - (a.dateTs || 0)
+                default: return 0
+            }
+        })
+    }, [filteredResults, sortBy])
+
+    const availableTags = useMemo(() =>
+        [...new Set(searchResults.flatMap(r => r.tags || []))]
+        , [searchResults])
     const filterOptions = ['2160p', '1080p', '720p', 'hevc', 'hdr'].filter(t => availableTags.includes(t))
 
     // Provider status analysis
@@ -326,7 +345,7 @@ const SearchPanel = ({
                                 <div className="text-sm font-medium text-white truncate">{r.title}</div>
                                 <div className="text-xs text-gray-400 flex flex-wrap gap-x-3 mt-1">
                                     <span>📀 {r.size}</span>
-                                    <span className="text-green-400">⬆ {r.seeders}</span>
+                                    <span className="text-green-400">{getHealthIcon(r.health)} {r.seeders}</span>
                                     {r.tracker && <span className="text-purple-400">{r.tracker}</span>}
                                     {r.dateTs && <span className="text-gray-500">{formatRelativeDate(r.dateTs)}</span>}
                                 </div>

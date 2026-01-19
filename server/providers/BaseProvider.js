@@ -58,9 +58,10 @@ export class BaseProvider {
     /**
      * Normalize result to standard SearchResult format (API v2)
      * @param {Object} raw - Raw result from provider
-     * @returns {Object} Normalized SearchResult with dateTs and tags
+     * @returns {Object} Normalized SearchResult with dateTs, tags, and health
      */
     normalizeResult(raw) {
+        const seeders = raw.seeders || 0
         return {
             id: raw.id || String(Math.random()),
             title: raw.title || 'Unknown',
@@ -68,12 +69,27 @@ export class BaseProvider {
             sizeBytes: raw.sizeBytes || raw.Size || 0,
             dateTs: this.parseDate(raw.date),
             tags: this.extractQualityTags(raw.title),
-            seeders: raw.seeders || 0,
+            seeders: seeders,
+            health: this.calculateHealth(seeders),
             tracker: raw.tracker || this.name,
             magnet: raw.magnet || raw.magnetUrl || null,
             provider: this.name
         }
     }
+
+    /**
+     * Calculate torrent health based on seeders count
+     * UX-02: Visual indicator for download reliability
+     * @param {number} seeders
+     * @returns {'excellent'|'good'|'poor'|'dead'}
+     */
+    calculateHealth(seeders) {
+        if (seeders >= 50) return 'excellent'  // 🟢 Fast download
+        if (seeders >= 10) return 'good'       // 🟡 Reliable
+        if (seeders >= 1) return 'poor'        // 🟠 Slow but possible
+        return 'dead'                          // 🔴 No sources
+    }
+
 
     /**
      * Parse various date formats to Unix timestamp (milliseconds)

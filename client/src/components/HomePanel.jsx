@@ -72,13 +72,10 @@ const HomePanel = ({ onSearch, onClose }) => {
         setSelectedItem(null)
     }, [])
 
-    // Handle focus change — update backdrop
+    // Handle focus change — update focused item info (NO backdrop change)
     const handleFocusChange = useCallback((item) => {
         setFocusedItem(item)
-        const newBackdrop = getBackdropUrl(item)
-        if (newBackdrop) {
-            setBackdrop(newBackdrop)
-        }
+        // Removed: backdrop change for static background
     }, [])
 
     // Handle "More" button click — open full category view
@@ -106,8 +103,8 @@ const HomePanel = ({ onSearch, onClose }) => {
                 setFocusedRowIndex(prev => Math.min(prev + 1, rowCount - 1))
                 break
             case 'ArrowUp':
-                e.preventDefault()
                 if (focusedRowIndex > 0) {
+                    e.preventDefault()
                     setFocusedRowIndex(prev => prev - 1)
                 }
                 break
@@ -164,16 +161,9 @@ const HomePanel = ({ onSearch, onClose }) => {
     }
 
     return (
-        <div className="home-panel relative min-h-screen bg-gray-900">
-            {/* Dynamic Backdrop */}
-            <div
-                className="absolute inset-0 transition-all duration-700 ease-out"
-                style={{
-                    background: backdrop
-                        ? `linear-gradient(to bottom, transparent 0%, rgba(17,24,39,0.7) 30%, rgba(17,24,39,1) 70%), url(${backdrop}) center top / cover no-repeat`
-                        : 'linear-gradient(to bottom, #1f2937 0%, #111827 100%)'
-                }}
-            />
+        <div className="home-panel relative min-h-screen bg-[#141414]">
+            {/* Static Dark Background */}
+            <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
 
             {/* Content */}
             <div className="relative z-10 pt-4 pb-8">

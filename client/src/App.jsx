@@ -465,6 +465,8 @@ function App() {
         setSelectedTorrent(null)
       } else if (showSettings) {
         setShowSettings(false)
+      } else if (activeView === 'home') {
+        setActiveView('list')
       } else {
         CapacitorApp.exitApp()
       }
@@ -492,7 +494,7 @@ function App() {
       backListener.then(h => h.remove())
       window.removeEventListener('keydown', keyListener)
     }
-  }, [selectedTorrent, showSettings])
+  }, [selectedTorrent, showSettings, activeView])
 
   // ─── Render: Critical Error ───
   if (serverStatus === 'circuit_open' || serverStatus === 'error') {

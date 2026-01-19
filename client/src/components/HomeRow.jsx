@@ -52,13 +52,13 @@ const HomeRow = ({
         }
     }, [items, onItemClick])
 
-    // TV Navigation hook
-    const { focusedIndex, setFocusedIndex, handleKeyDown, isFocused } = useTVNavigation({
+    // TV Navigation hook - only for select/focus state, we handle arrows manually
+    const { focusedIndex, setFocusedIndex, isFocused } = useTVNavigation({
         itemCount: items.length,
-        columns: items.length, // Horizontal = all items in one row
+        columns: 1, // Use 1 = list mode, we handle horizontal arrows manually
         onSelect: handleSelect,
         itemRefs,
-        loop: true,
+        loop: false,
         trapFocus: false,
         initialIndex: isRowFocused ? 0 : -1
     })
@@ -79,18 +79,26 @@ const HomeRow = ({
         }
     }, [isRowFocused, focusedIndex, setFocusedIndex])
 
-    // Scroll focused item into view
+    // Scroll focused item into view (debounced to prevent jitter)
+    const scrollTimeoutRef = useRef(null)
     useEffect(() => {
         if (focusedIndex >= 0 && itemRefs.current[focusedIndex]) {
-            itemRefs.current[focusedIndex].scrollIntoView({
-                behavior: 'auto',
-                // For first row, use 'nearest' to avoid pulling Header off-screen.
-                // For others, use 'center' to ensure context.
-                block: rowIndex === 0 ? 'nearest' : 'center',
-                inline: 'center'
-            })
+            // Debounce scroll to prevent jitter when holding button
+            if (scrollTimeoutRef.current) {
+                clearTimeout(scrollTimeoutRef.current)
+            }
+            scrollTimeoutRef.current = setTimeout(() => {
+                itemRefs.current[focusedIndex]?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest',
+                    inline: 'center'
+                })
+            }, 100) // Increased delay for smoother batch navigation
         }
         updateVisibleRange()
+        return () => {
+            if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current)
+        }
     }, [focusedIndex, updateVisibleRange])
 
     // Track scroll for virtualization
@@ -104,38 +112,67 @@ const HomeRow = ({
         return () => container.removeEventListener('scroll', updateVisibleRange)
     }, [updateVisibleRange])
 
-    // Custom Key Handler to integrate "More" button
+    // Custom Key Handler - FULL horizontal navigation (manual control)
     const handleRowKeyDown = (e) => {
-        // If we are currently focusing the "More" button
+        // If "More" button is focused
         if (document.activeElement === moreButtonRef.current) {
             if (e.key === 'ArrowLeft') {
                 e.preventDefault()
-                // Focus the last item
-                setFocusedIndex(items.length - 1)
-            } else if (e.key === 'Enter') {
+                e.stopPropagation()
+                // Go back to last item
+                const lastIdx = items.length - 1
+                setFocusedIndex(lastIdx)
+                setTimeout(() => itemRefs.current[lastIdx]?.focus(), 0)
+            } else if (e.key === 'ArrowRight') {
+                // At the end, stop here
+                e.preventDefault()
+                e.stopPropagation()
+            } else if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 if (onMoreClick) onMoreClick(categoryId)
             }
-            // ArrowUp/Down let bubble to parent (HomePanel)
+            // ArrowUp/Down bubble to parent (HomePanel handles row switching)
             return
         }
 
-        // Normal list navigation
-        if (e.key === 'ArrowRight' && focusedIndex === items.length - 1) {
-            // At the end of list -> go to "More" button
+        // Regular item navigation
+        if (e.key === 'ArrowRight') {
             e.preventDefault()
-            setFocusedIndex(-1) // Deselect items
-            setTimeout(() => moreButtonRef.current?.focus(), 0)
-        } else {
-            handleKeyDown(e)
+            e.stopPropagation()
+            if (focusedIndex < items.length - 1) {
+                // Move to next item
+                const newIdx = focusedIndex + 1
+                setFocusedIndex(newIdx)
+                setTimeout(() => itemRefs.current[newIdx]?.focus(), 0)
+            } else if (focusedIndex === items.length - 1 && onMoreClick && moreButtonRef.current) {
+                // At end -> go to "More" button
+                setFocusedIndex(-1)
+                setTimeout(() => moreButtonRef.current?.focus(), 0)
+            }
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault()
+            e.stopPropagation()
+            if (focusedIndex > 0) {
+                const newIdx = focusedIndex - 1
+                setFocusedIndex(newIdx)
+                setTimeout(() => itemRefs.current[newIdx]?.focus(), 0)
+            }
+            // At start, just stop
+        } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            if (focusedIndex >= 0) {
+                handleSelect(focusedIndex)
+            }
         }
+        // ArrowUp/Down bubble to HomePanel for row switching
     }
 
     if (items.length === 0) return null
 
     return (
         <div
-            className="home-row mb-6 overflow-visible"
+            className="home-row mb-4"
+            style={{ overflow: 'visible' }}
             onKeyDown={isRowFocused ? handleRowKeyDown : undefined}
         >
             {/* Row Title */}
@@ -145,30 +182,22 @@ const HomeRow = ({
                     {title}
                     <span className="text-gray-500 text-sm font-normal">({items.length})</span>
                 </h2>
-                {onMoreClick && (
-                    <button
-                        onClick={() => onMoreClick(categoryId)}
-                        className={`text-blue-400 hover:text-blue-300 text-sm font-medium flex items-center gap-1 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-2 py-1 ${!isRowFocused ? 'opacity-50' : ''}`}
-                        tabIndex={isRowFocused ? 0 : -1}
-                        ref={moreButtonRef}
-                    >
-                        Ещё
-                        <span className="text-xs">→</span>
-                    </button>
-                )}
+                {/* Removed old header More button - now inline at end of row */}
             </div>
 
             {/* Scrollable Container */}
             <div
                 ref={containerRef}
-                className="flex gap-3 overflow-x-auto pt-2 pb-3 scrollbar-hide scroll-smooth"
+                className="flex gap-3 overflow-x-auto scrollbar-hide"
                 style={{
                     scrollbarWidth: 'none',
                     msOverflowStyle: 'none',
-                    paddingLeft: '32px',
-                    paddingRight: '32px',
-                    paddingTop: '12px',
-                    paddingBottom: '12px'
+                    scrollBehavior: 'smooth',
+                    WebkitOverflowScrolling: 'touch',
+                    paddingLeft: '16px',
+                    paddingRight: '16px',
+                    paddingTop: '16px',
+                    paddingBottom: '16px'
                 }}
             >
                 {items.map((item, index) => {
@@ -240,6 +269,31 @@ const HomeRow = ({
                         </button>
                     )
                 })}
+
+                {/* "More" Card at End (Lampa style) */}
+                {onMoreClick && (
+                    <button
+                        ref={moreButtonRef}
+                        onClick={() => onMoreClick(categoryId)}
+                        className={`
+                            flex-shrink-0 rounded-lg transition-all duration-200
+                            bg-gray-800/60 border-2 border-gray-600
+                            hover:border-blue-500 hover:bg-gray-700/70
+                            focus:outline-none focus:ring-4 focus:ring-blue-500 focus:scale-105 focus:z-10
+                            flex flex-col items-center justify-center gap-2
+                        `}
+                        style={{
+                            width: '130px',
+                            aspectRatio: '2/3',
+                            minWidth: '130px'
+                        }}
+                        tabIndex={isRowFocused ? 0 : -1}
+                        aria-label="Показать больше"
+                    >
+                        <span className="text-5xl text-gray-300">→</span>
+                        <span className="text-gray-300 text-sm font-semibold">Ещё</span>
+                    </button>
+                )}
             </div>
         </div>
     )

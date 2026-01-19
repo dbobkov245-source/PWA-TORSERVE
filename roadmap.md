@@ -376,12 +376,12 @@ Before implementing any task from this roadmap, you MUST perform a Pre-Work Cont
 | FIX-01b | 2D Grid Navigation | MUST | High | Stack: React Hook. <br>Desc: Добавить логику columns > 1. Обработка ArrowLeft/ArrowRight. Умный переход между строками (сохранение столбца при переходе вниз). |
 | FIX-01c | Modal Focus Trap | MUST | Mid | Stack: React (useEffect, DOM). <br>Desc: При открытии модалки (TorrentModal) фокус должен захватываться внутри неё и возвращаться на кнопку открытия при закрытии. |
 | SEC-01 | Error Boundary | SHOULD | Low | Stack: React Class Component. <br>Desc: Обернуть приложение, чтобы краш навигации не вешал весь TV-интерфейс (белый экран). |
-| ARC-01 | Server DoH Rotation | MUST | Mid | Stack: Node.js (fetch). <br>Desc: В doh.js внедрить массив провайдеров (Google, Quad9, Cloudflare). Логика перебора при ошибках (Round-Robin или Race с таймаутом 2сек). |
-| ARC-02 | Client Waterfall | MUST | High | Stack: React (AbortSignal). <br>Desc: В tmdbClient.js: Сначала запрос к NAS (Local), при сбое -> External Worker, при сбое -> Direct. **Final Fallback: Gradient Placeholder (no broken images).** |
-| UX-01 | Search Performance | MUST | Low | Stack: React 18 (useDeferredValue) OR use-debounce. <br>Desc: Убрать лаги ввода. Отложенная фильтрация списка результатов. |
-| UX-02 | Backend Badges | SHOULD | Mid | Stack: Node.js (Express). <br>Desc: Перенести парсинг (4K, HDR, HEVC) на сервер. Обновить /api/v2/search возвращать поле badges[] и health. |
-| UX-03 | Client Sort/Filter | SHOULD | Low | Stack: React (useState). <br>Desc: UI для сортировки (Seeds/Size) и фильтрации. Связать с данными из UX-02. |
-| TEST-01 | Device Testing | MUST | Low | Stack: Android TV / FireStick. <br>Desc: Тест на реальном железе (Input Lag, Focus visibility). |
+| ARC-01 | Server DoH Rotation | DONE | Mid | Stack: Node.js (fetch). <br>Desc: В doh.js внедрен массив провайдеров (Google, Quad9, Cloudflare). Логика Race с таймаутом 2сек + Circuit Breaker. |
+| ARC-02 | Client Waterfall | DONE | High | Stack: React (AbortSignal). <br>Desc: В tmdbClient.js 5 уровней: Worker -> Lampa Proxy -> CapacitorHttp (DoH) -> Direct -> Gradient. |
+| UX-01 | Search Performance | DONE | Low | Stack: React 18 (useDeferredValue) OR use-debounce. <br>Desc: Убрать лаги ввода. Отложенная фильтрация списка результатов. |
+| UX-02 | Backend Badges | DONE | Mid | Stack: Node.js (Express). <br>Desc: Перенесен парсинг (4K, HDR, HEVC) на сервер. /api/v2/search возвращает поле badges[] и health. |
+| UX-03 | Client Sort/Filter | DONE | Low | Stack: React (useState). <br>Desc: UI для сортировки (Seeds/Size) и фильтрации. Связать с данными из UX-02. |
+| TEST-01 | Device Testing | DONE | Low | Stack: Android TV / FireStick. <br>Desc: Тест на реальном железе. Fix: Navbar access, Focus clipping, Scroll jitter, Back button logic. |
 | OPT-01 | List Virtualization | WONT | High | Отложено. react-window пока не внедряем, решаем проблемы через UX-01. |
 
 🛠️ Technical Specifications (Reference for AI)

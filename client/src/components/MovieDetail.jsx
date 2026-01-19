@@ -10,7 +10,8 @@
  * - TV navigation support
  */
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery } from '../utils/discover'
 import { getGenresForItem } from '../utils/genres'
 import { reportBrokenImage } from '../utils/tmdbClient'
@@ -22,6 +23,8 @@ const MovieDetail = ({
 }) => {
     const containerRef = useRef(null)
     const searchButtonRef = useRef(null)
+    const backButtonRef = useRef(null)
+    const [focusedButton, setFocusedButton] = useState('search') // 'search' | 'back'
 
     if (!item) return null
 
@@ -44,16 +47,50 @@ const MovieDetail = ({
     // Keyboard navigation
     const handleKeyDown = useCallback((e) => {
         switch (e.key) {
+            case 'ArrowLeft':
+                e.preventDefault()
+                if (focusedButton === 'back') {
+                    setFocusedButton('search')
+                    searchButtonRef.current?.focus()
+                }
+                break
+            case 'ArrowRight':
+                e.preventDefault()
+                if (focusedButton === 'search') {
+                    setFocusedButton('back')
+                    backButtonRef.current?.focus()
+                }
+                break
             case 'Enter':
-                handleSearch()
+            case ' ':
+                e.preventDefault()
+                if (focusedButton === 'search') {
+                    handleSearch()
+                } else {
+                    onBack?.()
+                }
                 break
             case 'Escape':
             case 'Backspace':
                 e.preventDefault()
+                e.stopPropagation()
+                console.log('[MovieDetail] Back button pressed')
                 onBack?.()
                 break
         }
-    }, [handleSearch, onBack])
+    }, [focusedButton, handleSearch, onBack])
+
+    // Capacitor hardware back button (Android TV remote)
+    useEffect(() => {
+        const backHandler = CapacitorApp.addListener('backButton', () => {
+            console.log('[MovieDetail] Capacitor back button pressed')
+            onBack?.()
+        })
+
+        return () => {
+            backHandler.then(h => h.remove())
+        }
+    }, [onBack])
 
     // Focus search button on mount
     useEffect(() => {
@@ -179,6 +216,7 @@ const MovieDetail = ({
                             <button
                                 ref={searchButtonRef}
                                 onClick={handleSearch}
+                                onFocus={() => setFocusedButton('search')}
                                 className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl 
                                          transition-all duration-200 flex items-center gap-2
                                          focus:outline-none focus:ring-4 focus:ring-blue-400 focus:scale-105"
@@ -188,7 +226,9 @@ const MovieDetail = ({
                             </button>
 
                             <button
+                                ref={backButtonRef}
                                 onClick={onBack}
+                                onFocus={() => setFocusedButton('back')}
                                 className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-xl 
                                          transition-all duration-200 flex items-center gap-2
                                          focus:outline-none focus:ring-4 focus:ring-gray-500"
