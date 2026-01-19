@@ -1,8 +1,9 @@
 /**
  * TorrentModal Component - File list and playback controls
  * Stage 6.4: Fixed episode list navigation - proper focus chain
+ * FIX-01c: Added Focus Trap + Escape handling + Focus restoration
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { cleanTitle, formatSize } from '../utils/helpers'
 import { getMetadata } from './Poster'
 
@@ -29,6 +30,8 @@ const TorrentModal = ({
     const [episodesExpanded, setEpisodesExpanded] = useState(false)
 
     // Refs
+    const modalRef = useRef(null)
+    const previouslyFocusedRef = useRef(null)
     const playBtnRef = useRef(null)
     const playAllBtnRef = useRef(null)
     const episodeListRef = useRef(null)
@@ -43,6 +46,66 @@ const TorrentModal = ({
             if (cached) setMetadata(cached)
         }
     }, [torrent?.name])
+
+    // FIX-01c: Focus Trap + Escape handling + Focus restoration
+    useEffect(() => {
+        if (!torrent) return
+
+        // Save the previously focused element
+        previouslyFocusedRef.current = document.activeElement
+
+        // Focus the Play button when modal opens
+        const timer = setTimeout(() => {
+            playBtnRef.current?.focus()
+        }, 50)
+
+        // Handle Tab and Escape
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                onClose()
+                return
+            }
+
+            // Focus Trap: keep Tab within modal
+            if (e.key === 'Tab') {
+                const modal = modalRef.current
+                if (!modal) return
+
+                const focusableElements = modal.querySelectorAll(
+                    'button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                )
+                const firstElement = focusableElements[0]
+                const lastElement = focusableElements[focusableElements.length - 1]
+
+                if (e.shiftKey) {
+                    // Shift+Tab: go backwards
+                    if (document.activeElement === firstElement) {
+                        e.preventDefault()
+                        lastElement?.focus()
+                    }
+                } else {
+                    // Tab: go forwards
+                    if (document.activeElement === lastElement) {
+                        e.preventDefault()
+                        firstElement?.focus()
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('keydown', handleKeyDown, true)
+
+        return () => {
+            clearTimeout(timer)
+            document.removeEventListener('keydown', handleKeyDown, true)
+            // Restore focus to the previously focused element
+            if (previouslyFocusedRef.current && typeof previouslyFocusedRef.current.focus === 'function') {
+                previouslyFocusedRef.current.focus()
+            }
+        }
+    }, [torrent, onClose])
 
     if (!torrent) return null
 
@@ -164,6 +227,7 @@ const TorrentModal = ({
             onClick={onClose}
         >
             <div
+                ref={modalRef}
                 className="bg-[#181818] rounded-2xl w-full max-w-lg max-h-[85vh] shadow-2xl flex flex-col"
                 onClick={e => e.stopPropagation()}
             >
@@ -201,7 +265,6 @@ const TorrentModal = ({
                     {/* Play button */}
                     <button
                         ref={playBtnRef}
-                        autoFocus
                         onClick={() => firstVideo && onPlay(torrent.infoHash, firstVideo.index, firstVideo.name)}
                         onKeyDown={handlePlayKeyDown}
                         className="w-full bg-white text-black py-3 rounded font-bold focus:bg-yellow-400 focus:ring-2 focus:ring-yellow-400 focus:outline-none mb-2"

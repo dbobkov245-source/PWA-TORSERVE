@@ -127,11 +127,12 @@ export const useTVNavigation = ({
     }, [focusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack])
 
     // Scroll into view when focused index changes
+    // FIX-01a: Use 'center' instead of 'nearest' for better TV UX
     useEffect(() => {
         if (focusedIndex >= 0 && itemRefs?.current?.[focusedIndex]) {
             itemRefs.current[focusedIndex].scrollIntoView({
                 behavior: 'smooth',
-                block: 'nearest'
+                block: 'center'
             })
         }
     }, [focusedIndex, itemRefs])
