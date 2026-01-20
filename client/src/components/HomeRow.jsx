@@ -79,21 +79,39 @@ const HomeRow = ({
         }
     }, [isRowFocused, focusedIndex, setFocusedIndex])
 
-    // Scroll focused item into view (debounced to prevent jitter)
+    // Smooth scroll with transform3d (LAMPA-style) - hardware accelerated
     const scrollTimeoutRef = useRef(null)
+    const [scrollOffset, setScrollOffset] = useState(0)
+
     useEffect(() => {
-        if (focusedIndex >= 0 && itemRefs.current[focusedIndex]) {
+        if (focusedIndex >= 0 && itemRefs.current[focusedIndex] && containerRef.current) {
             // Debounce scroll to prevent jitter when holding button
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current)
             }
             scrollTimeoutRef.current = setTimeout(() => {
-                itemRefs.current[focusedIndex]?.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'nearest',
-                    inline: 'center'
+                const container = containerRef.current
+                const item = itemRefs.current[focusedIndex]
+                if (!container || !item) return
+
+                // Calculate target position to center the item
+                const containerRect = container.getBoundingClientRect()
+                const itemRect = item.getBoundingClientRect()
+                const containerCenter = containerRect.left + containerRect.width / 2
+                const itemCenter = itemRect.left + itemRect.width / 2
+                const currentScroll = container.scrollLeft
+                const targetScroll = currentScroll + (itemCenter - containerCenter)
+
+                // Clamp to valid scroll range
+                const maxScroll = container.scrollWidth - container.clientWidth
+                const clampedScroll = Math.max(0, Math.min(maxScroll, targetScroll))
+
+                // Smooth scroll with native scrollTo (uses CSS scroll-behavior: smooth)
+                container.scrollTo({
+                    left: clampedScroll,
+                    behavior: 'smooth'
                 })
-            }, 100) // Increased delay for smoother batch navigation
+            }, 50) // Reduced delay for faster response
         }
         updateVisibleRange()
         return () => {
@@ -145,9 +163,9 @@ const HomeRow = ({
                 setFocusedIndex(newIdx)
                 setTimeout(() => itemRefs.current[newIdx]?.focus(), 0)
             } else if (focusedIndex === items.length - 1 && onMoreClick && moreButtonRef.current) {
-                // At end -> go to "More" button
+                // At end -> go to "More" button (increased delay for reliable focus)
                 setFocusedIndex(-1)
-                setTimeout(() => moreButtonRef.current?.focus(), 0)
+                setTimeout(() => moreButtonRef.current?.focus(), 50)
             }
         } else if (e.key === 'ArrowLeft') {
             e.preventDefault()

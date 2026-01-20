@@ -409,7 +409,14 @@ function App() {
     }
   }
 
+  // UX-04: Click Debounce — prevent double-click adding
   const addFromSearch = async (magnetOrId, title) => {
+    // Early return if already processing (debounce protection)
+    if (searchLoading) {
+      console.log('[AddFromSearch] Debounce: already processing, skipping')
+      return
+    }
+
     setSearchLoading(true)
     try {
       if (magnetOrId && magnetOrId.startsWith('magnet:')) {
@@ -447,6 +454,48 @@ function App() {
 
     return () => clearInterval(interval)
   }, [serverUrl])
+
+  // BUG-03: Real-time provider status polling when search panel is open
+  useEffect(() => {
+    if (!showSearch) return
+
+    const fetchProvidersStatus = async () => {
+      try {
+        const res = await fetch(getApiUrl('/api/providers/status'))
+        if (res.ok) {
+          const data = await res.json()
+          // Transform to UI format: { providerName: { status, count } }
+          const uiProviders = {}
+          for (const p of data.providers || []) {
+            uiProviders[p.name] = {
+              status: p.circuitOpen ? 'circuit_open' : (p.healthy ? 'ok' : 'error'),
+              count: 0, // Count is from search results, not from status poll
+              enabled: p.enabled,
+              failures: p.failures
+            }
+          }
+          // Merge with existing counts from searchProviders
+          setSearchProviders(prev => {
+            const merged = { ...uiProviders }
+            for (const [name, data] of Object.entries(prev)) {
+              if (merged[name]) {
+                merged[name].count = data.count || 0
+              }
+            }
+            return merged
+          })
+        }
+      } catch (err) {
+        console.warn('[ProvidersStatus] Poll failed:', err.message)
+      }
+    }
+
+    // Initial fetch + polling every 30 seconds
+    fetchProvidersStatus()
+    const interval = setInterval(fetchProvidersStatus, 30000)
+
+    return () => clearInterval(interval)
+  }, [showSearch, serverUrl])
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return

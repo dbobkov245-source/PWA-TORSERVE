@@ -40,31 +40,53 @@ export const DISCOVERY_CATEGORIES = [
 
 /**
  * Fetch all discovery categories in parallel
+ * Includes cross-category deduplication to prevent duplicate items
  * @returns {Promise<Object>} { trending: [...], movies: [...], tv: [...], top: [...] }
  */
 export async function fetchAllDiscovery() {
     const results = {}
+    const seenIds = new Set() // Track seen item IDs for deduplication
 
-    const promises = DISCOVERY_CATEGORIES.map(async (category) => {
-        try {
-            const response = await category.fetcher()
-            results[category.id] = {
-                ...category,
-                items: filterDiscoveryResults(response.results || []),
-                source: response.source,
-                method: response.method
+    // Fetch all categories in parallel
+    const categoryResults = await Promise.all(
+        DISCOVERY_CATEGORIES.map(async (category) => {
+            try {
+                const response = await category.fetcher()
+                return {
+                    category,
+                    items: filterDiscoveryResults(response.results || []),
+                    source: response.source,
+                    method: response.method
+                }
+            } catch (e) {
+                console.error(`[Discovery] Failed to fetch ${category.id}:`, e)
+                return {
+                    category,
+                    items: [],
+                    error: e.message
+                }
             }
-        } catch (e) {
-            console.error(`[Discovery] Failed to fetch ${category.id}:`, e)
-            results[category.id] = {
-                ...category,
-                items: [],
-                error: e.message
-            }
+        })
+    )
+
+    // Process results in order, deduplicating across categories
+    for (const { category, items, source, method, error } of categoryResults) {
+        // Filter out items already seen in previous categories
+        const uniqueItems = items.filter(item => {
+            if (seenIds.has(item.id)) return false
+            seenIds.add(item.id)
+            return true
+        })
+
+        results[category.id] = {
+            ...category,
+            items: uniqueItems,
+            source,
+            method,
+            error
         }
-    })
+    }
 
-    await Promise.allSettled(promises)
     return results
 }
 

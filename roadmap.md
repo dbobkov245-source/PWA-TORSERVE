@@ -425,5 +425,132 @@ function extractMetadata(title) {
     // ...
   }
 }
+---
 
+## 🗺️ ROADMAP v3.1: Operation "Unstoppable" (Post-Mortem & Status)
+**Version:** 3.1 (Legacy)
+**Status:** 🏁 ARCHIVED (Переход к v3.2)
+**Outcome:** Основные фичи внедрены, но аудит выявил критические архитектурные пробелы и "мертвый код".
+
+| ID | Task Name | Status | Notes |
+|---|---|---|---|
+| FIX-01a | 1D List Navigation | ✅ DONE | Базовая навигация работает. |
+| FIX-01b | 2D Grid Navigation | ✅ DONE | Grid работает. |
+| FIX-01c | Modal Focus Trap | ❌ FAILED | **Regression:** Escape не работает, фокус теряется. (Перенесено в v3.2) |
+| ARC-01 | Server DoH Rotation | ✅ DONE | Работает стабильно. |
+| ARC-02 | Client Waterfall | ⚠️ REOPENED | **Critical:** Логика написана, но физически отключена (`resolveClientIP` не вызывается). |
+| UX-01 | Search Performance | ✅ DONE | Debounce внедрен. |
+| OPT-01 | List Virtualization | 🔄 MOVED | Статус изменен с WONT на **SHOULD** (тесты на TV Box показали фризы). |
+
+---
+
+## 🗺️ ROADMAP v3.2: Stabilization & The Last Mile
+**Version:** 3.2 (Release Candidate)
+**Status:** ✅ PHASE 0 COMPLETE (Audit: 2025-01-20)
+**Focus:** Устранение утечек, включение "спящего" кода (Client DoH) и оптимизация под слабое железо.
+
+> **📋 AUDIT RESULTS (2025-01-20):**
+> - BUG-01, BUG-02, ARC-02 — код уже реализован, задачи закрыты.
+> - OPT-01 — **ЗАМОРОЖЕН** из-за высокого риска поломки TV-навигации.
+
+### 📅 Execution Phases
+
+#### ✅ Phase 0: Critical Hotfixes (Stabilization) — DONE
+*Результат аудита: 3 из 4 задач уже реализованы в коде.*
+* ✅ **BUG-01:** Modal Trap & Escape — `e.stopPropagation()` и `previouslyFocusedRef` уже в коде.
+* ✅ **BUG-02:** Memory Leak — защита `if (frozenCleanupIntervalId) return` уже реализована.
+* 🔄 **BUG-03:** Синхронизация UI статуса провайдеров (Real-time update). **TODO**
+* 🔄 **FIX-01:** Стандартизация `AutoDownloadPanel` (внедрение `useTVNavigation`). **TODO**
+
+#### ✅ Phase 1: True Resilience (Operation "Unstoppable") — DONE
+*Результат аудита: Client DoH активен для APK.*
+* ✅ **ARC-02:** Client DoH **УЖЕ АКТИВЕН** — `resolveClientIP()` вызывается в `tryCapacitorWithDoH()`.
+* 🔄 **SEC-01:** Внедрить Global Error Boundary (защита от белого экрана). **TODO**
+
+#### ⚠️ Phase 2: Performance & Polish — BLOCKED
+*Цель: Плавность интерфейса на слабых TV Box.*
+* ⛔ **OPT-01:** Виртуализация списков — **ЗАМОРОЖЕН**. См. предупреждение ниже.
+* 🔄 **UX-04:** Client-side Debounce для кнопок (защита от бана за флуд). **TODO**
+
+> ⚠️ **WARNING: OPT-01 Risk Assessment**
+> `useTVNavigation` полагается на массив `itemRefs` для ВСЕХ элементов.
+> `react-window` рендерит только видимые элементы → array `itemRefs` будет неполным → **навигация сломается**.
+> **Рекомендация:** Отложить до разработки "виртуального индекса" или до Phase 3.
+
+#### 🏗️ Phase 3: Architecture (Post-Release)
+* **BE-01:** Декомпозиция монолита `server/index.js` (Priority: LOW).
+* **OPT-01:** Виртуализация с рефакторингом `useTVNavigation` (moved here).
+
+---
+
+### 📋 Detailed Task List (v3.2)
+
+| ID | Task Name | Status | Priority | Complexity | Description & Tech Stack |
+|---|---|---|---|---|---|
+| **BUG-01** | **Fix Modal Trap & Escape** | ✅ DONE | ~~MUST~~ | Low | **Код уже реализован:** `TorrentModal.jsx` строки 63-69, 104-106. `e.stopPropagation()` и `previouslyFocusedRef` присутствуют. |
+| **BUG-02** | **Memory Leak Patch** | ✅ DONE | ~~MUST~~ | Low | **Код уже реализован:** `server/torrent.js` строки 32-36. Защита `if (frozenCleanupIntervalId) return` работает. |
+| **BUG-03** | **Search Providers UI Sync** | ✅ DONE | ~~MUST~~ | Mid | **Код добавлен:** API endpoint `/api/providers/status` + polling в `App.jsx` каждые 30 сек. |
+| **FIX-01** | **Standardize AutoDownload** | ⏭️ WONTFIX | ~~MUST~~ | Mid | **Переоценено:** Компонент уже имеет D-pad навигацию через `getFocusableElements()` + focus trap. Хук `useTVNavigation` не подходит для гетерогенного UI (кнопки + picker + форма + список). |
+| **ARC-02** | **Activate Client DoH** | ✅ DONE | ~~MUST~~ | High | **Код уже реализован:** `tmdbClient.js` строки 254, 262. DoH активен для нативной платформы. |
+| **OPT-01** | **List Virtualization** | ⛔ FROZEN | ~~SHOULD~~ | High | **РИСК:** Сломает `useTVNavigation`. Требует архитектурного решения. Перенесено в Phase 3. |
+| **SEC-01** | **Global Error Boundary** | ✅ DONE | ~~SHOULD~~ | Low | **Код уже реализован:** `components/ErrorBoundary.jsx` (125 строк) + интегрирован в `main.jsx`. |
+| **UX-04** | **Click Debounce** | ✅ DONE | ~~SHOULD~~ | Low | **Код добавлен:** `App.jsx` строка 412. Early return `if (searchLoading) return` предотвращает двойные клики. |
+| **UX-05** | **More Button Focus Fix** | ✅ DONE | ~~MUST~~ | Low | **Код добавлен:** `HomeRow.jsx` строка 150. Увеличен таймаут фокуса с 0 до 50мс. |
+| **UX-06** | **Category Deduplication** | ✅ DONE | ~~MUST~~ | Low | **Код добавлен:** `discover.js`. Дедупликация между категориями через `seenIds` Set. |
+| **UX-07** | **SettingsPanel Simplify** | ✅ DONE | ~~SHOULD~~ | Low | **Код добавлен:** `SettingsPanel.jsx`. Player Selection теперь сворачиваемый. |
+| **UX-08** | **Smooth Poster Scroll** | ✅ DONE | ~~SHOULD~~ | Low | **Код добавлен:** `HomeRow.jsx` + `index.css`. scrollTo с центрированием, CSS scroll-behavior. |
+| **UX-09** | **Extended Movie Card** | ✅ DONE | ~~SHOULD~~ | Medium | **Код добавлен:** `MovieDetail.jsx` + `tmdbClient.js`. Режиссёры, актёры с фото, трейлер. |
+| **TEST-02** | **Client Unit Tests** | ✅ DONE | ~~SHOULD~~ | Low | Vitest настроен. 30/30 тестов: `discover.test.js`, `helpers.test.js`. |
+
+---
+
+### 🐛 Backlog — Известные баги (2026-01-20)
+
+| ID | Описание | Приоритет | Детали |
+|----|----------|-----------|--------|
+| **BUG-10** | **Кнопка "Смотреть трейлер" недоступна с пульта** | HIGH | При аэромыши — белый экран, YouTube timeout, приложение зависает. Нужно открывать через Capacitor Browser или в embededed iframe. |
+| **BUG-11** | **Диагностика сервера недоступна с пульта** | MEDIUM | При открытии окна диагностики — скроллится фон, навигация пультом не работает. Нужен trapFocus. |
+
+### 📋 Backlog — Улучшения (2026-01-20)
+
+| ID | Описание | Приоритет | Детали |
+|----|----------|-----------|--------|
+| **FEAT-01** | **Расширить категории фильмов (как в LAMPA)** | MEDIUM | Добавить: Жанры, Страны, Годы, Сети (Netflix, HBO), Подборки. |
+
+---
+
+### 🛠️ Technical Specifications (For AI Context)
+
+#### 1. Memory Leak Fix (BUG-02) — ✅ ALREADY IMPLEMENTED
+**Problem:** `setInterval` creates duplicates on hot-reload or restart logic.
+**Current implementation in `server/torrent.js`:**
+```javascript
+let frozenCleanupIntervalId = null; // Line 32
+
+function startFrozenCleanup() {
+    if (frozenCleanupIntervalId) return; // Line 36 - PROTECTION EXISTS!
+    frozenCleanupIntervalId = setInterval(() => { ... }, FROZEN_TTL);
+}
+---
+
+## 🗺️ ROADMAP v3.1: Operation "Unstoppable" (Post-Mortem & Status)
+**Version:** 3.1 (Legacy)
+**Status:** 🏁 ARCHIVED (Переход к v3.2)
+**Outcome:** Основные фичи внедрены, но аудит выявил критические архитектурные пробелы и "мертвый код".
+
+| ID | Task Name | Status | Notes |
+|---|---|---|---|
+| FIX-01a | 1D List Navigation | ✅ DONE | Базовая навигация работает. |
+| FIX-01b | 2D Grid Navigation | ✅ DONE | Grid работает. |
+| FIX-01c | Modal Focus Trap | ✅ DONE | **Audit 2025-01-20:** Код реализован в `TorrentModal.jsx`. `e.stopPropagation()` + `previouslyFocusedRef` работают. |
+| ARC-01 | Server DoH Rotation | ✅ DONE | Работает стабильно. |
+| ARC-02 | Client Waterfall | ✅ DONE | **Audit 2025-01-20:** `resolveClientIP()` активен для APK. Проброс `Host` header работает. |
+| UX-01 | Search Performance | ✅ DONE | Debounce внедрен. |
+| OPT-01 | List Virtualization | ⛔ FROZEN | **Audit 2025-01-20:** Высокий риск для TV-навигации. Перенесено в Phase 3. |
+
+---
+
+## 📌 DUPLICATE SECTION REMOVED
+> *Этот раздел был дублирован. Актуальная версия v3.2 находится выше (строки 447+).*
+> *Удалено для консистентности документа.*
 End of Roadmap

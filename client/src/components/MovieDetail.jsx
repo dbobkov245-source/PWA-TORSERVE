@@ -6,6 +6,8 @@
  * - Large backdrop with gradient overlay
  * - Poster + movie info (title, year, rating, genres)
  * - Description text
+ * - Directors and Cast (LAMPA-style)
+ * - Trailer link
  * - Action buttons: "Найти торренты", "Назад"
  * - TV navigation support
  */
@@ -14,7 +16,7 @@ import { useRef, useEffect, useCallback, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery } from '../utils/discover'
 import { getGenresForItem } from '../utils/genres'
-import { reportBrokenImage } from '../utils/tmdbClient'
+import { reportBrokenImage, getCredits, getVideos, getImageUrl } from '../utils/tmdbClient'
 
 const MovieDetail = ({
     item,
@@ -26,6 +28,12 @@ const MovieDetail = ({
     const backButtonRef = useRef(null)
     const [focusedButton, setFocusedButton] = useState('search') // 'search' | 'back'
 
+    // Extended info state (LAMPA-style)
+    const [directors, setDirectors] = useState([])
+    const [cast, setCast] = useState([])
+    const [trailer, setTrailer] = useState(null)
+    const [loadingExtra, setLoadingExtra] = useState(true)
+
     if (!item) return null
 
     const backdropUrl = getBackdropUrl(item, 'w1280')
@@ -35,7 +43,8 @@ const MovieDetail = ({
     const rating = item.vote_average?.toFixed(1)
     const genres = getGenresForItem(item)
     const overview = item.overview || 'Описание отсутствует'
-    const mediaType = item.media_type === 'tv' || item.name ? 'Сериал' : 'Фильм'
+    const mediaType = item.media_type === 'tv' || item.name ? 'tv' : 'movie'
+    const mediaTypeLabel = mediaType === 'tv' ? 'Сериал' : 'Фильм'
 
     // Handle search button click
     const handleSearch = useCallback(() => {
@@ -91,6 +100,36 @@ const MovieDetail = ({
             backHandler.then(h => h.remove())
         }
     }, [onBack])
+
+    // Load extended info (credits, videos) - LAMPA-style
+    useEffect(() => {
+        if (!item?.id) return
+
+        const loadExtendedInfo = async () => {
+            setLoadingExtra(true)
+            try {
+                // Load credits
+                const creditsData = await getCredits(item.id, mediaType)
+                const directorsList = creditsData.crew?.filter(p => p.job === 'Director') || []
+                const castList = creditsData.cast?.slice(0, 8) || [] // Top 8 actors
+                setDirectors(directorsList)
+                setCast(castList)
+
+                // Load videos
+                const videosData = await getVideos(item.id, mediaType)
+                const trailerVideo = videosData.results?.find(
+                    v => v.type === 'Trailer' && v.site === 'YouTube'
+                ) || videosData.results?.[0]
+                setTrailer(trailerVideo)
+            } catch (err) {
+                console.warn('[MovieDetail] Failed to load extended info:', err.message)
+            } finally {
+                setLoadingExtra(false)
+            }
+        }
+
+        loadExtendedInfo()
+    }, [item?.id, mediaType])
 
     // Focus search button on mount
     useEffect(() => {
@@ -210,6 +249,66 @@ const MovieDetail = ({
                                 {overview}
                             </p>
                         </div>
+
+                        {/* Directors (LAMPA-style) */}
+                        {directors.length > 0 && (
+                            <div className="mt-4">
+                                <h3 className="text-sm font-semibold text-gray-400 mb-2">
+                                    🎬 Режиссёр{directors.length > 1 ? 'ы' : ''}
+                                </h3>
+                                <p className="text-white">
+                                    {directors.map(d => d.name).join(', ')}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Cast with photos (LAMPA-style) */}
+                        {cast.length > 0 && (
+                            <div className="mt-4">
+                                <h3 className="text-sm font-semibold text-gray-400 mb-3">
+                                    👥 В ролях
+                                </h3>
+                                <div className="flex gap-3 overflow-x-auto pb-2">
+                                    {cast.map((actor, i) => (
+                                        <div key={actor.id || i} className="flex-shrink-0 text-center" style={{ width: '70px' }}>
+                                            <div className="w-14 h-14 rounded-full overflow-hidden mx-auto mb-1 bg-gray-700">
+                                                {actor.profile_path ? (
+                                                    <img
+                                                        src={getImageUrl(actor.profile_path, 'w185')}
+                                                        alt={actor.name}
+                                                        className="w-full h-full object-cover"
+                                                        loading="lazy"
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center text-gray-500 text-xl">
+                                                        👤
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <p className="text-white text-xs line-clamp-2">{actor.name}</p>
+                                            {actor.character && (
+                                                <p className="text-gray-500 text-[10px] line-clamp-1">{actor.character}</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Trailer button */}
+                        {trailer && (
+                            <div className="mt-4">
+                                <a
+                                    href={`https://www.youtube.com/watch?v=${trailer.key}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-500 
+                                             text-white rounded-lg transition-all text-sm"
+                                >
+                                    ▶️ Смотреть трейлер
+                                </a>
+                            </div>
+                        )}
 
                         {/* Action Buttons */}
                         <div className="flex flex-wrap gap-4 mt-6">

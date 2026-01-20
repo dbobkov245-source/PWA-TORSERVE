@@ -104,6 +104,26 @@ button:focus,
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Smooth Horizontal Scroll (LAMPA-style)
+   ───────────────────────────────────────────────────────────── */
+
+.home-row .overflow-x-auto {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  will-change: scroll-position;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ─────────────────────────────────────────────────────────────
    Torrent Card
    ───────────────────────────────────────────────────────────── */
 

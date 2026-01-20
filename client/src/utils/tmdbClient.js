@@ -213,7 +213,8 @@ async function tryCustomWorker(endpoint) {
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ Custom Worker success')
-            return { results: data.results || [], source: 'tmdb', method: 'custom_worker' }
+            // Return full response (credits returns cast/crew, search returns results)
+            return { ...data, source: 'tmdb', method: 'custom_worker' }
         }
     } catch (e) {
         console.warn('[TMDB] Custom Worker failed:', e.message)
@@ -234,7 +235,7 @@ async function tryLampaProxy(endpoint) {
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ Lampa Proxy success')
-            return { results: data.results || [], source: 'tmdb', method: 'lampa_proxy' }
+            return { ...data, source: 'tmdb', method: 'lampa_proxy' }
         }
     } catch (e) {
         console.warn('[TMDB] Lampa Proxy failed:', e.message)
@@ -274,9 +275,9 @@ async function tryCapacitorWithDoH(endpoint) {
             readTimeout: 5000
         })
 
-        if (response.data?.results) {
+        if (response.data) {
             console.log('[TMDB] ✅ CapacitorHttp success')
-            return { results: response.data.results, source: 'tmdb', method: ip ? 'capacitor_doh' : 'capacitor_direct' }
+            return { ...response.data, source: 'tmdb', method: ip ? 'capacitor_doh' : 'capacitor_direct' }
         }
     } catch (e) {
         console.warn('[TMDB] CapacitorHttp failed:', e.message)
@@ -297,7 +298,7 @@ async function tryCorsProxy(endpoint) {
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ corsproxy.io success')
-            return { results: data.results || [], source: 'tmdb', method: 'corsproxy' }
+            return { ...data, source: 'tmdb', method: 'corsproxy' }
         }
     } catch (e) {
         console.warn('[TMDB] corsproxy.io failed:', e.message)
@@ -376,29 +377,37 @@ export async function tmdbClient(endpoint, options = {}) {
         }
     }
 
+    // Helper to check if response is valid (works for search, credits, videos)
+    const isValidResponse = (r) => r && (
+        r.results?.length || // search, trending, videos
+        r.cast?.length ||    // credits (cast)
+        r.crew?.length ||    // credits (crew)
+        r.id                 // single item details
+    )
+
     // Try all strategies in order
     let result = null
 
     result = await tryCustomWorker(endpoint)
-    if (result?.results?.length) {
+    if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
         return result
     }
 
     result = await tryLampaProxy(endpoint)
-    if (result?.results?.length) {
+    if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
         return result
     }
 
     result = await tryCapacitorWithDoH(endpoint)
-    if (result?.results?.length) {
+    if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
         return result
     }
 
     result = await tryCorsProxy(endpoint)
-    if (result?.results?.length) {
+    if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
         return result
     }
@@ -406,7 +415,7 @@ export async function tmdbClient(endpoint, options = {}) {
     // Kinopoisk fallback (only for search queries)
     if (searchQuery) {
         result = await tryKinopoisk(searchQuery)
-        if (result?.results?.length) {
+        if (isValidResponse(result)) {
             if (useCache) setCache(endpoint, result, cacheTTL)
             return result
         }
@@ -455,6 +464,52 @@ export async function getPopularTV() {
  */
 export async function getTopRated() {
     const endpoint = '/movie/top_rated?'
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get movie/TV credits (cast and crew)
+ * @param {number} id - TMDB ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<{cast: Array, crew: Array}>}
+ */
+export async function getCredits(id, type = 'movie') {
+    const endpoint = `/${type}/${id}/credits?`
+    try {
+        const result = await tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+        console.log('[tmdbClient] getCredits result:', result)
+        // Credits API returns cast/crew directly, not in results wrapper
+        return {
+            cast: result.cast || result.results?.cast || [],
+            crew: result.crew || result.results?.crew || [],
+            source: result.source,
+            method: result.method
+        }
+    } catch (err) {
+        console.error('[tmdbClient] getCredits error:', err)
+        return { cast: [], crew: [] }
+    }
+}
+
+/**
+ * Get movie/TV videos (trailers, teasers)
+ * @param {number} id - TMDB ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<{results: Array}>}
+ */
+export async function getVideos(id, type = 'movie') {
+    const endpoint = `/${type}/${id}/videos?`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get movie/TV recommendations
+ * @param {number} id - TMDB ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<{results: Array}>}
+ */
+export async function getRecommendations(id, type = 'movie') {
+    const endpoint = `/${type}/${id}/recommendations?`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
