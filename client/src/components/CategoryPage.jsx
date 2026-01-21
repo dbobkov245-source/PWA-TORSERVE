@@ -16,24 +16,36 @@ import { reportBrokenImage } from '../utils/tmdbClient'
 
 const CategoryPage = ({
     categoryId,
-    items = [],
+    items: initialItems = [],
     onItemClick,
     onBack,
     onFocusChange
 }) => {
+    const [displayedItems, setDisplayedItems] = useState(initialItems)
+    const [page, setPage] = useState(1)
+    const [loading, setLoading] = useState(false)
+    const [hasMore, setHasMore] = useState(true)
     const itemRefs = useRef([])
+    const observerTarget = useRef(null)
     const category = DISCOVERY_CATEGORIES.find(c => c.id === categoryId)
+
+    // Reset state when category changes
+    useEffect(() => {
+        setDisplayedItems(initialItems)
+        setPage(1)
+        setHasMore(true)
+    }, [categoryId, initialItems])
 
     // Handle item selection
     const handleSelect = useCallback((index) => {
-        if (onItemClick && items[index]) {
-            onItemClick(items[index])
+        if (onItemClick && displayedItems[index]) {
+            onItemClick(displayedItems[index])
         }
-    }, [items, onItemClick])
+    }, [displayedItems, onItemClick])
 
-    // TV Navigation hook - grid layout (5 columns)
+    // TV Navigation hook
     const { focusedIndex, handleKeyDown, isFocused } = useTVNavigation({
-        itemCount: items.length,
+        itemCount: displayedItems.length,
         columns: 5,
         onSelect: handleSelect,
         itemRefs,
@@ -41,12 +53,76 @@ const CategoryPage = ({
         trapFocus: true
     })
 
-    // Notify parent about focus changes for backdrop
-    useEffect(() => {
-        if (focusedIndex >= 0 && items[focusedIndex] && onFocusChange) {
-            onFocusChange(items[focusedIndex])
+    // Load More Logic
+    const loadMore = useCallback(async () => {
+        if (loading || !hasMore || !category) return
+
+        setLoading(true)
+        try {
+            const nextPage = page + 1
+            console.log(`[CategoryPage] Loading page ${nextPage}...`)
+
+            // Call fetcher with next page
+            const response = await category.fetcher(nextPage)
+            console.log(`[CategoryPage] Loaded ${response?.results?.length} items`)
+
+            if (response && response.results && response.results.length > 0) {
+                // Filter new items (avoid strict dedupe to allow some overlap, but good to filter)
+                // Using filterDiscoveryResults helper if available, or just map
+                // Actually filterDiscoveryResults is exported from tmdbClient? No, discover.js import.
+                // We don't import filterDiscoveryResults here.
+                // It is imported in discover.js used by fetcher? No, fetcher returns raw or processed?
+                // discover.js wrapper returns { items: ... } but fetcher called directly returns raw TMDB response (or processed by wrappers?)
+                // Wait! In discover.js:
+                // fetcher: (page) => getTrending('week', page)
+                // getTrending returns tmdbClient result.
+                // tmdbClient returns { results: [], ... }
+                // So result is valid.
+
+                const newItems = response.results.filter(item => item.poster_path) // Basic filter
+
+                if (newItems.length === 0) {
+                    setHasMore(false)
+                } else {
+                    setDisplayedItems(prev => [...prev, ...newItems])
+                    setPage(nextPage)
+                }
+            } else {
+                setHasMore(false)
+            }
+        } catch (e) {
+            console.error('[CategoryPage] Load error:', e)
+            setHasMore(false)
+        } finally {
+            setLoading(false)
         }
-    }, [focusedIndex, items, onFocusChange])
+    }, [loading, hasMore, page, category])
+
+    // Intersection Observer
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            entries => {
+                if (entries[0].isIntersecting) {
+                    loadMore()
+                }
+            },
+            { threshold: 1.0 }
+        )
+
+        if (observerTarget.current) {
+            observer.observe(observerTarget.current)
+        }
+
+        return () => observer.disconnect()
+    }, [loadMore])
+
+
+    // Notify parent about focus changes
+    useEffect(() => {
+        if (focusedIndex >= 0 && displayedItems[focusedIndex] && onFocusChange) {
+            onFocusChange(displayedItems[focusedIndex])
+        }
+    }, [focusedIndex, displayedItems, onFocusChange])
 
     // Scroll focused item into view
     useEffect(() => {
@@ -88,13 +164,13 @@ const CategoryPage = ({
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                     <span className="text-3xl">{category.icon}</span>
                     {category.name}
-                    <span className="text-gray-500 text-lg font-normal">({items.length})</span>
+                    <span className="text-gray-500 text-lg font-normal">({displayedItems.length})</span>
                 </h1>
             </div>
 
             {/* Grid */}
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
-                {items.map((item, index) => {
+                {displayedItems.map((item, index) => {
                     const posterUrl = getPosterUrl(item)
                     const itemTitle = getTitle(item)
                     const year = getYear(item)
@@ -102,7 +178,7 @@ const CategoryPage = ({
 
                     return (
                         <button
-                            key={item.id || index}
+                            key={item.id + '-' + index} // Use composite key to avoid dupes issues
                             ref={el => itemRefs.current[index] = el}
                             onClick={() => handleSelect(index)}
                             className={`
@@ -161,8 +237,17 @@ const CategoryPage = ({
                 })}
             </div>
 
+            {/* Load More Sentinel */}
+            {hasMore && (
+                <div ref={observerTarget} className="h-20 flex items-center justify-center mt-8">
+                    {loading && (
+                        <div className="w-8 h-8 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+                    )}
+                </div>
+            )}
+
             {/* Empty state */}
-            {items.length === 0 && (
+            {displayedItems.length === 0 && !loading && (
                 <div className="flex flex-col items-center justify-center h-64 text-gray-400">
                     <span className="text-4xl mb-4">📭</span>
                     <p>Нет результатов</p>

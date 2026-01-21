@@ -244,6 +244,29 @@ async function tryLampaProxy(endpoint) {
 }
 
 /**
+ * Strategy 2b (NEW): Self-Hosted Unified Proxy (Lampa Pattern v4.0)
+ * Uses /api/proxy endpoint on our own server (which uses DoH)
+ */
+async function tryServerProxy(endpoint) {
+    try {
+        const targetUrl = `https://api.themoviedb.org/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+        // Automatically determine server URL (relative path works for PWA)
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`
+        console.log('[TMDB] Trying Server Proxy...')
+
+        const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+        if (res.ok) {
+            const data = await res.json()
+            console.log('[TMDB] ✅ Server Proxy success')
+            return { ...data, source: 'tmdb', method: 'server_proxy' }
+        }
+    } catch (e) {
+        console.warn('[TMDB] Server Proxy failed:', e.message)
+    }
+    return null
+}
+
+/**
  * Strategy 3: CapacitorHttp with Client-Side DoH
  * Only works on native Android platform
  */
@@ -400,6 +423,12 @@ export async function tmdbClient(endpoint, options = {}) {
         return result
     }
 
+    result = await tryServerProxy(endpoint)
+    if (isValidResponse(result)) {
+        if (useCache) setCache(endpoint, result, cacheTTL)
+        return result
+    }
+
     result = await tryCapacitorWithDoH(endpoint)
     if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
@@ -438,32 +467,32 @@ export async function searchMulti(query) {
 /**
  * Get trending content
  */
-export async function getTrending(timeWindow = 'week') {
-    const endpoint = `/trending/all/${timeWindow}?`
+export async function getTrending(timeWindow = 'week', page = 1) {
+    const endpoint = `/trending/all/${timeWindow}?page=${page}`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
 /**
  * Get popular movies
  */
-export async function getPopularMovies() {
-    const endpoint = '/movie/popular?'
+export async function getPopularMovies(page = 1) {
+    const endpoint = `/movie/popular?page=${page}`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
 /**
  * Get popular TV shows
  */
-export async function getPopularTV() {
-    const endpoint = '/tv/popular?'
+export async function getPopularTV(page = 1) {
+    const endpoint = `/tv/popular?page=${page}`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
 /**
  * Get top rated movies
  */
-export async function getTopRated() {
-    const endpoint = '/movie/top_rated?'
+export async function getTopRated(page = 1) {
+    const endpoint = `/movie/top_rated?page=${page}`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
@@ -510,6 +539,16 @@ export async function getVideos(id, type = 'movie') {
  */
 export async function getRecommendations(id, type = 'movie') {
     const endpoint = `/${type}/${id}/recommendations?`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get full details (including seasons for TV)
+ * @param {number} id - TMDB ID
+ * @param {string} type - 'movie' or 'tv'
+ */
+export async function getDetails(id, type = 'movie') {
+    const endpoint = `/${type}/${id}?append_to_response=external_ids`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 

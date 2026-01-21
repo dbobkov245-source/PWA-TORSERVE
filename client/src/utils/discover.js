@@ -22,18 +22,23 @@ import {
 // ─── Discovery Categories (Lampa-style) ────────────────────────
 
 // Fetch helpers for new endpoints
-const fetchNowPlaying = () => tmdbClient('/movie/now_playing?', { cacheTTL: 10 * 60 * 1000 })
-const fetchTrendingDay = () => tmdbClient('/trending/movie/day?', { cacheTTL: 10 * 60 * 1000 })
-const fetchUpcoming = () => tmdbClient('/movie/upcoming?', { cacheTTL: 10 * 60 * 1000 })
-const fetchTopTV = () => tmdbClient('/tv/top_rated?', { cacheTTL: 10 * 60 * 1000 })
+const fetchNowPlaying = (page = 1) => tmdbClient(`/movie/now_playing?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchTrendingDay = (page = 1) => tmdbClient(`/trending/movie/day?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchUpcoming = (page = 1) => tmdbClient(`/movie/upcoming?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchTopTV = (page = 1) => tmdbClient(`/tv/top_rated?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchGenre = (id, page = 1) => tmdbClient(`/discover/movie?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 
 export const DISCOVERY_CATEGORIES = [
     { id: 'now_playing', name: 'Сейчас смотрят', icon: '🎬', fetcher: fetchNowPlaying },
     { id: 'trending_day', name: 'Тренды дня', icon: '📈', fetcher: fetchTrendingDay },
-    { id: 'trending', name: 'Тренды недели', icon: '🔥', fetcher: getTrending },
+    { id: 'genre_28', name: 'Боевики', icon: '👊', fetcher: (page) => fetchGenre(28, page) },
+    { id: 'trending', name: 'Тренды недели', icon: '🔥', fetcher: (page) => getTrending('week', page) },
+    { id: 'genre_35', name: 'Комедии', icon: '😂', fetcher: (page) => fetchGenre(35, page) },
     { id: 'upcoming', name: 'Скоро в кино', icon: '📅', fetcher: fetchUpcoming },
     { id: 'movies', name: 'Популярные фильмы', icon: '⭐', fetcher: getPopularMovies },
+    { id: 'genre_878', name: 'Фантастика', icon: '👽', fetcher: (page) => fetchGenre(878, page) },
     { id: 'tv', name: 'Популярные сериалы', icon: '📺', fetcher: getPopularTV },
+    { id: 'genre_16', name: 'Мультфильмы', icon: '🎨', fetcher: (page) => fetchGenre(16, page) },
     { id: 'top', name: 'Топ фильмов', icon: '🏆', fetcher: getTopRated },
     { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', fetcher: fetchTopTV }
 ]

@@ -14,9 +14,10 @@
 
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
+import { Browser } from '@capacitor/browser'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery } from '../utils/discover'
 import { getGenresForItem } from '../utils/genres'
-import { reportBrokenImage, getCredits, getVideos, getImageUrl } from '../utils/tmdbClient'
+import { reportBrokenImage, getCredits, getVideos, getImageUrl, getDetails } from '../utils/tmdbClient'
 
 const MovieDetail = ({
     item,
@@ -31,6 +32,7 @@ const MovieDetail = ({
     // Extended info state (LAMPA-style)
     const [directors, setDirectors] = useState([])
     const [cast, setCast] = useState([])
+    const [seasons, setSeasons] = useState([])
     const [trailer, setTrailer] = useState(null)
     const [loadingExtra, setLoadingExtra] = useState(true)
 
@@ -53,6 +55,8 @@ const MovieDetail = ({
         onSearch?.(query)
     }, [item, onSearch])
 
+    const trailerButtonRef = useRef(null)
+
     // Keyboard navigation
     const handleKeyDown = useCallback((e) => {
         switch (e.key) {
@@ -70,13 +74,32 @@ const MovieDetail = ({
                     backButtonRef.current?.focus()
                 }
                 break
+            case 'ArrowUp':
+                if (trailer) {
+                    e.preventDefault()
+                    if (focusedButton === 'search' || focusedButton === 'back') {
+                        setFocusedButton('trailer')
+                        trailerButtonRef.current?.focus()
+                    }
+                }
+                break
+            case 'ArrowDown':
+                if (focusedButton === 'trailer') {
+                    e.preventDefault()
+                    setFocusedButton('search')
+                    searchButtonRef.current?.focus()
+                }
+                break
             case 'Enter':
             case ' ':
                 e.preventDefault()
                 if (focusedButton === 'search') {
                     handleSearch()
-                } else {
+                } else if (focusedButton === 'back') {
                     onBack?.()
+                } else if (focusedButton === 'trailer') {
+                    // Open YouTube trailer
+                    Browser.open({ url: `https://www.youtube.com/watch?v=${trailer.key}` })
                 }
                 break
             case 'Escape':
@@ -87,7 +110,7 @@ const MovieDetail = ({
                 onBack?.()
                 break
         }
-    }, [focusedButton, handleSearch, onBack])
+    }, [focusedButton, handleSearch, onBack, trailer])
 
     // Capacitor hardware back button (Android TV remote)
     useEffect(() => {
@@ -108,6 +131,12 @@ const MovieDetail = ({
         const loadExtendedInfo = async () => {
             setLoadingExtra(true)
             try {
+                // Load full details (for seasons)
+                const details = await getDetails(item.id, mediaType)
+                if (details && mediaType === 'tv') {
+                    setSeasons(details.seasons || [])
+                }
+
                 // Load credits
                 const creditsData = await getCredits(item.id, mediaType)
                 const directorsList = creditsData.crew?.filter(p => p.job === 'Director') || []
@@ -250,6 +279,50 @@ const MovieDetail = ({
                             </p>
                         </div>
 
+                        {/* Seasons List (LAMPA-style) */}
+                        {seasons.length > 0 && (
+                            <div className="mt-6">
+                                <h3 className="text-lg font-bold text-white mb-3">
+                                    📺 Сезоны ({seasons.length})
+                                </h3>
+                                <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+                                    {seasons.filter(s => s.season_number > 0).map((season) => (
+                                        <button
+                                            key={season.id}
+                                            onClick={() => {
+                                                const query = `${title} Season ${season.season_number}`
+                                                console.log('[MovieDetail] Searching Season:', query)
+                                                onSearch?.(query)
+                                            }}
+                                            className="flex-shrink-0 group relative rounded-lg overflow-hidden transition-all
+                                                     focus:outline-none focus:ring-4 focus:ring-blue-500 focus:scale-105"
+                                            style={{ width: '130px', aspectRatio: '2/3' }}
+                                        >
+                                            <div className="absolute inset-0 bg-gray-800" />
+                                            {season.poster_path ? (
+                                                <img
+                                                    src={getPosterUrl(season)}
+                                                    alt={season.name}
+                                                    className="w-full h-full object-cover group-hover:opacity-80 transition-opacity"
+                                                    loading="lazy"
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center bg-gray-700">
+                                                    <span className="text-3xl">📺</span>
+                                                </div>
+                                            )}
+
+                                            {/* Season Badge */}
+                                            <div className="absolute bottom-0 left-0 right-0 bg-black/80 p-2 text-center">
+                                                <div className="text-white font-bold text-sm">{season.name}</div>
+                                                <div className="text-gray-400 text-xs">{season.episode_count} эп.</div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Directors (LAMPA-style) */}
                         {directors.length > 0 && (
                             <div className="mt-4">
@@ -298,15 +371,16 @@ const MovieDetail = ({
                         {/* Trailer button */}
                         {trailer && (
                             <div className="mt-4">
-                                <a
-                                    href={`https://www.youtube.com/watch?v=${trailer.key}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                <button
+                                    ref={trailerButtonRef}
+                                    onClick={() => Browser.open({ url: `https://www.youtube.com/watch?v=${trailer.key}` })}
+                                    onFocus={() => setFocusedButton('trailer')}
                                     className="inline-flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-500 
-                                             text-white rounded-lg transition-all text-sm"
+                                             text-white rounded-lg transition-all text-sm
+                                             focus:outline-none focus:ring-4 focus:ring-red-400 focus:scale-105"
                                 >
                                     ▶️ Смотреть трейлер
-                                </a>
+                                </button>
                             </div>
                         )}
 

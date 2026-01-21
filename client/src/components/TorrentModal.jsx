@@ -51,17 +51,22 @@ const TorrentModal = ({
     useEffect(() => {
         if (!torrent) return
 
-        // Save the previously focused element
-        previouslyFocusedRef.current = document.activeElement
+        // Save the previously focused element ONLY if not already saved (to avoid capturing internal focus)
+        if (!previouslyFocusedRef.current) {
+            previouslyFocusedRef.current = document.activeElement
+        }
 
-        // Focus the Play button when modal opens
+        // Focus the Play button when modal opens (only once)
         const timer = setTimeout(() => {
-            playBtnRef.current?.focus()
+            // Only focus if no other element in modal is already focused
+            if (!modalRef.current?.contains(document.activeElement)) {
+                playBtnRef.current?.focus()
+            }
         }, 50)
 
         // Handle Tab and Escape
         const handleKeyDown = (e) => {
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' || e.key === 'Backspace') {
                 e.preventDefault()
                 e.stopPropagation()
                 onClose()
@@ -105,7 +110,7 @@ const TorrentModal = ({
                 previouslyFocusedRef.current.focus()
             }
         }
-    }, [torrent, onClose])
+    }, []) // Empty dependency array = Run Once on Mount
 
     if (!torrent) return null
 

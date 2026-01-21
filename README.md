@@ -1,84 +1,115 @@
-# 📺 PWA-TorServe
-**Self-Healing Streaming Torrent Server for Home**
+# 🍿 PWA-TorServe v4.0
+**The Ultimate Self-Hosted Streaming Gateway**
 
-Listen to audiobooks, watch movies and TV shows **online without full downloading** on Android TV, phone, browser, or any device. Works on Synology NAS, Raspberry Pi, home server, or in Docker. Starts in seconds.
+> *Turns your NAS into a private Netflix-class streaming service.*
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![React](https://img.shields.io/badge/React-19-blue)](https://react.dev) [![Status](https://img.shields.io/badge/Status-Stable-green)](https://github.com/bobmark/pwa-torserve)
 
-### ✨ Why PWA-TorServe?
-- **Instant Start** — Video plays in 5–10 seconds (even 4K HDR)
-- **Self-Healing** — Watchdog + Circuit Breaker + RAM monitoring to prevent crashes
-- **Turbo Mode** — Automatically boosts connections during playback
-- **Smart Priority** — Prioritizes first video chunks for instant start
-- **Native Players** — Vimu, VLC, MX Player launch directly from PWA (Capacitor)
-- **TV-Friendly UI** — Netflix-like interface with remote control/focus support
-- **Docker-First** — Single `docker-compose up` → ready on NAS
-
-### 🚀 Features
-| Feature | Description |
-| :--- | :--- |
-| 📺 **Streaming** | Stream without full download (torrent-stream + on-demand priority) |
-| 🔍 **Multi-Source Search** | Parallel search: Jacred (mirrors) + RuTracker (DoH) + Rutor + TorLook |
-| 🎬 **Turbo & Priority** | Auto-boost peers + prioritize required chunks for playback start |
-| 🖼️ **Posters & Metadata** | TMDB/Kinopoisk with DoH bypass for blocks |
-| 📋 **M3U Playlist** | For Kodi, Plex, VLC integration |
-| 🧠 **Aggregator** | Promise.allSettled + deduplication + 5m search cache |
-| 🛡️ **Hardening** | Circuit Breaker per provider + persistent sessions + Watchdog |
-| ⚡ **PWA + Native** | Installable as an app on Android TV/Phone |
-| 📥 **Auto-Downloader v2** | Multi-source tracking with customizable rules and smart candidate selection |
-| 🎮 **TV Remote Support** | Full D-pad navigation with focus trap in modals |
-
-### 🛠 Tech Stack
-- **Backend**: Node.js, Express, torrent-stream, lowdb
-- **Frontend**: React 19, Vite 7, TailwindCSS 4
-- **Mobile/TV**: Capacitor 6 (APK + native intents)
-- **DevOps**: Docker multi-stage, docker-compose
-- **Bypass**: DoH, insecureAgent, Cloudflare Worker (optional)
-
-### 📦 Installation (1 Minute)
-**Docker (Synology / Raspberry Pi / Any NAS)**
-```bash
-# Create download folder
-mkdir -p /volume1/docker/pwa-torserve/downloads
-
-# Start container
-docker-compose up -d
-```
-
-**Access:** `http://your-nas-ip:3000`
-
-### 📱 Android TV / Mobile Client
-1. Open `http://your-nas-ip:3000` in Chrome
-2. Tap "Add to Home Screen" (PWA)
-3. **Or build native APK:**
-   ```bash
-   cd client && npm install && npm run build
-   npx cap sync
-   cd android && ./gradlew assembleDebug
-   ```
-
-### ⚡ Usage
-1. Open the app
-2. Paste **magnet link** → **Add**
-3. Wait for metadata (5-10 sec)
-4. Press **▶ WATCH** → Video opens in Vimu/VLC/MX Player
-
-### ❓ FAQ
-**Q: Does it work on Android TV?**
-A: Yes! Use the PWA or build the APK. Supports Vimu/VLC/MX Player via native intents.
-
-**Q: How much RAM is needed?**
-A: 512MB–1GB is sufficient. The watchdog prevents OOM issues.
-
-**Q: TMDB is blocked?**
-A: Use Cloudflare Worker or Kinopoisk API (see `.env.example`).
+PWA-TorServe is a **middleware** that bridges the gap between torrent networks and your TV. It aggregates search results, bypasses censorship, and streams content directly to your favorite player (Vimu, MX Player, VLC) with a **premium cinematic interface**.
 
 ---
 
-### 📄 License
-MIT License — Free to use, modify, and distribute.
+## ✨ What's New in v4.0?
 
-### ❤️ Contribute
-If this project helped you, please star it on GitHub!
+🚀 **Cinematic Experience**
+- **Infinite Scroll**: Endless feed of movies and TV shows.
+- **Season Selector**: Dedicated UI for browsing TV show seasons.
+- **Transform Scrolling**: Silky smooth 60fps navigation on low-end TV boxes.
+- **Deep Integration**: Two-way sync with Vimu/MX Player (Auto-play next episode, Resume playback).
 
-**Made with ❤️ for home cinema.**
+🛡️ **Operation "Unstoppable"**
+- **5-Level Anti-Censorship Cascade**:
+  1. Custom Worker
+  2. Public Proxy
+  3. **Client-Side DoH** (Bypasses DNS poisoning)
+  4. Corsproxy.io
+  5. Kinopoisk Fallback
+
+---
+
+## 🚀 Key Features
+
+### 📺 The Interface
+- **Remote Control First**: Fully navigable with a standard D-Pad remote.
+- **Focus Centering**: Apple TV-style scrolling keeps the active item centered.
+- **Dynamic Backdrops**: Background changes instantly as you browse.
+- **Smart Metadata**: 4K/HDR/HEVC badges, ratings, and cast info.
+
+### ⚡ The Engine
+- **Aggregator**: Searches Jacred, RuTracker, Rutor, and TorLook in parallel.
+- **Torrent Stream**: Starts playing in 5-10 seconds without waiting for download.
+- **Auto-Boost**: Prioritizes sequential chunks for instant playback.
+- **Self-Healing**: Built-in Circuit Breaker and Watchdog prevent crashes.
+
+### 📲 The Client (APK)
+- **Native Android TV App**: Built with Capacitor 6.
+- **Voice Search**: Integrated with Android Speech Recognition.
+- **No Backend Dependency**: Metadata fetching happens entirely on the client (Zero-Cost Architecture).
+
+---
+
+## 🛠 Tech Stack
+
+- **Frontend**: React 19, Vite 7, TailwindCSS 4, Framer Motion
+- **Mobile/TV**: Capacitor 6 (Native Java Plugins for Player Integration)
+- **Backend**: Node.js, Express, torrent-stream
+- **DevOps**: Docker, Docker Compose
+
+---
+
+## 📦 Installation
+
+### Option 1: Docker (Recommended)
+Run on your Synology NAS, Raspberry Pi, or VPS.
+
+```bash
+# 1. Create directory
+mkdir -p pwa-torserve/downloads
+cd pwa-torserve
+
+# 2. Download docker-compose.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/bobmark/pwa-torserve/main/docker-compose.yml
+
+# 3. Start
+docker-compose up -d
+```
+
+Access at: `http://your-nas-ip:3000`
+
+### Option 2: Android TV Client (APK)
+To get the full experience (Voice Search, Deep Player Integration), install the APK.
+
+1. **Build it yourself**:
+   ```bash
+   cd client
+   npm install && npm run build
+   npx cap sync
+   cd android && ./gradlew assembleDebug
+   ```
+2. **Install**: Copy `app-debug.apk` to your TV and install.
+
+---
+
+## 🎮 Usage Guide
+
+1. **Home Screen**: Browse "Trending", "Popular", or "Top Rated".
+2. **Search**: Use the onscreen keyboard or **Voice Search** button.
+3. **Select**: Click a movie card.
+   - For TV Shows: Select a Season first.
+4. **Resilience**: If a provider fails (e.g., Rutor), the system auto-switches to others.
+5. **Playback**: Click **"Найти торренты"** -> Select a release -> **Play**.
+   - *Pro Tip:* If you have Vimu installed, it will auto-mark watched episodes.
+
+---
+
+## 🛡️ Privacy & Security
+- **No Tracking**: We don't collect logs.
+- **Client-Side Processing**: All metadata requests go directly from your device to TMDB/Proxy.
+- **Clean Traffic**: DoH ensures your ISP can't snoop on your DNS requests.
+
+---
+
+## 📄 License
+MIT License. Free forever.
+
+Made with ❤️ for the Home Cinema community.

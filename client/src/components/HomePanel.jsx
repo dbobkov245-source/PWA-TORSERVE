@@ -14,6 +14,7 @@ import HomeRow from './HomeRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import { fetchAllDiscovery, getBackdropUrl, getTitle, getSearchQuery, DISCOVERY_CATEGORIES } from '../utils/discover'
+import { contentRowsRegistry } from '../utils/ContentRowsRegistry'
 
 const HomePanel = ({ onSearch, onClose }) => {
     const [categories, setCategories] = useState({})
@@ -24,20 +25,30 @@ const HomePanel = ({ onSearch, onClose }) => {
     const [focusedItem, setFocusedItem] = useState(null)
     const [activeCategoryId, setActiveCategoryId] = useState(null) // For full category view
     const [selectedItem, setSelectedItem] = useState(null) // For movie detail view
+    const [visibleRows, setVisibleRows] = useState([])
 
-    // Fetch all discovery categories on mount
+    // Initialize Registry and Fetch Discovery
     useEffect(() => {
         const loadDiscovery = async () => {
             setLoading(true)
             setError(null)
 
             try {
+                // 1. Initialize Registry with default categories (Phase 4.1)
+                contentRowsRegistry.init(DISCOVERY_CATEGORIES)
+
+                // 2. Fetch data (Unified fetcher for now)
                 const data = await fetchAllDiscovery()
                 setCategories(data)
 
-                // Set initial backdrop from first trending item
-                if (data.trending?.items?.[0]) {
-                    const firstItem = data.trending.items[0]
+                // 3. Get ordered rows from registry
+                const rows = contentRowsRegistry.getAll()
+                setVisibleRows(rows)
+
+                // Set initial backdrop from first row's first item
+                const firstRowId = rows[0]?.id
+                if (firstRowId && data[firstRowId]?.items?.[0]) {
+                    const firstItem = data[firstRowId].items[0]
                     setBackdrop(getBackdropUrl(firstItem))
                     setFocusedItem(firstItem)
                 }
@@ -51,6 +62,8 @@ const HomePanel = ({ onSearch, onClose }) => {
 
         loadDiscovery()
     }, [])
+
+    // ... handler functions unchanged ...
 
     // Handle item click — open movie detail
     const handleItemClick = useCallback((item) => {
@@ -94,27 +107,16 @@ const HomePanel = ({ onSearch, onClose }) => {
         // Disable global navigation if viewing detail or category page
         if (selectedItem || activeCategoryId) return
 
-        const categoryIds = DISCOVERY_CATEGORIES.map(c => c.id)
-        const rowCount = categoryIds.length
+        const rowCount = visibleRows.length
 
         switch (e.key) {
-            case 'ArrowDown':
-                e.preventDefault()
-                setFocusedRowIndex(prev => Math.min(prev + 1, rowCount - 1))
-                break
-            case 'ArrowUp':
-                if (focusedRowIndex > 0) {
-                    e.preventDefault()
-                    setFocusedRowIndex(prev => prev - 1)
-                }
-                break
             case 'Escape':
             case 'Backspace':
                 e.preventDefault()
                 if (onClose) onClose()
                 break
         }
-    }, [focusedRowIndex, onClose, selectedItem, activeCategoryId])
+    }, [onClose, selectedItem, activeCategoryId])
 
     // Validates scroll position when row changes
     useEffect(() => {
@@ -130,9 +132,9 @@ const HomePanel = ({ onSearch, onClose }) => {
         return () => document.removeEventListener('keydown', handleKeyDown)
     }, [handleKeyDown])
 
-    // Get ordered categories
-    const orderedCategories = DISCOVERY_CATEGORIES
-        .map(cat => categories[cat.id])
+    // Get ordered categories data mapping
+    const orderedCategories = visibleRows
+        .map(row => categories[row.id])
         .filter(Boolean)
 
     // If viewing movie detail, show MovieDetail
@@ -238,7 +240,7 @@ const HomePanel = ({ onSearch, onClose }) => {
                     <div className="space-y-2">
                         {orderedCategories.map((category, index) => (
                             <HomeRow
-                                key={category.id}
+                                key={category.id || index}
                                 title={category.name}
                                 icon={category.icon}
                                 categoryId={category.id}
@@ -246,8 +248,6 @@ const HomePanel = ({ onSearch, onClose }) => {
                                 onItemClick={handleItemClick}
                                 onFocusChange={handleFocusChange}
                                 onMoreClick={handleMoreClick}
-                                isRowFocused={focusedRowIndex === index}
-                                rowIndex={index}
                             />
                         ))}
                     </div>

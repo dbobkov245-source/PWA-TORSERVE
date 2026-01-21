@@ -227,6 +227,9 @@ app.get('/api/status', (req, res) => {
 
 // API: TMDB Proxy with DoH bypass
 import { smartFetch, insecureAgent } from './utils/doh.js'
+import proxyRouter from './routes/proxy.js'
+
+app.use('/api/proxy', proxyRouter)
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY || ''
 
@@ -234,6 +237,8 @@ app.get('/api/tmdb/search', async (req, res) => {
     const { query } = req.query
     if (!query) return res.status(400).json({ error: 'Query required' })
 
+    // Redirect simple search to new proxy if needed, OR keep logic for backward compatibility
+    // For now, keeping legacy logic but using smartFetch (which is already implemented)
     try {
         const url = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`
         const response = await smartFetch(url)
@@ -245,6 +250,8 @@ app.get('/api/tmdb/search', async (req, res) => {
 })
 
 app.get('/api/tmdb/image/:size/:path', async (req, res) => {
+    // Legacy image proxy - keeping for backward compatibility
+    // New code should use /api/proxy?url=...
     const { size, path: imagePath } = req.params
     try {
         const url = `https://image.tmdb.org/t/p/${size}/${imagePath}`

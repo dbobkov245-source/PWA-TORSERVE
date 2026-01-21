@@ -320,8 +320,31 @@ function App() {
     setSelectedTorrent(null)
 
     try {
-      await TVPlayer.play({ url: streamUrl, package: pkg, title: title })
+      const result = await TVPlayer.play({
+        url: streamUrl,
+        package: pkg,
+        title: title,
+        position: 0 // TODO: Add resume support from localStorage
+      })
+
       setBuffering(null)
+      console.log('[Play] Result:', result)
+
+      // Auto-play next episode if finished naturally
+      if (result && result.finished && nextFile) {
+        console.log('[Play] Auto-playing next episode:', nextFile.name)
+        // Check "Auto-Play" setting? For now, just do it or show toast.
+        // We'll add a small delay to allow UI to breathe
+        setTimeout(() => {
+          handlePlay(infoHash, nextFile.index, nextFile.name)
+        }, 1000)
+      } else if (result && result.position > 0) {
+        // Save progress (could be stored in separate 'watch_history')
+        const progressData = { ...playData, position: result.position, duration: result.duration }
+        localStorage.setItem('lastPlayed', JSON.stringify(progressData))
+        setLastPlayed(progressData)
+      }
+
     } catch (e) {
       console.error(`[Play] Failed with ${pkg}, trying system chooser...`)
       try {
@@ -385,21 +408,25 @@ function App() {
   }
 
   // ─── Search (API v2 with Aggregator) ───
-  const searchRuTracker = async () => {
-    if (!searchQuery.trim()) return
+  // Refactored to accept query override (for "Find Torrents" auto-search)
+  const searchRuTracker = async (overrideQuery) => {
+    const query = typeof overrideQuery === 'string' ? overrideQuery : searchQuery
+    if (!query || !query.trim()) return
+
     setSearchLoading(true)
-    setSearchResults([])
+    setSearchResults([]) // Clear previous results immediately
     setSearchProviders({})
+
     try {
       // API v2: Uses Aggregator with envelope response
-      const res = await fetch(getApiUrl(`/api/v2/search?query=${encodeURIComponent(searchQuery)}&limit=100`))
+      const res = await fetch(getApiUrl(`/api/v2/search?query=${encodeURIComponent(query)}&limit=100`))
       const data = await res.json()
       setSearchResults(data.items || [])
       setSearchProviders(data.meta?.providers || {})
 
       // Log search stats
       if (data.meta) {
-        console.log(`[Search] ${data.meta.totalResults} results in ${data.meta.ms}ms (cached: ${data.meta.cached})`)
+        console.log(`[Search] ${data.meta.totalResults} results for "${query}" in ${data.meta.ms}ms`)
       }
     } catch (err) {
       console.error('[Search] Error:', err)
@@ -626,8 +653,8 @@ function App() {
             setSearchQuery(query)
             setActiveView('list')
             setShowSearch(true)
-            // Trigger search after state update
-            setTimeout(() => searchRuTracker(), 100)
+            // Trigger search immediately with the new query
+            searchRuTracker(query)
           }}
           onClose={() => setActiveView('list')}
         />
