@@ -56,12 +56,40 @@ export async function fetchAllDiscovery() {
     const categoryResults = await Promise.all(
         DISCOVERY_CATEGORIES.map(async (category) => {
             try {
-                const response = await category.fetcher()
+                let page = 1
+                let response = await category.fetcher(page)
+                let items = filterDiscoveryResults(response.results || [])
+                const source = response.source
+                const method = response.method
+
+                // Fetch more pages if we don't have enough items (up to 4 pages max)
+                while (items.length < 20 && page < 4) {
+                    try {
+                        page++
+                        const responseNext = await category.fetcher(page)
+                        const itemsNext = filterDiscoveryResults(responseNext.results || [])
+
+                        // Merge avoiding duplicates
+                        const existingIds = new Set(items.map(i => i.id))
+                        const uniqueNewItems = itemsNext.filter(i => !existingIds.has(i.id))
+
+                        if (uniqueNewItems.length === 0) break
+
+                        items = [...items, ...uniqueNewItems]
+                    } catch (e2) {
+                        console.warn(`[Discovery] Page ${page} fetch failed for ${category.id}`, e2)
+                        break
+                    }
+                }
+
+                // Limit to 20 items per row
+                items = items.slice(0, 20)
+
                 return {
                     category,
-                    items: filterDiscoveryResults(response.results || []),
-                    source: response.source,
-                    method: response.method
+                    items,
+                    source,
+                    method
                 }
             } catch (e) {
                 console.error(`[Discovery] Failed to fetch ${category.id}:`, e)

@@ -77,20 +77,38 @@ export const formatGenres = (ids, limit = 2) => {
  * @param {Object} item - Movie/TV item
  * @returns {string[]} Array of genre names
  */
-export const getGenresForItem = (item) => {
+/**
+ * Get genre objects for a movie/tv item
+ * @param {Object} item - Movie/TV item
+ * @returns {Array<{id: number, name: string}>} Array of genre objects
+ */
+export const getGenreObjectsForItem = (item) => {
     if (!item) return []
 
     // If item has genre_ids (common in list responses)
     if (item.genre_ids && Array.isArray(item.genre_ids)) {
-        return getGenreNames(item.genre_ids)
+        return item.genre_ids
+            .map(id => ({ id, name: GENRES[id] }))
+            .filter(g => g.name)
     }
 
     // If item has genres array (common in detail responses)
+    // TMDB returns objects { id, name }
     if (item.genres && Array.isArray(item.genres)) {
-        return item.genres.map(g => g.name || g)
+        return item.genres.map(g => ({
+            id: g.id,
+            name: g.name || GENRES[g.id]
+        })).filter(g => g.name)
     }
 
     return []
+}
+
+export const getGenresForItem = (item) => {
+    if (!item) return []
+
+    const objects = getGenreObjectsForItem(item)
+    return objects.map(g => g.name)
 }
 
 export default GENRES

@@ -57,6 +57,9 @@ public class TVPlayer extends Plugin {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(Uri.parse(url), "video/*");
+            // AND-01: Prevent double chooser and activity stacking
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
             if (packageName != null && !packageName.isEmpty()) {
                 intent.setPackage(packageName);
@@ -126,6 +129,9 @@ public class TVPlayer extends Plugin {
             }
 
             Intent intent = new Intent(Intent.ACTION_VIEW);
+            // AND-01: Prevent double chooser
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             intent.putExtra("return_result", true); // Request result
 
             if (packageName != null && packageName.contains("gtvbox")) {

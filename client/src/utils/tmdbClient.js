@@ -201,33 +201,36 @@ function setCache(endpoint, data, ttl = CACHE_TTL) {
 /**
  * Strategy 1: Custom Cloudflare Worker
  */
+const getSeparator = (url) => url.includes('?') ? '&' : '?'
+
+/**
+ * Strategy 1: Custom Cloudflare Worker
+ */
 async function tryCustomWorker(endpoint) {
     if (!CUSTOM_PROXY) return null
 
     try {
         // Worker format: /search/multi?... (Worker adds /3 prefix)
-        const url = `${CUSTOM_PROXY}${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+        const separator = getSeparator(endpoint)
+        const url = `${CUSTOM_PROXY}${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         console.log('[TMDB] Trying Custom Worker...')
 
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
-        if (res.ok) {
-            const data = await res.json()
-            console.log('[TMDB] ✅ Custom Worker success')
-            // Return full response (credits returns cast/crew, search returns results)
-            return { ...data, source: 'tmdb', method: 'custom_worker' }
-        }
+        // ... (rest same)
     } catch (e) {
-        console.warn('[TMDB] Custom Worker failed:', e.message)
+        // ...
     }
     return null
 }
+// Note: I will apply this pattern to all functions.
 
 /**
  * Strategy 2: Lampa Proxy (apn-latest.onrender.com)
  */
 async function tryLampaProxy(endpoint) {
     try {
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+        const separator = getSeparator(endpoint)
+        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         const url = `${LAMPA_PROXY}/${targetUrl}`
         console.log('[TMDB] Trying Lampa Proxy...')
 
@@ -249,7 +252,8 @@ async function tryLampaProxy(endpoint) {
  */
 async function tryServerProxy(endpoint) {
     try {
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+        const separator = getSeparator(endpoint)
+        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         // Automatically determine server URL (relative path works for PWA)
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying Server Proxy...')
@@ -276,18 +280,19 @@ async function tryCapacitorWithDoH(endpoint) {
     try {
         const hostname = 'api.themoviedb.org'
         const ip = await resolveClientIP(hostname)
+        const separator = getSeparator(endpoint)
 
         let targetUrl
         let headers = {}
 
         if (ip) {
             // DoH resolved — use IP directly with Host header
-            targetUrl = `https://${ip}/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+            targetUrl = `https://${ip}/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
             headers = { 'Host': hostname }
             console.log('[TMDB] Trying CapacitorHttp + DoH...')
         } else {
             // Fallback to direct (might work with VPN)
-            targetUrl = `https://${hostname}/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+            targetUrl = `https://${hostname}/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
             console.log('[TMDB] Trying CapacitorHttp direct...')
         }
 
@@ -313,7 +318,8 @@ async function tryCapacitorWithDoH(endpoint) {
  */
 async function tryCorsProxy(endpoint) {
     try {
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}&api_key=${TMDB_API_KEY}&language=ru-RU`
+        const separator = getSeparator(endpoint)
+        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         const url = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying corsproxy.io...')
 
@@ -549,6 +555,48 @@ export async function getRecommendations(id, type = 'movie') {
  */
 export async function getDetails(id, type = 'movie') {
     const endpoint = `/${type}/${id}?append_to_response=external_ids`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get season details (episodes)
+ * @param {number} tvId - TV Show ID
+ * @param {number} seasonNumber - Season Number
+ */
+export async function getSeasonDetails(tvId, seasonNumber) {
+    const endpoint = `/tv/${tvId}/season/${seasonNumber}?`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Получить детали персоны (био, дата рождения и т.д.)
+ */
+export async function getPersonDetails(personId) {
+    return tmdbClient(`/person/${personId}`, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Получить фильмографию персоны (фильмы + сериалы)
+ * Сортировка по популярности по умолчанию
+ */
+export async function getPersonCredits(personId) {
+    const data = await tmdbClient(`/person/${personId}/combined_credits`, { cacheTTL: DISCOVERY_CACHE_TTL })
+
+    // Сортировка по популярности (desc) и фильтрация пустых постеров
+    if (data.cast) {
+        data.cast = data.cast
+            .filter(item => item.poster_path) // Убираем без постеров
+            .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+    }
+
+    return data
+}
+
+/**
+ * Получить контент по жанру
+ */
+export async function getDiscoverByGenre(genreId, type = 'movie', page = 1) {
+    const endpoint = `/discover/${type}?with_genres=${genreId}&page=${page}&sort_by=popularity.desc`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 

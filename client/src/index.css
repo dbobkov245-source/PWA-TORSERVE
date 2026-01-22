@@ -124,6 +124,29 @@ button:focus,
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Season Card (TV Focus)
+   ───────────────────────────────────────────────────────────── */
+.season-card {
+  transition: all 0.2s ease-out;
+  cursor: pointer;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.season-card:focus {
+  outline: none;
+  transform: scale(1.05);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.8), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  z-index: 20;
+}
+
+.season-card:focus img {
+  opacity: 1 !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
    Torrent Card
    ───────────────────────────────────────────────────────────── */
 

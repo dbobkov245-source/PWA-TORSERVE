@@ -2,7 +2,7 @@
  * PWA-TorServe - Main Application
  * Refactored for maintainability - components extracted to /components
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { registerPlugin } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
@@ -95,6 +95,7 @@ function App() {
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
   const [buffering, setBuffering] = useState(null)
+  const isPlayingRef = useRef(false) // BUG-A: useRef for synchronous guard (useState is async)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
 
   // State: Server Health
@@ -279,6 +280,13 @@ function App() {
 
   // ─── Playback ───
   const handlePlay = async (infoHash, fileIndex, fileName) => {
+    // BUG-A: Guard against double intent using ref for synchronous check
+    if (isPlayingRef.current) {
+      console.log('[Play] Already playing, skipping duplicate call')
+      return
+    }
+    isPlayingRef.current = true
+
     const streamUrl = getStreamUrl(infoHash, fileIndex)
     const title = cleanTitle(fileName)
     const pkg = preferredPlayer
@@ -335,6 +343,7 @@ function App() {
         console.log('[Play] Auto-playing next episode:', nextFile.name)
         // Check "Auto-Play" setting? For now, just do it or show toast.
         // We'll add a small delay to allow UI to breathe
+        isPlayingRef.current = false // Reset before auto-play
         setTimeout(() => {
           handlePlay(infoHash, nextFile.index, nextFile.name)
         }, 1000)
@@ -343,17 +352,16 @@ function App() {
         const progressData = { ...playData, position: result.position, duration: result.duration }
         localStorage.setItem('lastPlayed', JSON.stringify(progressData))
         setLastPlayed(progressData)
+        isPlayingRef.current = false // Reset after completion
+      } else {
+        isPlayingRef.current = false // Reset after normal completion
       }
 
     } catch (e) {
-      console.error(`[Play] Failed with ${pkg}, trying system chooser...`)
-      try {
-        await TVPlayer.play({ url: streamUrl, package: "", title: title })
-        setBuffering(null)
-      } catch (err) {
-        setBuffering(null)
-        alert("Error launching player: " + err.message)
-      }
+      console.error(`[Play] Failed with ${pkg}:`, e)
+      setBuffering(null)
+      alert(`Ошибка запуска плеера: ${e.message || 'Unknown error'}`)
+      isPlayingRef.current = false // Reset after error
     }
   }
 
