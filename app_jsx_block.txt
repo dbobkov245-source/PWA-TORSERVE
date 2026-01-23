@@ -1,11 +1,17 @@
+### App.jsx
+
+File: `client/src/App.jsx`
+
+```javascript
 /**
  * PWA-TorServe - Main Application
  * Refactored for maintainability - components extracted to /components
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { registerPlugin } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
+import { Preferences } from '@capacitor/preferences'
 
 // Components
 import Poster from './components/Poster'
@@ -23,7 +29,13 @@ import { cleanTitle } from './utils/helpers'
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
 
-// Player selection has been removed - system Intent Chooser is always used
+// Constants
+const PLAYERS = [
+  { id: 'net.gtvbox.videoplayer', name: 'Vimu Player (Рекомендуем)' },
+  { id: 'org.videolan.vlc', name: 'VLC for Android' },
+  { id: 'com.mxtech.videoplayer.ad', name: 'MX Player' },
+  { id: '', name: 'System Chooser (Спрашивать всегда)' }
+]
 
 const CATEGORIES = [
   { id: 'all', name: 'Все', icon: '📚' },
@@ -46,9 +58,36 @@ function App() {
     return ''
   })
 
+  // 🔥 v2.3: Use Capacitor Preferences for Android 9 compatibility
+  const [preferredPlayer, setPreferredPlayer] = useState('net.gtvbox.videoplayer')
+  const [prefsLoaded, setPrefsLoaded] = useState(false)
+
   const [tmdbProxyUrl, setTmdbProxyUrl] = useState(
     localStorage.getItem('tmdbProxyUrl') || ''
   )
+
+  // Load preferences on mount (async for Capacitor Preferences)
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        if (Capacitor.isNativePlatform()) {
+          const { value } = await Preferences.get({ key: 'preferredPlayer' })
+          if (value) {
+            console.log('[Prefs] Loaded player:', value)
+            setPreferredPlayer(value)
+          }
+        } else {
+          const stored = localStorage.getItem('preferredPlayer')
+          if (stored) setPreferredPlayer(stored)
+        }
+      } catch (e) {
+        console.warn('[Prefs] Failed to load:', e)
+      } finally {
+        setPrefsLoaded(true)
+      }
+    }
+    loadPreferences()
+  }, [])
 
   // State: Torrents
   const [torrents, setTorrents] = useState([])
@@ -61,7 +100,6 @@ function App() {
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
   const [buffering, setBuffering] = useState(null)
-  const isPlayingRef = useRef(false) // BUG-A: useRef for synchronous guard (useState is async)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
 
   // State: Server Health
@@ -130,7 +168,21 @@ function App() {
   const displayTorrents = getFilteredAndSortedTorrents()
 
   // ─── Settings Handlers ───
-  // Player selection removed - system Intent Chooser is always used
+  // 🔥 v2.3: Use Capacitor Preferences for Android 9 compatibility
+  const savePreferredPlayer = async (playerId) => {
+    setPreferredPlayer(playerId)
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Preferences.set({ key: 'preferredPlayer', value: playerId })
+        console.log('[Prefs] Saved player:', playerId)
+      } else {
+        localStorage.setItem('preferredPlayer', playerId)
+      }
+    } catch (e) {
+      console.warn('[Prefs] Failed to save:', e)
+      localStorage.setItem('preferredPlayer', playerId) // Fallback
+    }
+  }
 
   const saveSortBy = (sort) => {
     setSortBy(sort)
@@ -232,23 +284,16 @@ function App() {
 
   // ─── Playback ───
   const handlePlay = async (infoHash, fileIndex, fileName) => {
-    // BUG-A: Guard against double intent using ref for synchronous check
-    if (isPlayingRef.current) {
-      console.log('[Play] Already playing, skipping duplicate call')
-      return
-    }
-    isPlayingRef.current = true
-
     const streamUrl = getStreamUrl(infoHash, fileIndex)
     const title = cleanTitle(fileName)
+    const pkg = preferredPlayer
 
     // 🎥 Save lastPlayed for Continue feature
     const torrent = torrents.find(t => t.infoHash === infoHash)
-    let nextFile = null
     if (torrent) {
       const videoFiles = torrent.files?.filter(f => /\.(mp4|mkv|avi|webm|mov)$/i.test(f.name)) || []
       const currentIdx = videoFiles.findIndex(f => f.index === fileIndex)
-      nextFile = videoFiles[currentIdx + 1]
+      const nextFile = videoFiles[currentIdx + 1]
       const playData = {
         infoHash,
         fileIndex,
@@ -261,20 +306,31 @@ function App() {
       setLastPlayed(playData)
     }
 
-    console.log(`[Play] URL: ${streamUrl} | Title: ${title} | Using system chooser`)
+    console.log(`[Play] URL: ${streamUrl} | Package: ${pkg} | Title: ${title}`)
+
+    if (pkg && Capacitor.isNativePlatform()) {
+      try {
+        const { installed } = await TVPlayer.isPackageInstalled({ package: pkg })
+        if (!installed) {
+          const playerName = PLAYERS.find(p => p.id === pkg)?.name || pkg
+          alert(`${playerName} не установлен. Выберите другой плеер в настройках.`)
+          return
+        }
+      } catch (e) {
+        console.warn('[Play] isPackageInstalled check failed:', e)
+      }
+    }
 
     setBuffering({ name: title, progress: 10 })
     setSelectedTorrent(null)
 
     try {
-      // Always use empty package - let system show Intent Chooser
       const result = await TVPlayer.play({
         url: streamUrl,
-        package: '',  // System will show app chooser
+        package: pkg,
         title: title,
-        position: 0
+        position: 0 // TODO: Add resume support from localStorage
       })
-
 
       setBuffering(null)
       console.log('[Play] Result:', result)
@@ -284,7 +340,6 @@ function App() {
         console.log('[Play] Auto-playing next episode:', nextFile.name)
         // Check "Auto-Play" setting? For now, just do it or show toast.
         // We'll add a small delay to allow UI to breathe
-        isPlayingRef.current = false // Reset before auto-play
         setTimeout(() => {
           handlePlay(infoHash, nextFile.index, nextFile.name)
         }, 1000)
@@ -293,16 +348,17 @@ function App() {
         const progressData = { ...playData, position: result.position, duration: result.duration }
         localStorage.setItem('lastPlayed', JSON.stringify(progressData))
         setLastPlayed(progressData)
-        isPlayingRef.current = false // Reset after completion
-      } else {
-        isPlayingRef.current = false // Reset after normal completion
       }
 
     } catch (e) {
-      console.error(`[Play] Failed with ${pkg}:`, e)
-      setBuffering(null)
-      alert(`Ошибка запуска плеера: ${e.message || 'Unknown error'}`)
-      isPlayingRef.current = false // Reset after error
+      console.error(`[Play] Failed with ${pkg}, trying system chooser...`)
+      try {
+        await TVPlayer.play({ url: streamUrl, package: "", title: title })
+        setBuffering(null)
+      } catch (err) {
+        setBuffering(null)
+        alert("Error launching player: " + err.message)
+      }
     }
   }
 
@@ -317,19 +373,32 @@ function App() {
       return
     }
 
+    const pkg = preferredPlayer
     const title = cleanTitle(torrent.name)
     const urls = videoFiles.map(f => getStreamUrl(torrent.infoHash, f.index))
     const names = videoFiles.map(f => cleanTitle(f.name) || f.name)
 
-    console.log(`[PlayAll] ${urls.length} files | Using system chooser`)
+    console.log(`[PlayAll] ${urls.length} files | Package: ${pkg}`)
+
+    if (pkg && Capacitor.isNativePlatform()) {
+      try {
+        const { installed } = await TVPlayer.isPackageInstalled({ package: pkg })
+        if (!installed) {
+          const playerName = PLAYERS.find(p => p.id === pkg)?.name || pkg
+          alert(`${playerName} не установлен. Выберите другой плеер в настройках.`)
+          return
+        }
+      } catch (e) {
+        console.warn('[PlayAll] isPackageInstalled check failed:', e)
+      }
+    }
 
     setBuffering({ name: `${title} (${urls.length} files)`, progress: 10 })
     setSelectedTorrent(null)
 
     try {
-      // Always use empty package - let system show Intent Chooser
       await TVPlayer.playList({
-        package: '',  // System will show app chooser
+        package: pkg,
         title: title,
         urls: urls,
         names: names,
@@ -572,6 +641,8 @@ function App() {
       {/* Settings Panel */}
       {showSettings && (
         <SettingsPanel
+          preferredPlayer={preferredPlayer}
+          onPlayerChange={savePreferredPlayer}
           serverUrl={serverUrl}
           onServerUrlChange={handleServerUrlChange}
           tmdbProxyUrl={tmdbProxyUrl}
@@ -798,3 +869,5 @@ function App() {
 }
 
 export default App
+
+```

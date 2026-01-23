@@ -67,7 +67,7 @@ const CategoryPage = ({
 
     // Load More Logic
     const loadMore = useCallback(async () => {
-        if (loading || !hasMore || !category) return
+        if (loading || !hasMore || !category?.fetcher) return
 
         setLoading(true)
         try {
@@ -129,10 +129,14 @@ const CategoryPage = ({
         const observer = new IntersectionObserver(
             entries => {
                 if (entries[0].isIntersecting) {
+                    console.log('[CategoryPage] Sentinel intersecting, calling loadMore...')
                     loadMore()
                 }
             },
-            { threshold: 1.0 }
+            {
+                threshold: 0,
+                rootMargin: '500px'  // Trigger 500px BEFORE sentinel is visible
+            }
         )
 
         if (observerTarget.current) {

@@ -1,22 +1,13 @@
 /**
  * SettingsPanel Component - App configuration UI
+ * Player selection has been removed - system Intent Chooser is always used
  */
 import { useState } from 'react'
 import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
 import { cleanTitle } from '../utils/helpers'
 
-// Player list
-const PLAYERS = [
-    { id: 'net.gtvbox.videoplayer', name: 'Vimu Player (Рекомендуем)' },
-    { id: 'org.videolan.vlc', name: 'VLC for Android' },
-    { id: 'com.mxtech.videoplayer.ad', name: 'MX Player' },
-    { id: '', name: 'System Chooser (Спрашивать всегда)' }
-]
-
 const SettingsPanel = ({
-    preferredPlayer,
-    onPlayerChange,
     serverUrl,
     onServerUrlChange,
     tmdbProxyUrl,
@@ -29,7 +20,6 @@ const SettingsPanel = ({
     const [testLoading, setTestLoading] = useState(false)
     const [speedMode, setSpeedModeState] = useState(localStorage.getItem('speedMode') || 'balanced')
     const [speedLoading, setSpeedLoading] = useState(false)
-    const [showPlayerSelect, setShowPlayerSelect] = useState(false) // Collapse player selection
 
     const handleClearCache = () => {
         const keys = Object.keys(localStorage).filter(k => k.startsWith('poster_'))
@@ -183,34 +173,14 @@ const SettingsPanel = ({
         <div className="mx-6 mb-6 p-6 bg-gray-900 rounded-xl border border-gray-800 shadow-2xl animate-fade-in relative z-20">
             <h2 className="text-xl font-bold mb-4 text-gray-200">Settings</h2>
 
-            {/* Player Selection - Collapsible */}
-            <div className="mb-6">
-                <button
-                    onClick={() => setShowPlayerSelect(!showPlayerSelect)}
-                    className="w-full text-left text-gray-400 text-sm mb-3 flex items-center justify-between hover:text-white"
-                >
-                    <span>🎬 Плеер: <span className="text-white font-medium">{PLAYERS.find(p => p.id === preferredPlayer)?.name || 'System'}</span></span>
-                    <span>{showPlayerSelect ? '▼' : '▶'}</span>
-                </button>
-                {showPlayerSelect && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 animate-fade-in">
-                        {PLAYERS.map(p => (
-                            <button
-                                key={p.id}
-                                onClick={() => { onPlayerChange(p.id); setShowPlayerSelect(false) }}
-                                className={`
-                    p-4 rounded-lg border text-left transition-all
-                    ${preferredPlayer === p.id
-                                        ? 'bg-blue-600 border-blue-500 text-white shadow-lg scale-[1.02]'
-                                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}
-                  `}
-                            >
-                                <div className="font-bold">{p.name}</div>
-                                <div className="text-xs opacity-75 mt-1">{p.id || 'System Default'}</div>
-                            </button>
-                        ))}
-                    </div>
-                )}
+            {/* Player Info - Read Only */}
+            <div className="mb-6 p-3 bg-gray-800 rounded-lg border border-gray-700">
+                <p className="text-gray-400 text-sm">
+                    🎬 Плеер: <span className="text-white font-medium">System Chooser</span>
+                </p>
+                <p className="text-gray-500 text-xs mt-1">
+                    Система Android сама предложит выбрать плеер при воспроизведении
+                </p>
             </div>
 
             {/* Speed Mode Toggle */}

@@ -186,10 +186,17 @@ const HomePanel = ({ onSearch, onClose }) => {
         if (currentView.type === 'category') {
             const categoryId = currentView.data
             const categoryData = categories[categoryId]
+            // Build customCategory with fetcher for pagination support
+            const dynamicCategory = {
+                id: categoryId,
+                name: categoryData?.name,
+                icon: categoryData?.icon,
+                fetcher: categoryData?.fetcher
+            }
             return (
                 <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
                     <CategoryPage
-                        categoryId={categoryId}
+                        customCategory={dynamicCategory}
                         items={categoryData?.items || []}
                         onItemClick={handleItemClick}
                         onBack={popView}
@@ -235,20 +242,8 @@ const HomePanel = ({ onSearch, onClose }) => {
             {/* Home Content (Visible only when stack is empty) */}
             {!currentView && (
                 <>
-                    {/* Static Dark Background + Backdrop Fade */}
+                    {/* Static Dark Background (solid, no backdrop) */}
                     <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
-                    {backdrop && (
-                        <div
-                            className="absolute inset-0 opacity-20 transition-opacity duration-700 ease-in-out"
-                            style={{
-                                backgroundImage: `url(${backdrop})`,
-                                backgroundSize: 'cover',
-                                backgroundPosition: 'center top',
-                                maskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)',
-                                WebkitMaskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)'
-                            }}
-                        />
-                    )}
 
                     {/* Content */}
                     <div className="relative z-10 pt-4 pb-8">

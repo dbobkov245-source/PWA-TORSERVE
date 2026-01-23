@@ -481,17 +481,8 @@ const MovieDetail = ({
         searchButtonRef.current?.focus()
     }, [])
 
-    // BUG-FIX: Global keyboard listener to ensure remote control navigation works even if focus is lost or on container
-    useEffect(() => {
-        const handleGlobalKeyDown = (e) => {
-            // Only handle if this component is mounted and visible
-            if (containerRef.current) {
-                handleKeyDown(e)
-            }
-        }
-        window.addEventListener('keydown', handleGlobalKeyDown)
-        return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-    }, [handleKeyDown])
+    // BUG-FIX: Removed duplicate global keydown listener that was causing double index increment.
+    // Navigation is now handled solely by the container's onKeyDown handler (line 500).
 
     return (
         <div
@@ -700,6 +691,7 @@ const MovieDetail = ({
                                                 onClick={() => handleSeasonSelect(season, idx)}
                                             >
                                                 <div className="absolute inset-0 bg-gray-800" />
+                                                {/* Poster with cascading fallback: season → series poster */}
                                                 {season.poster_path ? (
                                                     <img
                                                         src={getPosterUrl(season)}
@@ -707,8 +699,15 @@ const MovieDetail = ({
                                                         className="w-full h-full object-cover"
                                                         loading="lazy"
                                                     />
+                                                ) : posterUrl ? (
+                                                    <img
+                                                        src={posterUrl}
+                                                        alt={season.name}
+                                                        className="w-full h-full object-cover"
+                                                        loading="lazy"
+                                                    />
                                                 ) : (
-                                                    <div className="w-full h-full flex items-center justify-center bg-gray-700">
+                                                    <div className="w-full h-full bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center">
                                                         <span className="text-3xl">📺</span>
                                                     </div>
                                                 )}

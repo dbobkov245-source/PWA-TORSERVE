@@ -751,3 +751,11 @@ function startFrozenCleanup() {
 * **Secondary Metadata Cache:** (SHOULD) Cache filmography/recommendations.
 * **Episode Metadata:** (SHOULD) Fetch episode names/descriptions.
 * **Discovery Home:** (POSTPONED) Focus on Detail View first.
+
+---
+
+### ✅ Batch 2026-01-23: Discovery & UX Refinement
+*   ✅ **UX-14: Infinite Discovery.** Пагинация в `CategoryPage.jsx` стала "бесшовной" (rootMargin: 500px).
+*   ✅ **UX-15: Main Page Load Opt.** Ряды на главной ограничены 20 элементами для производительности.
+*   ✅ **UX-16: Stealth Background.** Убран динамический backdrop (фикс дублирования постеров).
+*   ✅ **UX-17: Season Poster Recovery.** Каскадный fallback для сезонов (Season -> Series -> Emoji).

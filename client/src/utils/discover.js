@@ -114,6 +114,7 @@ export async function fetchAllDiscovery() {
         results[category.id] = {
             ...category,
             items: uniqueItems,
+            fetcher: category.fetcher,  // Include fetcher for pagination in CategoryPage
             source,
             method,
             error
