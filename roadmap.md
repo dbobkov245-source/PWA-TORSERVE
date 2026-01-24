@@ -759,3 +759,11 @@ function startFrozenCleanup() {
 *   ✅ **UX-15: Main Page Load Opt.** Ряды на главной ограничены 20 элементами для производительности.
 *   ✅ **UX-16: Stealth Background.** Убран динамический backdrop (фикс дублирования постеров).
 *   ✅ **UX-17: Season Poster Recovery.** Каскадный fallback для сезонов (Season -> Series -> Emoji).
+### ✅ Batch 2026-01-24: Critical Fixes & UI Polish (v2.9.9)
+*   ✅ **FIX-02: Mixed Content & Images** (v2.9.5+). Внедрен `wsrv.nl` + `ssl:` префикс для всех постеров. Исправлена ошибка загрузки картинок на Android TV (APK).
+*   ✅ **FIX-03: Discovery Logic Sync** (v2.9.6). Главная страница переведена на стабильные рельсы `Poster.jsx` (AbortController, Error Handling).
+*   ✅ **UX-18: Sidebar UI Overhaul** (v2.9.9). Удалена скрытая навигация стрелками.
+    *   Добавлена кнопка **Меню (☰)** на главный экран.
+    *   Добавлена кнопка **Закрыть (❌)** внутрь меню.
+*   ✅ **UX-19: Sidebar Overlay** (v2.9.4). Сайдбар теперь работает как оверлей и не сдвигает контент.
+*   ✅ **FIX-04: Critical Import Fix** (v2.9.7). Исправлена регрессия с пустым экраном (discover.js).

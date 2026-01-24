@@ -1,16 +1,16 @@
 import express from 'express';
 import { getSmartConfig } from '../utils/doh.js';
-import { Readable } from 'stream';
+import https from 'https';
+import { URL } from 'url';
 
 const router = express.Router();
 
 // Allowlist for security (SSRF prevention)
-// Includes TMDB, Kinopoisk, and Image Mirrors
 const ALLOWED_DOMAINS = [
     'api.themoviedb.org',
     'image.tmdb.org',
     'kinopoiskapiunofficial.tech',
-    'avatars.mds.yandex.net', // KP images
+    'avatars.mds.yandex.net',
     'imagetmdb.com',
     'nl.imagetmdb.com',
     'de.imagetmdb.com',
@@ -26,58 +26,70 @@ router.get('/', async (req, res) => {
     }
 
     try {
-        // 1. Validate Domain
-        let hostname;
-        try {
-            hostname = new URL(url).hostname;
-        } catch {
-            return res.status(400).json({ error: 'Invalid URL format' });
-        }
+        const targetUrl = new URL(url);
 
-        if (!ALLOWED_DOMAINS.includes(hostname)) {
-            console.warn(`[Proxy] Blocked domain: ${hostname}`);
+        if (!ALLOWED_DOMAINS.includes(targetUrl.hostname)) {
+            console.warn(`[Proxy] 🚫 Blocked domain: ${targetUrl.hostname}`);
             return res.status(403).json({ error: 'Domain not allowed' });
         }
 
-        // 2. Get Smart Config (DoH resolution)
-        // This gives us the resolved IP to bypass DNS blocking
-        const config = await getSmartConfig(url, {
-            headers: {
-                // Forward Client-Hints if present? Maybe simpler to stick to defaults
-            }
-        });
+        console.log(`[Proxy] 🔄 Fetching: ${url}`);
 
-        // 3. Fetch with Stream
-        // Using native fetch, which returns a web stream body
-        const response = await fetch(config.url, {
+        // Get DoH resolved config
+        const config = await getSmartConfig(url);
+
+        const options = {
             method: 'GET',
             headers: config.headers,
-            // Timeout 20s for large images/slow APIs
-            signal: AbortSignal.timeout(20000) 
+            timeout: 20000,
+        };
+
+        // 🔥 CRITICAL FIX: SNI Support
+        // If we have a resolved IP, we use it for the connection but keep the hostname for TLS SNI
+        if (config.resolvedIP) {
+            options.hostname = config.resolvedIP;
+            options.servername = config.hostname; // This is the SNI part
+            options.path = targetUrl.pathname + targetUrl.search;
+        }
+
+        const proxyReq = https.request(config.resolvedIP ? options : url, (proxyRes) => {
+            // Forward status
+            res.status(proxyRes.statusCode);
+
+            // Forward allowed headers
+            const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'src'];
+            console.log(`[Proxy] 📥 Response ${proxyRes.statusCode}: ${proxyRes.headers['content-type']}`);
+            for (const h of forwardHeaders) {
+                if (proxyRes.headers[h]) {
+                    res.set(h, proxyRes.headers[h]);
+                }
+            }
+
+            // Pipe data
+            proxyRes.pipe(res);
         });
 
-        // 4. Forward Headers & Status
-        res.status(response.status);
-        
-        const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
-        for (const h of forwardHeaders) {
-            if (response.headers.has(h)) {
-                res.set(h, response.headers.get(h));
+        proxyReq.on('error', (err) => {
+            console.error('[Proxy] Request Error:', err.message, url);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'Proxy request failed', details: err.message });
             }
-        }
+        });
 
-        // 5. Pipe Response to Express
-        if (response.body) {
-            Readable.fromWeb(response.body).pipe(res);
-        } else {
-            res.end();
-        }
+        proxyReq.on('timeout', () => {
+            console.error('[Proxy] Timeout:', url);
+            proxyReq.destroy();
+            if (!res.headersSent) {
+                res.status(504).json({ error: 'Proxy timeout' });
+            }
+        });
+
+        proxyReq.end();
 
     } catch (err) {
-        console.error('[Proxy] Error:', err.message, url);
+        console.error('[Proxy] Fatal Error:', err.message, url);
         if (!res.headersSent) {
-            const status = err.name === 'TimeoutError' ? 504 : 502;
-            res.status(status).json({ error: 'Proxy request failed', details: err.message });
+            res.status(500).json({ error: 'Internal proxy error', details: err.message });
         }
     }
 });

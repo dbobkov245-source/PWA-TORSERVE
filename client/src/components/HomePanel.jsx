@@ -15,8 +15,9 @@ import HomeRow from './HomeRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
+import Sidebar from './Sidebar'
 import { fetchAllDiscovery, getBackdropUrl, getTitle, getSearchQuery, DISCOVERY_CATEGORIES } from '../utils/discover'
-import { getDiscoverByGenre } from '../utils/tmdbClient'
+import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { contentRowsRegistry } from '../utils/ContentRowsRegistry'
 
 const HomePanel = ({ onSearch, onClose }) => {
@@ -34,6 +35,7 @@ const HomePanel = ({ onSearch, onClose }) => {
     // Unified Navigation Stack
     // Stack items: { type: 'movie'|'person'|'genre'|'category', data: any }
     const [navigationStack, setNavigationStack] = useState([])
+    const [sidebarOpen, setSidebarOpen] = useState(false)
 
     // ─── Stack Management ───────────────────────────────────────────
 
@@ -143,6 +145,10 @@ const HomePanel = ({ onSearch, onClose }) => {
             }
         }
 
+
+        // ArrowRight/Left handling removed per user request.
+        // Sidebar is now opened via UI button (top-right) and closed via UI button inside sidebar.
+
         if (navigationStack.length > 0) return
 
         // Standard Home Grid Navigation would go here or be delegated
@@ -153,6 +159,54 @@ const HomePanel = ({ onSearch, onClose }) => {
         document.addEventListener('keydown', handleKeyDown)
         return () => document.removeEventListener('keydown', handleKeyDown)
     }, [handleKeyDown])
+
+
+    // ─── Sidebar Handling ───────────────────────────────────────────
+
+    // Handle Sidebar selection
+    const handleSidebarSelect = useCallback((item) => {
+        if (item.id === 'search') {
+            // Trigger search or focus search input
+            // For now, let's assume onSearch is enough or we push a search view
+            // If onSearch is provided (App.jsx), use it
+            if (onSearch) {
+                // We might need a way to open search input. 
+                // Assuming App.jsx handles it, or we create a Search View.
+                // For now: call onSearch('') to maybe open a search panel if implemented upstream
+                // Or simply prompt user.
+                console.log("Search clicked")
+                // Actually, HomePanel has onSearch prop. 
+                // Usually this component is controlled by App.jsx which has the SearchBar.
+                // We can maybe emit a special event or just rely on global focus if SearchBar is outside.
+            }
+        } else if (item.type === 'year') {
+            // Push dynamic category for Year
+            const yearCategory = {
+                id: `year_${item.year}`,
+                name: `${item.year} год`,
+                icon: '📅',
+                // Fetch Discover with year filter
+                fetcher: (page) => tmdbClient(`/discover/movie?primary_release_year=${item.year}&sort_by=popularity.desc&include_adult=false&language=ru-RU&page=${page}`)
+            }
+            // BETTER APPROACH: pushView('custom_category', yearCategory)
+            pushView('custom_category', yearCategory)
+        } else if (item.categoryId) {
+            // Determine type (category vs genre)
+            if (item.categoryId.startsWith('genre_')) {
+                // It's a genre, we need to find it or construct it
+                // item.categoryId is like 'genre_16'
+                // Our generic genre click handler expects object {id, name}
+                // Let's parse ID
+                const genreId = parseInt(item.categoryId.split('_')[1])
+                pushView('genre', { id: genreId, name: item.label, type: 'movie' }) // Default to movie for now
+            } else {
+                // Standard category (top, tv, etc)
+                pushView('category', item.categoryId)
+            }
+        }
+    }, [pushView, onSearch])
+
+    const closeSidebar = useCallback(() => setSidebarOpen(false), [])
 
 
     // ─── Render Logic ───────────────────────────────────────────────
@@ -173,6 +227,10 @@ const HomePanel = ({ onSearch, onClose }) => {
             }
             return (
                 <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
+                    {/* Added pl-20 to clear collapsed sidebar if it stays visible above? 
+                   Actually Sidebar z-index might be lower or higher. 
+                   If Sidebar is z-40, this should be z-50.
+                */}
                     <CategoryPage
                         customCategory={dynamicCategory}
                         onBack={popView}
@@ -183,21 +241,28 @@ const HomePanel = ({ onSearch, onClose }) => {
             )
         }
 
-        if (currentView.type === 'category') {
-            const categoryId = currentView.data
-            const categoryData = categories[categoryId]
-            // Build customCategory with fetcher for pagination support
-            const dynamicCategory = {
-                id: categoryId,
-                name: categoryData?.name,
-                icon: categoryData?.icon,
-                fetcher: categoryData?.fetcher
+        if (currentView.type === 'category' || currentView.type === 'custom_category') {
+            // Handle both standard ID lookup and custom objects
+            let dynamicCategory = null;
+
+            if (currentView.type === 'custom_category') {
+                dynamicCategory = currentView.data
+            } else {
+                const categoryId = currentView.data
+                const categoryData = categories[categoryId]
+                dynamicCategory = {
+                    id: categoryId,
+                    name: categoryData?.name,
+                    icon: categoryData?.icon,
+                    fetcher: categoryData?.fetcher
+                }
             }
+
             return (
                 <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto">
                     <CategoryPage
                         customCategory={dynamicCategory}
-                        items={categoryData?.items || []}
+                        items={dynamicCategory.items || []} // custom_category might not have items yet, fetcher will load
                         onItemClick={handleItemClick}
                         onBack={popView}
                         onFocusChange={handleFocusChange}
@@ -237,16 +302,40 @@ const HomePanel = ({ onSearch, onClose }) => {
     const orderedCategories = visibleRows
 
     return (
-        <div className="home-panel relative min-h-screen bg-[#141414]">
+        <div className="flex min-h-screen bg-[#141414] overflow-hidden">
+            {/* Sidebar (Overlay logic) */}
+            <Sidebar
+                isOpen={sidebarOpen}
+                onSelect={(item) => {
+                    handleSidebarSelect(item)
+                    setSidebarOpen(false)
+                }}
+                onClose={closeSidebar}
+            />
 
-            {/* Home Content (Visible only when stack is empty) */}
-            {!currentView && (
-                <>
-                    {/* Static Dark Background (solid, no backdrop) */}
+            {/* Menu Button (Top Right) */}
+            {!sidebarOpen && navigationStack.length === 0 && (
+                <button
+                    onClick={() => setSidebarOpen(true)}
+                    className="absolute top-6 right-6 z-50 p-3 bg-gray-800/80 rounded-full border border-white/10 text-white hover:bg-gray-700 hover:scale-105 transition-all outline-none focus:ring-2 focus:ring-blue-500 focusable"
+                    style={{ position: 'fixed' }} // Fixed ensures it stays visible even if scrolled? Or absolute relative to screen?
+                >
+                    <span className="text-xl">☰</span>
+                </button>
+            )}
+
+            {/* Main Content Area (No margin, sidebar overlays) */}
+            <div className={`flex-1 relative transition-all duration-300 ${sidebarOpen ? 'opacity-50 blur-sm brightness-50' : ''}`}>
+                {/* ml-20 corresponds to collapsed sidebar width (w-20 -> 5rem -> 80px approx, adjust if needed) */}
+
+                {/* Background Backdrop */}
+                {navigationStack.length === 0 && (
                     <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
+                )}
 
-                    {/* Content */}
-                    <div className="relative z-10 pt-4 pb-8">
+                {/* Home Content (Visible only when stack is empty) */}
+                {!currentView && (
+                    <div className="relative z-10 pt-4 pb-8 px-8"> {/* Added px-8 for spacing */}
                         {/* Header with focused item info */}
                         {focusedItem && !loading && (
                             <div className="px-4 mb-6 max-w-2xl transition-all duration-300">
@@ -329,11 +418,11 @@ const HomePanel = ({ onSearch, onClose }) => {
                             </div>
                         )}
                     </div>
-                </>
-            )}
+                )}
 
-            {/* Overlay View (Stack) - Rendered AFTER home content to ensure it's on top */}
-            {currentView && renderCurrentView()}
+                {/* Overlay View (Stack) - Rendered AFTER home content to ensure it's on top */}
+                {currentView && renderCurrentView()}
+            </div>
         </div>
     )
 }

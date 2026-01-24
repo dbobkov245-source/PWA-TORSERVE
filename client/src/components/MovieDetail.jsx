@@ -57,6 +57,7 @@ const MovieDetail = ({
     const [seasons, setSeasons] = useState([])
     const [selectedSeason, setSelectedSeason] = useState(null)
     const [episodes, setEpisodes] = useState([])
+    const [imageErrors, setImageErrors] = useState(new Set()) // Track failed images to prevent flip-flop
     const [focusedEpisodeIndex, setFocusedEpisodeIndex] = useState(0)
     const [focusedSeasonIndex, setFocusedSeasonIndex] = useState(0)
     const [focusedCastIndex, setFocusedCastIndex] = useState(0)
@@ -81,6 +82,19 @@ const MovieDetail = ({
     const mediaTypeLabel = mediaType === 'tv' ? 'Сериал' : 'Фильм'
     const itemGenres = getGenreObjectsForItem(item)
     const genres = getGenresForItem(item)
+
+    // Stable URL helpers that respect imageErrors state
+    const getStablePosterUrl = (target, size = 'w500') => {
+        const url = getPosterUrl(target, size)
+        if (imageErrors.has(url)) return posterUrl // Use main item poster as fallback
+        return url
+    }
+
+    const getStableImageUrl = (path, size = 'w300') => {
+        const url = getImageUrl(path, size)
+        if (imageErrors.has(url)) return null
+        return url
+    }
 
     // Handle search button click
     const handleSearch = useCallback(() => {
@@ -340,17 +354,23 @@ const MovieDetail = ({
     useEffect(() => {
         if (!item?.id) return
 
+        const controller = new AbortController()
+
         const loadExtendedInfo = async () => {
             setLoadingExtra(true)
             try {
                 // Load full details (for seasons)
                 const details = await getDetails(item.id, mediaType)
+                if (controller.signal.aborted) return
+
                 if (details && mediaType === 'tv') {
                     setSeasons(details.seasons || [])
                 }
 
                 // Load credits
                 const creditsData = await getCredits(item.id, mediaType)
+                if (controller.signal.aborted) return
+
                 const directorsList = creditsData.crew?.filter(p => p.job === 'Director') || []
                 const castList = creditsData.cast?.slice(0, 8) || [] // Top 8 actors
                 setDirectors(directorsList)
@@ -358,6 +378,8 @@ const MovieDetail = ({
 
                 // Load videos
                 const videosData = await getVideos(item.id, mediaType)
+                if (controller.signal.aborted) return
+
                 const trailerVideo = videosData.results?.find(
                     v => v.type === 'Trailer' && v.site === 'YouTube'
                 ) || videosData.results?.[0]
@@ -365,21 +387,28 @@ const MovieDetail = ({
 
                 // Load Recommendations (Graph)
                 const recData = await getRecommendations(item.id, mediaType)
+                if (controller.signal.aborted) return
+
                 setRecommendations(recData.results || [])
 
             } catch (err) {
+                if (err.name === 'AbortError') return
                 console.warn('[MovieDetail] Failed to load extended info:', err.message)
             } finally {
-                setLoadingExtra(false)
+                if (!controller.signal.aborted) {
+                    setLoadingExtra(false)
+                }
             }
         }
 
         loadExtendedInfo()
+        return () => controller.abort()
     }, [item?.id, mediaType])
 
     // Reset state on new item
     useEffect(() => {
         setEpisodes([])
+        setImageErrors(new Set())
         setSelectedSeason(null)
         setFocusedSeasonIndex(0)
         setFocusedEpisodeIndex(0)
@@ -501,8 +530,8 @@ const MovieDetail = ({
                 }}
             />
 
-            {/* Content Container - Force Opaque Background for Overlay Fix */}
-            <div className="relative z-10 h-full overflow-y-auto bg-gray-900/95">
+            {/* Content Container - Transparent to show backdrop */}
+            <div className="relative z-10 h-full overflow-y-auto bg-transparent">
                 <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6 p-6 md:p-10 max-w-7xl mx-auto">
 
                     {/* Left: Poster */}
@@ -518,6 +547,7 @@ const MovieDetail = ({
                                     className="w-full h-full object-cover"
                                     onError={(e) => {
                                         reportBrokenImage(e.target.src)
+                                        setImageErrors(prev => new Set([...prev, e.target.src]))
                                         e.target.style.display = 'none'
                                     }}
                                 />
@@ -532,13 +562,13 @@ const MovieDetail = ({
                     {/* Right: Info - min-w-0 ensures flex children shrink properly */}
                     <div className="flex flex-col gap-4 min-w-0">
                         {/* Title */}
-                        <h1 className="text-3xl md:text-4xl font-bold text-white leading-tight">
+                        <h1 className="text-3xl md:text-4xl font-bold text-white leading-tight drop-shadow-md">
                             {title}
                         </h1>
 
                         {/* Original title */}
                         {item.original_title && item.original_title !== title && (
-                            <p className="text-gray-400 text-lg -mt-2">
+                            <p className="text-gray-300 text-lg -mt-2 drop-shadow-sm">
                                 {item.original_title}
                             </p>
                         )}
@@ -548,7 +578,7 @@ const MovieDetail = ({
                             {/* Rating */}
                             {rating && parseFloat(rating) > 0 && (
                                 <span className={`
-                                    px-3 py-1 rounded-lg font-bold text-white
+                                    px-3 py-1 rounded-lg font-bold text-white shadow-sm
                                     ${parseFloat(rating) >= 7 ? 'bg-green-600' :
                                         parseFloat(rating) >= 5 ? 'bg-yellow-600' : 'bg-red-600'}
                                 `}>
@@ -558,14 +588,14 @@ const MovieDetail = ({
 
                             {/* Year */}
                             {year && (
-                                <span className="px-3 py-1 bg-gray-700/80 text-gray-200 rounded-lg">
+                                <span className="px-3 py-1 bg-gray-800/80 text-gray-200 rounded-lg shadow-sm backdrop-blur-sm">
                                     {year}
                                 </span>
                             )}
 
                             {/* Media Type */}
-                            <span className="px-3 py-1 bg-blue-600/80 text-white rounded-lg">
-                                {mediaType === 'Сериал' ? '📺' : '🎬'} {mediaType}
+                            <span className="px-3 py-1 bg-blue-600/80 text-white rounded-lg shadow-sm backdrop-blur-sm">
+                                {mediaType === 'tv' ? '📺' : '🎬'} {mediaTypeLabel}
                             </span>
                         </div>
 
@@ -580,7 +610,7 @@ const MovieDetail = ({
                                 }}
                                 className={`px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl 
                                          transition-all duration-200 flex items-center gap-2
-                                         ${focusedButton === 'search' ? 'ring-4 ring-blue-400 scale-105 shadow-xl' : ''}
+                                         ${focusedButton === 'search' ? 'ring-4 ring-blue-400 scale-105 shadow-xl' : 'shadow-lg'}
                                 `}
                             >
                                 <span className="text-xl">🔍</span>
@@ -594,9 +624,9 @@ const MovieDetail = ({
                                     setFocusedButton('back')
                                     setActiveZone(ZONES.HEADER)
                                 }}
-                                className={`px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-xl 
-                                         transition-all duration-200 flex items-center gap-2
-                                         ${focusedButton === 'back' ? 'ring-4 ring-gray-400 scale-105 shadow-xl' : ''}
+                                className={`px-6 py-3 bg-gray-700/80 hover:bg-gray-600 text-white font-semibold rounded-xl 
+                                         transition-all duration-200 flex items-center gap-2 backdrop-blur-sm
+                                         ${focusedButton === 'back' ? 'ring-4 ring-gray-400 scale-105 shadow-xl' : 'shadow-lg'}
                                 `}
                             >
                                 <span className="text-xl">⬅️</span>
@@ -615,8 +645,8 @@ const MovieDetail = ({
                                         setActiveZone(ZONES.HEADER)
                                     }}
                                     className={`inline-flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-500 
-                                             text-white rounded-lg transition-all text-sm
-                                             ${focusedButton === 'trailer' ? 'ring-4 ring-offset-2 ring-red-500 scale-105' : ''}
+                                             text-white rounded-lg transition-all text-sm backdrop-blur-sm
+                                             ${focusedButton === 'trailer' ? 'ring-4 ring-offset-2 ring-red-500 scale-105' : 'shadow-md'}
                                     `}
                                 >
                                     ▶️ Смотреть трейлер
@@ -637,10 +667,10 @@ const MovieDetail = ({
                                             key={genre.id || i}
                                             onClick={() => onSelectGenre?.(genre)}
                                             className={`
-                                                px-3 py-1 rounded-full text-sm transition-all duration-200 cursor-pointer
+                                                px-3 py-1 rounded-full text-sm transition-all duration-200 cursor-pointer shadow-sm
                                                 ${isFocused
                                                     ? 'bg-blue-600 text-white ring-2 ring-white scale-105 shadow-lg relative z-20'
-                                                    : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'}
+                                                    : 'bg-gray-800/60 text-gray-200 hover:bg-gray-700 backdrop-blur-sm'}
                                             `}
                                         >
                                             {genre.name}
@@ -652,15 +682,15 @@ const MovieDetail = ({
 
                         {/* Tagline */}
                         {item.tagline && (
-                            <p className="text-gray-400 italic text-lg">
+                            <p className="text-gray-300 italic text-lg drop-shadow-sm">
                                 «{item.tagline}»
                             </p>
                         )}
 
                         {/* Description */}
                         <div className="mt-2">
-                            <h3 className="text-lg font-semibold text-white mb-2">Описание</h3>
-                            <p className="text-gray-300 leading-relaxed text-base max-w-2xl">
+                            <h3 className="text-lg font-semibold text-white mb-2 drop-shadow-md">Описание</h3>
+                            <p className="text-gray-100 leading-relaxed text-base max-w-2xl drop-shadow-md bg-black/30 p-4 rounded-xl backdrop-blur-sm">
                                 {overview}
                             </p>
                         </div>
@@ -668,7 +698,7 @@ const MovieDetail = ({
                         {/* Seasons List (Focus Graph Enabled) */}
                         {seasons.length > 0 && (
                             <div className="mt-8 transition-all duration-300">
-                                <h3 className={`text-xl font-bold mb-4 transition-colors ${activeZone === ZONES.SEASONS ? 'text-white' : 'text-gray-400'}`}>
+                                <h3 className={`text-xl font-bold mb-4 transition-colors drop-shadow-md ${activeZone === ZONES.SEASONS ? 'text-white' : 'text-gray-300'}`}>
                                     📺 Сезоны ({seasons.length})
                                 </h3>
                                 <div
@@ -682,22 +712,30 @@ const MovieDetail = ({
                                         return (
                                             <div
                                                 key={season.id}
-                                                // TV-02: .season-card is managed in CSS, here we apply manual focus ring if needed
-                                                className={`season-card flex-shrink-0 group relative bg-gray-800 transition-all duration-200
-                                                          ${isFocused ? 'ring-4 ring-blue-500 scale-105 z-20 shadow-xl' : 'opacity-80 scale-95'}
+                                                // TV-02: .season-card is managed in CSS
+                                                className={`season-card flex-shrink-0 group relative bg-gray-800 transition-all duration-200 rounded-lg overflow-hidden
+                                                          ${isFocused ? 'ring-4 ring-blue-500 scale-105 z-20 shadow-xl' : 'opacity-90 scale-95 hover:opacity-100'}
                                                           ${isSelected ? 'ring-2 ring-green-500' : ''}
                                                 `}
                                                 style={{ width: '140px', aspectRatio: '2/3' }}
                                                 onClick={() => handleSeasonSelect(season, idx)}
                                             >
-                                                <div className="absolute inset-0 bg-gray-800" />
+                                                <div className="absolute inset-0 bg-gray-900" />
                                                 {/* Poster with cascading fallback: season → series poster */}
                                                 {season.poster_path ? (
                                                     <img
-                                                        src={getPosterUrl(season)}
+                                                        src={getStablePosterUrl(season)}
                                                         alt={season.name}
                                                         className="w-full h-full object-cover"
                                                         loading="lazy"
+                                                        onError={(e) => {
+                                                            // Fallback to series poster if season poster fails
+                                                            e.target.onerror = null;
+                                                            reportBrokenImage(e.target.src)
+                                                            setImageErrors(prev => new Set([...prev, e.target.src]))
+                                                            if (posterUrl) e.target.src = posterUrl;
+                                                            else e.target.style.display = 'none';
+                                                        }}
                                                     />
                                                 ) : posterUrl ? (
                                                     <img
@@ -713,7 +751,7 @@ const MovieDetail = ({
                                                 )}
 
                                                 {/* Season Badge */}
-                                                <div className="absolute bottom-0 left-0 right-0 bg-black/80 p-2 text-center">
+                                                <div className="absolute bottom-0 left-0 right-0 bg-black/80 p-2 text-center backdrop-blur-sm">
                                                     <div className="text-white font-bold text-sm">Сезон {season.season_number}</div>
                                                     <div className="text-gray-400 text-xs">{season.episode_count} эп.</div>
                                                 </div>
@@ -747,8 +785,15 @@ const MovieDetail = ({
                                             >
                                                 {/* Still thumbnail */}
                                                 <div className="w-40 md:w-48 aspect-video bg-gray-900 rounded-lg overflow-hidden flex-shrink-0 relative">
-                                                    {ep.still_path ? (
-                                                        <img src={getImageUrl(ep.still_path, 'w300')} className="w-full h-full object-cover" />
+                                                    {ep.still_path && getStableImageUrl(ep.still_path, 'w300') ? (
+                                                        <img
+                                                            src={getStableImageUrl(ep.still_path, 'w300')}
+                                                            className="w-full h-full object-cover"
+                                                            onError={(e) => {
+                                                                reportBrokenImage(e.target.src)
+                                                                setImageErrors(prev => new Set([...prev, e.target.src]))
+                                                            }}
+                                                        />
                                                     ) : (
                                                         <div className="w-full h-full flex items-center justify-center text-gray-600">No Image</div>
                                                     )}
@@ -803,22 +848,26 @@ const MovieDetail = ({
                                 >
                                     {cast.map((actor, idx) => {
                                         const isFocused = activeZone === ZONES.CAST && focusedCastIndex === idx
+                                        const actorImg = actor.profile_path ? getStableImageUrl(actor.profile_path, 'w185') : null
                                         return (
                                             <div
                                                 key={actor.id || idx}
-                                                // Using season-card style for similar feel
-                                                className={`season-card flex-shrink-0 relative bg-gray-800 rounded-full overflow-hidden transition-all duration-200
+                                                className={`season-card flex-shrink-0 relative bg-gray-800 rounded-lg overflow-hidden transition-all duration-200
                                                           ${isFocused ? 'ring-4 ring-blue-500 scale-105 z-20 shadow-xl' : 'opacity-80 scale-95'}
                                                 `}
                                                 style={{ width: '100px', height: '140px' }}
                                                 onClick={() => onSelectPerson?.(actor)}
                                             >
-                                                {actor.profile_path ? (
+                                                {actorImg ? (
                                                     <img
-                                                        src={getImageUrl(actor.profile_path, 'w185')}
+                                                        src={actorImg}
                                                         alt={actor.name}
                                                         className="w-full h-full object-cover"
                                                         loading="lazy"
+                                                        onError={(e) => {
+                                                            reportBrokenImage(e.target.src)
+                                                            setImageErrors(prev => new Set([...prev, e.target.src]))
+                                                        }}
                                                     />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center text-4xl bg-gray-700">👤</div>
@@ -858,10 +907,14 @@ const MovieDetail = ({
                                             >
                                                 {rec.poster_path ? (
                                                     <img
-                                                        src={getPosterUrl(rec)}
+                                                        src={getStablePosterUrl(rec)}
                                                         alt={rec.title || rec.name}
                                                         className="w-full h-full object-cover"
                                                         loading="lazy"
+                                                        onError={(e) => {
+                                                            reportBrokenImage(e.target.src)
+                                                            setImageErrors(prev => new Set([...prev, e.target.src]))
+                                                        }}
                                                     />
                                                 ) : (
                                                     <div className="w-full h-full bg-gray-700" />

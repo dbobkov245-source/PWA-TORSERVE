@@ -26,6 +26,7 @@ const CategoryPage = ({
     const [page, setPage] = useState(initialItems.length > 0 ? 1 : 0) // Start at 0 if no items
     const [loading, setLoading] = useState(false)
     const [hasMore, setHasMore] = useState(true)
+    const [imageErrors, setImageErrors] = useState(new Set())
     const itemRefs = useRef([])
     const observerTarget = useRef(null)
     const containerRef = useRef(null) // For auto-focus on mount
@@ -39,6 +40,7 @@ const CategoryPage = ({
         setDisplayedItems(initialItems)
         setPage(initialItems.length > 0 ? 1 : 0)
         setHasMore(true)
+        setImageErrors(new Set()) // Reset errors on category change
         // Reset load trigger
         hasInitiallyLoaded.current = false
     }, [categoryId, customCategory?.name]) // Don't depend on initialItems reference to prevent flickering on parent re-renders
@@ -212,23 +214,12 @@ const CategoryPage = ({
         containerRef.current?.focus()
     }, [])
 
-    // Global keyboard listener as fallback (ensures keyboard works even without focus)
-    useEffect(() => {
-        const handleGlobalKeyDown = (e) => {
-            // Only handle if CategoryPage container is in the DOM
-            if (!containerRef.current) return
-            handleKeyDownWrapper(e)
-        }
-        window.addEventListener('keydown', handleGlobalKeyDown)
-        return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-    }, [handleKeyDownWrapper])
-
     if (!category) return null
 
     return (
         <div
             ref={containerRef}
-            className="category-page min-h-screen bg-gray-900 p-6 overflow-y-auto overflow-x-hidden"
+            className="category-page min-h-screen bg-[#141414] p-6 overflow-y-auto overflow-x-hidden focus:outline-none"
             onKeyDown={handleKeyDownWrapper}
             tabIndex={0}
         >
@@ -252,7 +243,7 @@ const CategoryPage = ({
             </div>
 
             {/* Grid */}
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
+            <div className="grid grid-cols-5 gap-4">
                 {displayedItems.map((item, index) => {
                     const posterUrl = getPosterUrl(item)
                     const itemTitle = getTitle(item)
@@ -273,7 +264,7 @@ const CategoryPage = ({
                             style={{ aspectRatio: '2/3' }}
                             aria-label={`${itemTitle} ${year || ''}`}
                         >
-                            {posterUrl ? (
+                            {posterUrl && !imageErrors.has(posterUrl) ? (
                                 <img
                                     src={posterUrl}
                                     alt={itemTitle}
@@ -281,6 +272,7 @@ const CategoryPage = ({
                                     loading="lazy"
                                     onError={(e) => {
                                         reportBrokenImage(e.target.src)
+                                        setImageErrors(prev => new Set([...prev, e.target.src]))
                                         e.target.style.display = 'none'
                                     }}
                                 />

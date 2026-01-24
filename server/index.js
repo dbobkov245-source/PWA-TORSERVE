@@ -38,7 +38,7 @@ app.use(express.json())
 // ────────────────────────────────────────────────────────
 const rateLimitMap = new Map()
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 60 // 🔥 v2.3: increased from 30 for diagnostics polling
+const RATE_LIMIT_MAX = 300 // 🔥 v2.4: increased from 60 to handle bulk poster loading
 
 // ✅ FIX: Сохраняем ID интервала для очистки при shutdown
 let rateLimitCleanupId = null
@@ -54,6 +54,11 @@ rateLimitCleanupId = setInterval(() => {
 }, 5 * 60 * 1000)
 
 app.use('/api/', (req, res, next) => {
+    // 🔥 Skip rate limiting for proxy requests (posters)
+    if (req.path.startsWith('/proxy')) {
+        return next()
+    }
+
     const ip = req.ip || req.connection.remoteAddress || 'unknown'
     const now = Date.now()
 

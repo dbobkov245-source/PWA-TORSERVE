@@ -12,6 +12,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { getPosterUrl, getTitle, getYear } from '../utils/discover'
+import { reportBrokenImage } from '../utils/tmdbClient'
 
 const HomeRow = ({
     title,
@@ -26,6 +27,7 @@ const HomeRow = ({
     const [translateX, setTranslateX] = useState(0)
     const containerRef = useRef(null)
     const [visibleRange, setVisibleRange] = useState({ start: 0, end: 15 })
+    const [imageErrors, setImageErrors] = useState(new Set())
 
     const ITEM_WIDTH = 130
     const ITEM_GAP = 12
@@ -140,12 +142,23 @@ const HomeRow = ({
                                     onFocusChange && onFocusChange(item)
                                 }}
                             >
-                                {posterUrl ? (
+                                {posterUrl && !imageErrors.has(posterUrl) ? (
                                     <img
                                         src={posterUrl}
                                         alt={itemTitle}
                                         className="w-full h-full object-cover rounded-lg"
                                         loading="lazy"
+                                        onError={(e) => {
+                                            console.warn('[HomeRow] Image failed:', e.target.src)
+                                            if (typeof reportBrokenImage === 'function') {
+                                                reportBrokenImage(e.target.src)
+                                            }
+                                            setImageErrors(prev => {
+                                                const next = new Set(prev)
+                                                next.add(posterUrl)
+                                                return next
+                                            })
+                                        }}
                                     />
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center p-2">

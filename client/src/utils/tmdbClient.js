@@ -42,6 +42,32 @@ const IMAGE_MIRRORS = [
 
 const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
 
+/**
+ * Helper to get the base API URL from localStorage or current origin.
+ * Essential for Capacitor native platforms where relative paths fail.
+ */
+function getApiBase() {
+    if (typeof window === 'undefined') return ''
+    const stored = localStorage.getItem('serverUrl')
+
+    // 🔥 FIX: Check if stored URL is valid and NOT localhost (unless in browser)
+    if (stored && stored.includes('://')) {
+        const url = new URL(stored)
+        if (Capacitor.isNativePlatform() && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+            // Skiping localhost on native - it won't work for proxying
+        } else {
+            return stored.replace(/\/$/, '')
+        }
+    }
+
+    // For browser/PWA on same origin as server
+    if (window.location.protocol.startsWith('http') && !Capacitor.isNativePlatform()) {
+        return window.location.origin
+    }
+
+    return ''
+}
+
 // Mirror error tracking - auto-ban after 20 errors in 10 seconds
 const mirrorStats = {}
 IMAGE_MIRRORS.forEach(mirror => {
@@ -105,29 +131,27 @@ export function reportBrokenImage(url) {
 }
 
 /**
- * Get image URL through CDN mirror (Lampa-style)
+ * Get image URL with automatic cascade (Proxy -> Worker -> Lampa -> Mirror -> wsrv.nl)
+ * ARC-01: Multi-layered resilience for images
  * @param {string} path - TMDB image path (e.g., /abcd123.jpg)
  * @param {string} size - Image size (default: w342)
- * @returns {string} - Full image URL through CDN mirror
  */
 export function getImageUrl(path, size = 'w342') {
     if (!path) return ''
-
-    // If already full URL (e.g., Kinopoisk), return as-is
     if (path.startsWith('http')) return path
 
-    // Check proxy mode (safe fallback)
-    const useProxy = localStorage.getItem(PROXY_MODE_KEY) === 'true'
+    const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
+    const apiBase = getApiBase()
 
-    if (useProxy) {
-        // Wrap with wsrv.nl (European Image Proxy)
-        // Use ORIGINAL TMDB domain as source, as wsrv.nl can unblock it
-        const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
-        return `https://wsrv.nl/?url=${encodeURIComponent(originalUrl)}`
+    // 1. For Browser (Localhost): Server Proxy is fine and reliable
+    if (!Capacitor.isNativePlatform() && apiBase) {
+        return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
     }
 
-    const mirror = getCurrentImageMirror()
-    return `https://${mirror}/t/p/${size}${path}`
+    // 2. For APK (TV): Use wsrv.nl Global Mirror with ssl prefix
+    // This matches the working logic in Poster.jsx
+    // Direct CustomProxy/LampaProxy often fails for Images due to CORS/MixedContent on TV
+    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
 }
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────
@@ -254,9 +278,10 @@ async function tryServerProxy(endpoint) {
     try {
         const separator = getSeparator(endpoint)
         const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
-        // Automatically determine server URL (relative path works for PWA)
-        const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`
-        console.log('[TMDB] Trying Server Proxy...')
+        // Use absolute URL for the proxy
+        const apiBase = getApiBase()
+        const proxyUrl = `${apiBase}/api/proxy?url=${encodeURIComponent(targetUrl)}`
+        console.log('[TMDB] Trying Server Proxy:', proxyUrl)
 
         const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
         if (res.ok) {

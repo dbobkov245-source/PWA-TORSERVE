@@ -16,7 +16,8 @@ import {
     getTopRated,
     filterDiscoveryResults,
     getImageUrl,
-    tmdbClient
+    tmdbClient,
+    reportBrokenImage
 } from './tmdbClient.js'
 
 // ─── Discovery Categories (Lampa-style) ────────────────────────
@@ -163,6 +164,8 @@ export function getPosterUrl(item, size = 'w342') {
 
     // TMDB poster via CDN mirror
     if (item.poster_path) {
+        // Use ssl: prefix for TMDB images to avoid mixed content in APK
+        const path = `ssl:image.tmdb.org/t/p/${size}${item.poster_path}`
         return getImageUrl(item.poster_path, size)
     }
 
@@ -176,6 +179,7 @@ export function getBackdropUrl(item, size = 'w1280') {
     if (!item) return null
 
     if (item.backdrop_path) {
+        const path = `ssl:image.tmdb.org/t/p/${size}${item.backdrop_path}`
         return getImageUrl(item.backdrop_path, size)
     }
 

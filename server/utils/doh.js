@@ -225,43 +225,86 @@ export async function getSmartConfig(urlStr, baseOptions = {}) {
     }
 }
 
+import http from 'http';
+
 // --- SMART FETCH ---
-// Universal fetch with DoH resolution
-export async function smartFetch(url, options = {}) {
-    const config = await getSmartConfig(url, options);
+// Universal fetch with DoH resolution and SNI support
+export async function smartFetch(urlStr, options = {}) {
+    const config = await getSmartConfig(urlStr, options);
+    const targetUrl = new URL(config.url);
+    const isHttps = targetUrl.protocol === 'https:';
+    const transport = isHttps ? https : http;
 
-    const fetchOptions = {
-        method: options.method || 'GET',
-        headers: config.headers,
-        signal: AbortSignal.timeout(options.timeout || 10000)
-    };
+    return new Promise((resolve, reject) => {
+        const requestOptions = {
+            method: options.method || 'GET',
+            headers: config.headers,
+            agent: options.agent || (options.insecure ? insecureAgent : undefined),
+        };
 
-    if (options.body) {
-        fetchOptions.body = options.body;
-    }
+        // 🔥 SNI Support for HTTPS when using resolved IP
+        if (config.resolvedIP && isHttps) {
+            requestOptions.hostname = config.resolvedIP;
+            requestOptions.servername = config.hostname; // Critical for TMDB/Cloudflare
+            requestOptions.path = targetUrl.pathname + targetUrl.search;
+        }
 
-    const response = await fetch(config.url, fetchOptions);
+        const req = transport.request(config.resolvedIP && isHttps ? requestOptions : config.url, (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => chunks.push(chunk));
+            res.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                const contentType = res.headers['content-type'] || '';
+                const isJson = contentType.includes('application/json');
+                const isImage = contentType.startsWith('image/');
 
-    // Axios-style response compatibility
-    const contentType = response.headers.get('content-type') || '';
-    const isJson = contentType.includes('application/json');
-    const isImage = contentType.startsWith('image/');
+                let data;
+                try {
+                    if (options.responseType === 'arraybuffer' || isImage) {
+                        data = buffer;
+                    } else if (isJson && buffer.length > 0) {
+                        data = JSON.parse(buffer.toString());
+                    } else {
+                        data = buffer.toString();
+                    }
 
-    let data;
-    if (options.responseType === 'arraybuffer' || isImage) {
-        data = Buffer.from(await response.arrayBuffer());
-    } else if (isJson) {
-        data = await response.json();
-    } else {
-        data = await response.text();
-    }
+                    resolve({
+                        data,
+                        status: res.statusCode,
+                        headers: res.headers,
+                        resolvedIP: config.resolvedIP
+                    });
+                } catch (e) {
+                    // Fallback to text if JSON parse fails
+                    resolve({
+                        data: buffer.toString(),
+                        status: res.statusCode,
+                        headers: res.headers,
+                        resolvedIP: config.resolvedIP,
+                        parseError: e.message
+                    });
+                }
+            });
+        });
 
-    return {
-        data,
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries()),
-        resolvedIP: config.resolvedIP
-    };
+        req.on('error', (err) => {
+            reject(err);
+        });
+
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        req.setTimeout(options.timeout || 15000);
+
+        if (options.body) {
+            const body = typeof options.body === 'object' ? JSON.stringify(options.body) : options.body;
+            req.write(body);
+        }
+
+        req.end();
+    });
 }
 
 // --- DIAGNOSTIC EXPORT ---

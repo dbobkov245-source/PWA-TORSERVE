@@ -108,3 +108,87 @@ export const getGradient = (str) => {
     const h2 = Math.abs((hash * 13) % 360)
     return `linear-gradient(135deg, hsl(${h1}, 70%, 20%), hsl(${h2}, 80%, 15%))`
 }
+
+/**
+ * Smart File Organizer for Torrents
+ * Separates Episodes from Extras/Samples and sorts Episodes by SxxExx
+ */
+export const organizeFiles = (files) => {
+    if (!files || files.length === 0) return { episodes: [], extras: [] }
+
+    const episodes = []
+    const extras = []
+
+    // Regex for SxxExx pattern (e.g. S01E01, s1e1, 1x01)
+    const seasonEpisodeRegex = /(?:s|season|^)?\s*(\d{1,2})\s*(?:e|x|episode|^)\s*(\d{1,2})/i
+    // Regex for simple Episode pattern (e.g. Episode 1, Ep 1) if no season detected
+    const episodeRegex = /(?:e|ep|episode)\s*(\d{1,3})/i
+
+    // Keywords identifying junk/extras
+    const extraKeywords = ['sample', 'trailer', 'promo', 'featurette', 'extra', 'bonus', 'interview', 'behind the scenes']
+
+    files.forEach(file => {
+        const nameLower = file.name.toLowerCase()
+
+        // 1. Detect Extras
+        if (extraKeywords.some(kw => nameLower.includes(kw))) {
+            extras.push(file)
+            return
+        }
+
+        // 2. Detect Season/Episode
+        const seMatch = file.name.match(seasonEpisodeRegex)
+
+        if (seMatch) {
+            // Found SxxExx
+            const season = parseInt(seMatch[1], 10)
+            const episode = parseInt(seMatch[2], 10)
+            episodes.push({
+                ...file,
+                season,
+                episode,
+                sortKey: season * 1000 + episode // Simple sort key (S01E01 = 1001)
+            })
+        } else {
+            // Try just Episode number
+            const epMatch = file.name.match(episodeRegex)
+            if (epMatch) {
+                const episode = parseInt(epMatch[1], 10)
+                episodes.push({
+                    ...file,
+                    season: 1, // Assume S1 if unknown
+                    episode,
+                    sortKey: 1000 + episode
+                })
+            } else {
+                // No numbering found - classify as Extra if it's not clearly the main movie
+                // If the torrent has many files and this one has no number, it's likely extra
+                // BUT if it's a single file torrent, it's the movie. 
+                // Since this function is usually for lists, we treat unnumbered as extras 
+                // unless it looks very much like a video file and we have no other episodes.
+                extras.push(file)
+            }
+        }
+    })
+
+    // If we have NO episodes detected but have "extras", it might be that the regex failed 
+    // or it's just a list of movies (e.g. invalid series pack). 
+    // In that case, move everything to "episodes" and sort alphabetically.
+    if (episodes.length === 0 && extras.length > 0) {
+        return {
+            episodes: extras.sort((a, b) => a.name.localeCompare(b.name)),
+            extras: []
+        }
+    }
+
+    // Sort Episodes by Season/Episode
+    episodes.sort((a, b) => {
+        if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey
+        return a.name.localeCompare(b.name)
+    })
+
+    // Sort Extras alphabetically
+    extras.sort((a, b) => a.name.localeCompare(b.name))
+
+    return { episodes, extras }
+}
