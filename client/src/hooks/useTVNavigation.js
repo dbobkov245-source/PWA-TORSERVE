@@ -120,6 +120,7 @@ export const useTVNavigation = ({
 
         if (handled) {
             e.preventDefault()
+            e.stopPropagation() // ✅ Prevent bubbling to HomePanel if handled here
             if (newIndex !== focusedIndex && newIndex >= 0 && newIndex < itemCount) {
                 setFocusedIndex(newIndex)
             }
@@ -128,14 +129,8 @@ export const useTVNavigation = ({
 
     // Scroll into view when focused index changes
     // FIX-01a: Use 'center' instead of 'nearest' for better TV UX
-    useEffect(() => {
-        if (focusedIndex >= 0 && itemRefs?.current?.[focusedIndex]) {
-            itemRefs.current[focusedIndex].scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
-            })
-        }
-    }, [focusedIndex, itemRefs])
+    // Scroll into view logic removed: relying on focus() native behavior prevents "fighting" and lag.
+    // If explicit scrolling is needed later, use 'scroll-margin' CSS on items instead.
 
     // Focus the element when index changes
     useEffect(() => {

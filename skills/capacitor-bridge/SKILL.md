@@ -11,7 +11,7 @@ This skill handles the communication between the React Frontend and the Native A
 ## 桥 API Contract
 
 ### `TVPlayer.play(options)`
-Launches a single video file.
+Launches a single video file. **Must return a Promise that resolves only after the player closes.**
 
 **Options:**
 *   `url` (string, required): Direct link to the video stream.
@@ -53,5 +53,7 @@ Launches a playlist (Season/Series).
 
 ## ⚠️ Critical Rules
 1.  **Do NOT change `FLAG_ACTIVITY_SINGLE_TOP`.** This prevents the app from restarting or opening a second instance of the intent chooser.
-2.  **Lifecycle:** The promise resolves when `onActivityResult` fires (i.e., user closes the player).
-3.  **Resume Logic:** The result object contains `{ position: number, duration: number, finished: boolean }`. You MUST save this to `localStorage` immediately.
+2.  **RESTRICTED: `FLAG_ACTIVITY_NEW_TASK` and `FLAG_ACTIVITY_CLEAR_TOP`**. These flags are essential for correct stack manipulation between PWA and Native Player. Removing them breaks the return journey.
+3.  **Lifecycle:** The promise resolves when `onActivityResult` fires (i.e., user closes the player).
+    *   **Requirement:** `play()` method MUST return a Promise resolving with `{ position, duration }`.
+4.  **Resume Logic:** The result object contains `{ position: number, duration: number, finished: boolean }`. You MUST save this to `localStorage` immediately.

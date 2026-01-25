@@ -20,6 +20,8 @@ import {
     reportBrokenImage
 } from './tmdbClient.js'
 
+export { getImageUrl }
+
 // ─── Discovery Categories (Lampa-style) ────────────────────────
 
 // Fetch helpers for new endpoints

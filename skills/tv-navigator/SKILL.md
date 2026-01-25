@@ -27,7 +27,8 @@ const {
   onSelect: (index) => void, // Enter/OK press
   onBack: () => void,     // Escape/Back press
   loop: boolean,          // Default: false
-  trapFocus: boolean      // Default: true
+  trapFocus: boolean,     // true = Isolated (Modals), false = Global (HomeRow)
+  isActive: boolean       // External control. If false, ignores all input.
 })
 ```
 
@@ -42,6 +43,11 @@ You must attach refs to items:
 ```javascript
 <div ref={el => itemRefs.current[index] = el} ... >
 ```
+
+### 4. Integration with `activeArea`
+The hook must respect the `isActive` flag.
+*   If `isActive === false`: The hook ignores ALL key presses.
+*   This allows other UI areas (like the Sidebar) to take over control without unmounting the grid.
 
 ## 🛠 Common Patterns
 

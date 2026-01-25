@@ -26,6 +26,8 @@ const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
 
 // Cache configuration
 const CACHE_PREFIX = 'tmdb_cache_v1_'
+const METADATA_CACHE_PREFIX = 'metadata_v1_' // Consolidated from Poster.jsx
+const METADATA_CACHE_LIMIT = 300
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for search
 const DISCOVERY_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for discovery
 
@@ -148,10 +150,20 @@ export function getImageUrl(path, size = 'w342') {
         return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
     }
 
-    // 2. For APK (TV): Use wsrv.nl Global Mirror with ssl prefix
-    // This matches the working logic in Poster.jsx
-    // Direct CustomProxy/LampaProxy often fails for Images due to CORS/MixedContent on TV
-    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
+    // 2. For APK (TV): Use Dynamic Mirror System
+    // ARC-01: Check if Proxy Mode (WSRV) is forcibly enabled (due to all mirrors banned)
+    const proxyMode = localStorage.getItem(PROXY_MODE_KEY) === 'true'
+
+    if (proxyMode) {
+        // Fallback: WSRV Global Proxy
+        // Handles "ssl:" for TMDB bypassing
+        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
+    }
+
+    // Default: Use active CDN mirror (e.g. imagetmdb.com)
+    // This connects to Lampa's mirror system which is fast and resilient in RU
+    const mirror = getCurrentImageMirror()
+    return `https://${mirror}/t/p/${size}${path}`
 }
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────
@@ -218,6 +230,121 @@ function setCache(endpoint, data, ttl = CACHE_TTL) {
     } catch (e) {
         console.warn('[Cache] Failed to save:', e.message)
     }
+}
+
+// ─── Metadata Cache (Consolidated) ────────────────────────────
+
+/**
+ * Save enriched metadata to localStorage with LRU eviction
+ * Moved from Poster.jsx to unify cache logic
+ */
+export const saveMetadata = (name, data) => {
+    if (!name || !data) return
+    // Clean name for key consistency
+    const key = METADATA_CACHE_PREFIX + name.toLowerCase().trim()
+    const entry = { ...data, timestamp: Date.now() }
+
+    try {
+        localStorage.setItem(key, JSON.stringify(entry))
+
+        // LRU Eviction: check cache size periodically (10% chance on write)
+        if (Math.random() < 0.1) {
+            const allKeys = Object.keys(localStorage).filter(k => k.startsWith(METADATA_CACHE_PREFIX))
+            if (allKeys.length > METADATA_CACHE_LIMIT) {
+                // Find oldest entries
+                const entries = allKeys.map(k => {
+                    try {
+                        const val = JSON.parse(localStorage.getItem(k))
+                        return { key: k, timestamp: val?.timestamp || 0 }
+                    } catch { return { key: k, timestamp: 0 } }
+                })
+                entries.sort((a, b) => a.timestamp - b.timestamp)
+
+                // Remove oldest 20%
+                const toRemove = Math.ceil(METADATA_CACHE_LIMIT * 0.2)
+                entries.slice(0, toRemove).forEach(e => localStorage.removeItem(e.key))
+                console.log(`[Metadata] LRU eviction: removed ${toRemove} entries`)
+            }
+        }
+    } catch (e) {
+        console.warn('[Metadata] Failed to save:', e)
+    }
+}
+
+/**
+ * Get cached metadata for a title
+ * @param {string} name - Movie/show name
+ */
+export const getMetadata = (name) => {
+    if (!name) return null
+    const key = METADATA_CACHE_PREFIX + name.toLowerCase().trim()
+    try {
+        const cached = localStorage.getItem(key)
+        if (cached) {
+            return JSON.parse(cached)
+        }
+    } catch { }
+    return null
+}
+
+/**
+ * Resolve metadata by name (Fetch + Cache + Normalization)
+ * "Inversion of Control" for Poster.jsx
+ * @param {string} name - Raw title from torrent
+ * @returns {Promise<Object|null>}
+ */
+export const resolveMetadata = async (name) => {
+    if (!name) return null
+
+    // 1. Check cache first
+    const cleanName = name.replace(/[\._]/g, ' ').trim()
+    const cached = getMetadata(cleanName)
+    if (cached) return cached
+
+    // 2. Fetch using Unified Client (Cascading)
+    try {
+        const query = encodeURIComponent(cleanName)
+        const response = await tmdbClient(`/search/multi?query=${query}`, {
+            searchQuery: cleanName // Enable Kinopoisk fallback
+        })
+
+        const result = response.results?.find(r => r.poster_path || r._kp_data?.posterUrlPreview)
+
+        if (result) {
+            // 3. Normalize & Enrich
+            const isKp = response.source === 'kinopoisk'
+            const posterPath = result.poster_path || result._kp_data?.posterUrlPreview
+            const backdropPath = result.backdrop_path
+
+            // Generate full URLs using resilience logic
+            const posterUrl = isKp
+                ? `https://wsrv.nl/?url=${encodeURIComponent(posterPath)}&output=webp`
+                : getImageUrl(posterPath, 'w500')
+
+            const backdropUrl = !isKp && backdropPath
+                ? getImageUrl(backdropPath, 'w1280')
+                : null
+
+            const metadata = {
+                poster: posterUrl,
+                backdrop: backdropUrl,
+                overview: result.overview || null,
+                rating: result.vote_average || null,
+                year: (result.release_date || result.first_air_date || '').substring(0, 4) || null,
+                title: result.title || result.name || cleanName,
+                source: response.source,
+                id: result.id
+            }
+
+            // 4. Save to cache
+            saveMetadata(cleanName, metadata)
+            return metadata
+        }
+    } catch (err) {
+        console.warn('[metadata] Resolve failed:', err)
+    }
+
+    return null
 }
 
 // ─── Fetch Strategies ──────────────────────────────────────────

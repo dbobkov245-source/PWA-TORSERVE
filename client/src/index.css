@@ -4,22 +4,32 @@
    PWA-TorServe - TV-First Design System
    ───────────────────────────────────────────────────────────── */
 
-/* Prevent horizontal overflow */
+/* Prevent horizontal and vertical overflow (TV App Mode) */
 html,
 body {
-  overflow-x: hidden;
-  width: 100%;
-  max-width: 100vw;
+  overflow: hidden;
+  /* Lock body scroll */
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+  /* Prevent bounce */
 }
 
 #root {
-  min-height: 100vh;
-  width: 100%;
-  overflow-x: hidden;
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  /* Lock root scroll */
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TV Focus States (D-Pad Navigation)
+   TV Focus States (v4.0 Spatial Unified)
    ───────────────────────────────────────────────────────────── */
 
 /* Remove default focus outline */
@@ -27,32 +37,44 @@ body {
   outline: none;
 }
 
-/* TV-Friendly Focus Ring */
-.tv-focusable:focus,
-.tv-card:focus,
-button:focus,
-[tabindex]:focus {
+/* Base focusable item */
+.focusable {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.8);
-  transform: scale(1.02);
-  transition: all 0.15s ease-out;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  scroll-margin: 120px;
+  /* Automated scroll spacing */
 }
 
-/* FIX-01a: JS-managed .focused class (for useTVNavigation) */
-.focused,
-.tv-focusable.focused,
-.tv-card.focused {
-  outline: none;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.8);
-  transform: scale(1.02);
-  transition: all 0.15s ease-out;
+.focusable:focus {
+  scale: 1.05;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.8), 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+
+  /* Only add relative if not already absolute/fixed */
+  &:not(.absolute):not(.fixed) {
+    position: relative;
+  }
 }
 
-.tv-card.focused {
-  transform: scale(1.08);
-  box-shadow: 0 0 0 4px white, 0 8px 30px rgba(0, 0, 0, 0.5);
-  z-index: 10;
-  position: relative;
+/* ─────────────────────────────────────────────────────────────
+   Horizontal Snap Containers
+   ───────────────────────────────────────────────────────────── */
+.snap-container {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.snap-container::-webkit-scrollbar {
+  display: none;
+}
+
+.snap-item {
+  scroll-snap-align: center;
+  flex-shrink: 0;
 }
 
 /* Card Focus - Netflix Style */
@@ -398,10 +420,6 @@ button:focus,
    Animations
    ───────────────────────────────────────────────────────────── */
 
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out;
-}
-
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -412,6 +430,37 @@ button:focus,
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #444;
 }
 
 /* Removed pulse-ready animation to prevent visual conflict with focus state */

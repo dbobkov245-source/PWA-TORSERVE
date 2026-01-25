@@ -1,3 +1,5 @@
+# [DIAGNOSTIC ONLY] This script is a manual sanity check for devs.
+# It must NOT be integrated into the application runtime.
 import requests
 import time
 

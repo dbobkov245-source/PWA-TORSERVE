@@ -1,148 +1,173 @@
-/**
- * DiagnosticsPanel Component - Debug information display
- * Shows RAM, lag events, active engines, frozen torrents, watchdog status
- */
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { cleanTitle } from '../utils/helpers'
 
-const DiagnosticsPanel = ({ serverUrl, onClose }) => {
-    const [data, setData] = useState(null)
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState(null)
+const PosterTestItem = ({ torrent, onClick }) => {
+    const spatialRef = useSpatialItem('modal')
+    const title = cleanTitle(torrent.name) || torrent.name
+    return (
+        <button
+            ref={spatialRef}
+            tabIndex="0"
+            onClick={() => onClick(title)}
+            className="focusable w-full text-left p-2.5 bg-gray-800 hover:bg-gray-750 rounded text-xs truncate border border-gray-700 mb-1 focus:bg-blue-600 focus:text-white transition-colors"
+        >
+            🎬 {title}
+        </button>
+    )
+}
 
-    const fetchDiagnostics = async () => {
-        setLoading(true)
-        setError(null)
+const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, onClose, torrents = [] }) => {
+    // State
+    const [mode, setMode] = useState('poster') // 'server' | 'poster'
+    const [statusData, setStatusData] = useState(null)
+    const [statusLoading, setStatusLoading] = useState(false)
+    const [testResult, setTestResult] = useState(null)
+    const [testLoading, setTestLoading] = useState(false)
 
+    // Refs
+    const closeBtnRef = useSpatialItem('modal')
+    const refreshBtnRef = useSpatialItem('modal')
+    const modeServerRef = useSpatialItem('modal')
+    const modePosterRef = useSpatialItem('modal')
+
+    // --- Server Stats Logic ---
+    const fetchStatus = async () => {
+        setStatusLoading(true)
         try {
-            // Fetch both status and lag-stats
-            const [statusRes, lagRes] = await Promise.all([
-                fetch(`${serverUrl}/api/status`),
-                fetch(`${serverUrl}/api/lag-stats`)
+            const [sRes, lRes] = await Promise.all([
+                fetch(`${serverUrl}/api/status`).catch(e => ({ ok: false })),
+                fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false }))
             ])
-
-            if (!statusRes.ok) throw new Error(`Status API: ${statusRes.status}`)
-            if (!lagRes.ok) throw new Error(`Lag API: ${lagRes.status}`)
-
-            const statusData = await statusRes.json()
-            const lagData = await lagRes.json()
-
-            setData({
-                serverStatus: statusData.serverStatus,
-                torrentsCount: statusData.torrents?.length || 0,
-                lagStats: lagData,
-                ram: lagData.recentLags?.[0]?.memory || 'N/A'
+            const sData = sRes.ok ? await sRes.json() : {}
+            const lData = lRes.ok ? await lRes.json() : {}
+            setStatusData({
+                server: sData.serverStatus || 'N/A',
+                ram: lData.server?.ram?.rss || 'N/A',
+                uptime: lData.server?.uptime || 0,
+                lags: lData.totalLags || 0,
+                active: lData.server?.torrents?.active || 0,
+                frozen: lData.server?.torrents?.frozen || 0
             })
-        } catch (e) {
-            setError(e.message)
-        } finally {
-            setLoading(false)
-        }
+        } catch (e) { console.error(e) }
+        finally { setStatusLoading(false) }
     }
 
     useEffect(() => {
-        fetchDiagnostics()
-        const interval = setInterval(fetchDiagnostics, 5000) // Refresh every 5s
-        return () => clearInterval(interval)
-    }, [serverUrl])
+        if (mode === 'server') fetchStatus()
+    }, [mode])
+
+    // --- Poster Test Logic ---
+    const runPosterTest = async (testName) => {
+        setTestLoading(true)
+        setTestResult(null)
+
+        const query = encodeURIComponent(testName)
+        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "c3bec60e67fabf42dd2202281dcbc9a7"
+        const CUSTOM_PROXY = tmdbProxyUrl || import.meta.env.VITE_TMDB_PROXY_URL || ''
+        const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
+        const IMAGE_MIRRORS = ['imagetmdb.com', 'nl.imagetmdb.com', 'lampa.byskaz.ru/tmdb/img']
+
+        let results = []
+        const check = async (name, url, parser) => {
+            try {
+                const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+                if (res.ok) {
+                    const d = await res.json()
+                    const found = parser ? parser(d) : true
+                    results.push({ name, status: found ? '✅' : '⚠️', detail: typeof found === 'string' ? found : 'Online' })
+                } else results.push({ name, status: '❌', detail: `HTTP ${res.status}` })
+            } catch (e) { results.push({ name, status: '❌', detail: e.message }) }
+        }
+
+        // 1. Standard Checks
+        await Promise.all([
+            check('Direct TMDB', `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title),
+            CUSTOM_PROXY ? check('Custom Worker', `${CUSTOM_PROXY.replace(/\/$/, '')}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title) : Promise.resolve(),
+            check('Lampa Proxy', `https://apn-latest.onrender.com/https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title),
+            check('corsproxy.io', `https://corsproxy.io/?${encodeURIComponent('https://api.themoviedb.org/3/search/multi?api_key=' + TMDB_API_KEY + '&query=' + query)}`, d => d.results?.[0]?.title),
+            check('Кинопоиск', `${KP_PROXY}/https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d.films?.[0]?.nameRu)
+        ])
+
+        // 2. Additional Checks
+        results.push({ name: 'Capacitor', status: '📡', detail: 'Native Mode' })
+
+        if (serverUrl) {
+            const targetUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            await check('Server Proxy', `${serverUrl.replace(/\/$/, '')}/api/proxy?url=${encodeURIComponent(targetUrl)}`, d => d.results?.[0]?.title)
+        }
+
+        await check('WSRV Proxy', `https://images.weserv.nl/?url=${encodeURIComponent('https://image.tmdb.org/t/p/w92/or1MPoTbbZ6FbZ6Cc0ArvpfCneA.jpg')}&output=json`)
+
+        // 3. Image Mirrors
+        const imgCheck = await Promise.all(IMAGE_MIRRORS.map(async m => {
+            try {
+                await fetch(`https://${m}/t/p/w92/or1MPoTbbZ6FbZ6Cc0ArvpfCneA.jpg`, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(3000) })
+                return { name: m, status: '✅' }
+            } catch { return { name: m, status: '❌' } }
+        }))
+        imgCheck.forEach(r => results.push({ ...r, detail: 'Mirror' }))
+
+        setTestResult({ name: testName, results })
+        setTestLoading(false)
+    }
+
+    const formatUptime = (s) => {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+        return `${h}h ${m}m`
+    }
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
-            onClick={onClose}
-        >
-            <div
-                className="bg-[#181818] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl"
-                onClick={e => e.stopPropagation()}
-            >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-[#1a1a1a] border border-gray-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
                 {/* Header */}
-                <div className="bg-gradient-to-r from-purple-900 to-gray-900 px-3 py-2 flex items-center justify-between">
-                    <h2 className="text-base font-bold flex items-center gap-2">
-                        🔧 Diagnostics
-                    </h2>
-                    <button
-                        onClick={onClose}
-                        className="bg-black/40 rounded-full p-1.5 text-white hover:bg-black/60 text-sm"
-                    >
-                        ✕
-                    </button>
+                <div className="bg-gradient-to-r from-blue-900/60 to-purple-900/60 p-4 flex items-center justify-between border-b border-white/10">
+                    <div className="flex gap-4">
+                        <button ref={modePosterRef} tabIndex="0" onClick={() => setMode('poster')} className={`focusable text-sm font-bold transition-opacity ${mode === 'poster' ? 'text-white' : 'text-white/50'}`}>🖼️ Постеры</button>
+                        <button ref={modeServerRef} tabIndex="0" onClick={() => setMode('server')} className={`focusable text-sm font-bold transition-opacity ${mode === 'server' ? 'text-white' : 'text-white/50'}`}>📊 Сервер</button>
+                    </div>
+                    <button ref={closeBtnRef} tabIndex="0" onClick={onClose} className="focusable text-gray-400 hover:text-white px-2">✕</button>
                 </div>
 
-                <div className="p-3 space-y-2">
-                    {loading && !data && (
-                        <div className="text-center text-gray-400 py-4">
-                            <span className="animate-pulse">Loading...</span>
-                        </div>
-                    )}
-
-                    {error && (
-                        <div className="bg-red-900/30 border border-red-700 rounded p-2 text-red-300 text-xs">
-                            ❌ Error: {error}
-                        </div>
-                    )}
-
-                    {data && (
-                        <>
-                            {/* Server Status - Compact */}
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className="bg-gray-800 rounded p-2">
-                                    <div className="text-gray-400 text-[10px] uppercase">Status</div>
-                                    <div className="text-sm font-bold">
-                                        {data.serverStatus === 'ok' && '🟢 OK'}
-                                        {data.serverStatus === 'degraded' && '🟡 Degraded'}
-                                        {data.serverStatus === 'circuit_open' && '🔴 Circuit Open'}
-                                        {data.serverStatus === 'error' && '🔴 Error'}
-                                    </div>
-                                </div>
-                                <div className="bg-gray-800 rounded p-2">
-                                    <div className="text-gray-400 text-[10px] uppercase">Torrents</div>
-                                    <div className="text-sm font-bold">{data.torrentsCount}</div>
-                                </div>
-                            </div>
-
-                            {/* Lag Stats - Compact inline */}
-                            <div className="bg-gray-800 rounded p-2">
-                                <div className="flex justify-between items-center text-xs">
-                                    <span className="text-gray-500">Lag:</span>
-                                    <span className="font-mono">
-                                        <span className="text-blue-400">{data.lagStats.recentLags || 0}</span> spikes,
-                                        <span className="text-yellow-400"> {data.lagStats.avgLag || 0}ms</span> avg,
-                                        <span className="text-red-400"> {data.lagStats.maxLag || 0}ms</span> max
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Server Info - Compact */}
-                            {data.lagStats.server && (
-                                <div className="bg-gray-800 rounded p-2">
-                                    <div className="grid grid-cols-4 gap-1 text-xs">
-                                        <div className="text-center">
-                                            <div className="text-gray-500">Up</div>
-                                            <div className="text-white font-mono">{Math.floor(data.lagStats.server.uptime / 60)}m</div>
-                                        </div>
-                                        <div className="text-center">
-                                            <div className="text-gray-500">RAM</div>
-                                            <div className="text-white font-mono">{data.lagStats.server.ram?.rss || 0}MB</div>
-                                        </div>
-                                        <div className="text-center">
-                                            <div className="text-gray-500">Active</div>
-                                            <div className="text-green-400 font-mono">{data.lagStats.server.torrents?.active || 0}</div>
-                                        </div>
-                                        <div className="text-center">
-                                            <div className="text-gray-500">Frozen</div>
-                                            <div className="text-blue-400 font-mono">{data.lagStats.server.torrents?.frozen || 0}</div>
-                                        </div>
-                                    </div>
+                {/* Content */}
+                <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
+                    {mode === 'server' && (
+                        <div className="space-y-4">
+                            {statusLoading ? <div className="text-center animate-pulse">Загрузка...</div> : (
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">STATUS</div><div className={`text-xl font-mono ${statusData?.server === 'ok' ? 'text-green-400' : 'text-yellow-400'}`}>{statusData?.server?.toUpperCase()}</div></div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">RAM</div><div className="text-xl font-mono">{statusData?.ram} MB</div></div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">UPTIME</div><div className="text-xl font-mono">{formatUptime(statusData?.uptime)}</div></div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">ACTIVE</div><div className="text-xl font-mono text-blue-400">{statusData?.active}</div></div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">FROZEN</div><div className="text-xl font-mono text-purple-400">{statusData?.frozen}</div></div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold">LAGS</div><div className={`text-xl font-mono ${statusData?.lags > 0 ? 'text-red-400' : 'text-green-400'}`}>{statusData?.lags}</div></div>
                                 </div>
                             )}
+                            <button ref={refreshBtnRef} tabIndex="0" onClick={fetchStatus} className="focusable w-full py-3 bg-blue-600/20 text-blue-400 rounded-xl font-bold text-sm border border-blue-500/30">Обновить статус</button>
+                        </div>
+                    )}
 
-                            {/* Refresh button - Compact */}
-                            <button
-                                onClick={fetchDiagnostics}
-                                className="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 rounded text-sm font-medium transition-colors"
-                            >
-                                🔄 Refresh
-                            </button>
-                        </>
+                    {mode === 'poster' && (
+                        <div className="space-y-4">
+                            <div className="max-h-32 overflow-y-auto border border-white/10 rounded-xl bg-black/20 p-1">
+                                {torrents.map(t => <PosterTestItem key={t.infoHash} torrent={t} onClick={runPosterTest} />)}
+                                {torrents.length === 0 && <div className="text-center text-xs text-gray-500 py-4">Нет торрентов</div>}
+                            </div>
+
+                            {testLoading && <div className="text-center text-xs text-blue-400 animate-pulse">Тестируем 6 методов...</div>}
+
+                            {testResult && (
+                                <div className="bg-black/40 rounded-xl border border-white/10 p-3 text-[11px] space-y-1">
+                                    <div className="font-bold text-gray-300 border-b border-white/10 pb-1 mb-1">{testResult.name}</div>
+                                    {testResult.results.map((r, i) => (
+                                        <div key={i} className="flex justify-between items-center">
+                                            <span className={`${r.status === '✅' ? 'text-green-400' : 'text-red-400'}`}>{r.status} {r.name}</span>
+                                            <span className="text-gray-500 truncate max-w-[120px]">{r.detail}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>

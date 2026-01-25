@@ -1,14 +1,15 @@
 /**
  * TorLookProvider - TorLook.info torrent search provider
- * PWA-TorServe Provider Architecture
+ * PWA-TorServe Provider Architecture v2.7.2
  * 
  * TorLook is a torrent aggregator/metasearch engine
  * Implements HTML parsing, no authentication required
+ * Updated to use Smart Fetch (DoH) for resilience
  */
 
-import https from 'https'
 import { BaseProvider } from './BaseProvider.js'
 import { logger } from '../utils/logger.js'
+import { smartFetch } from '../utils/doh.js'
 
 const log = logger.child('TorLookProvider')
 
@@ -51,52 +52,21 @@ export class TorLookProvider extends BaseProvider {
      * Do search request
      * @private
      */
-    _doSearch(query) {
-        return new Promise((resolve, reject) => {
-            // TorLook search URL: /search/query/
-            const searchPath = `/search/${encodeURIComponent(query)}/`
+    async _doSearch(query) {
+        const url = `https://${TORLOOK_HOST}/search/${encodeURIComponent(query)}/`
 
-            const options = {
-                hostname: TORLOOK_HOST,
-                port: 443,
-                path: searchPath,
-                method: 'GET',
+        try {
+            const response = await smartFetch(url, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html',
                     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
                 },
-                timeout: 15000
-            }
-
-            const req = https.request(options, (res) => {
-                if (res.statusCode !== 200) {
-                    reject(new Error(`HTTP ${res.statusCode}`))
-                    return
-                }
-
-                let data = ''
-                res.setEncoding('utf8')
-
-                res.on('data', chunk => data += chunk)
-                res.on('end', () => {
-                    try {
-                        const results = this._parseResults(data)
-                        resolve(results)
-                    } catch (err) {
-                        reject(new Error(`Parse failed: ${err.message}`))
-                    }
-                })
+                timeout: 30000
             })
-
-            req.on('error', reject)
-            req.on('timeout', () => {
-                req.destroy()
-                reject(new Error('Timeout'))
-            })
-
-            req.end()
-        })
+            return this._parseResults(response.data)
+        } catch (e) {
+            // TorLook very often redirects 302 to main page on block, which might cause parse error or timeout
+            throw e
+        }
     }
 
     /**

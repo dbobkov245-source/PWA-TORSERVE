@@ -1,25 +1,24 @@
 /**
  * RutorProvider - Rutor.info torrent search provider
- * PWA-TorServe Provider Architecture
+ * PWA-TorServe Provider Architecture v2.7.2
  * 
  * Implements Rutor search with:
  * - Mirror rotation (rutor.info, rutor.is)
+ * - Smart Fetch (DoH + SNI Bypass) for ISP blocking resilience
  * - HTML parsing via regex (no external deps)
  * - No authentication required (public tracker)
- * - Magnet links directly in search results
  */
 
-import https from 'https'
-import http from 'http'
 import { BaseProvider, formatSize } from './BaseProvider.js'
 import { logger } from '../utils/logger.js'
+import { smartFetch } from '../utils/doh.js'
 
 const log = logger.child('RutorProvider')
 
 // Rutor mirrors
 const RUTOR_MIRRORS = [
-    { host: 'rutor.info', protocol: 'http', port: 80 },
-    { host: 'rutor.is', protocol: 'http', port: 80 },
+    { host: 'rutor.info', protocol: 'https' },
+    { host: 'rutor.is', protocol: 'https' },
 ]
 
 export class RutorProvider extends BaseProvider {
@@ -71,54 +70,20 @@ export class RutorProvider extends BaseProvider {
      * Do search request to specific mirror
      * @private
      */
-    _doSearch(mirror, query) {
-        return new Promise((resolve, reject) => {
-            // Rutor search URL format: /search/0/0/000/0/{query}
-            const searchPath = `/search/0/0/000/0/${encodeURIComponent(query)}`
+    async _doSearch(mirror, query) {
+        const url = `${mirror.protocol}://${mirror.host}/search/0/0/000/0/${encodeURIComponent(query)}`
 
-            const options = {
-                hostname: mirror.host,
-                port: mirror.port,
-                path: searchPath,
-                method: 'GET',
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html',
-                    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
-                },
-                timeout: 15000
-            }
-
-            const protocol = mirror.protocol === 'https' ? https : http
-
-            const req = protocol.request(options, (res) => {
-                if (res.statusCode !== 200) {
-                    reject(new Error(`HTTP ${res.statusCode}`))
-                    return
-                }
-
-                let data = ''
-                res.setEncoding('utf8')
-
-                res.on('data', chunk => data += chunk)
-                res.on('end', () => {
-                    try {
-                        const results = this._parseResults(data)
-                        resolve(results)
-                    } catch (err) {
-                        reject(new Error(`Parse failed: ${err.message}`))
-                    }
-                })
-            })
-
-            req.on('error', reject)
-            req.on('timeout', () => {
-                req.destroy()
-                reject(new Error('Timeout'))
-            })
-
-            req.end()
+        const response = await smartFetch(url, {
+            headers: {
+                'Accept': 'text/html',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            },
+            timeout: 45000
         })
+
+        return this._parseResults(response.data)
     }
 
     /**

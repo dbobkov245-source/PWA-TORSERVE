@@ -13,10 +13,10 @@ import https from 'https';
 
 // --- CONFIGURATION ---
 const CACHE_TTL_MS = 1000 * 60 * 10; // 10 minutes
-const RACE_TIMEOUT_MS = 2000; // 2 seconds per provider in race
+const RACE_TIMEOUT_MS = 5000; // Increased to 5s for slow networks
 const CIRCUIT_BREAKER_THRESHOLD = 3; // Failures before opening circuit
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 1000; // 1 minute cooldown
-const DEBUG = process.env.DOH_DEBUG === 'true';
+const DEBUG = true; // Force debug logging for investigation
 
 // --- DoH PROVIDERS ---
 // ARC-01: Multiple providers for resilience
@@ -296,7 +296,9 @@ export async function smartFetch(urlStr, options = {}) {
             reject(new Error('Request timeout'));
         });
 
-        req.setTimeout(options.timeout || 15000);
+        const effectiveTimeout = options.timeout || 30000;
+        if (DEBUG) console.log(`[SmartFetch] ${new URL(config.url).hostname} timeout set to ${effectiveTimeout}ms`);
+        req.setTimeout(effectiveTimeout);
 
         if (options.body) {
             const body = typeof options.body === 'object' ? JSON.stringify(options.body) : options.body;

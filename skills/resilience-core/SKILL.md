@@ -8,7 +8,7 @@ description: Specialist in network resilience, anti-censorship, and TMDB access 
 This skill ensures 100% uptime for metadata fetching by using a multi-layer fallback strategy.
 **Metric:** The user must NEVER see a blank poster or missing description due to a network error.
 
-## 🌐 The 5-Level Cascade
+## 🌐 The Multi-Level Resilience Cascade
 Every external request (especially to TMDB) MUST go through `tmdbClient.js`.
 NEVER use `fetch()` directly for metadata.
 
@@ -20,7 +20,14 @@ NEVER use `fetch()` directly for metadata.
     *   Uses `dns.google` API to resolve IP, bypassing ISP DNS Poisoning.
     *   Sends direct HTTPS requests to IP with `Host` header.
 5.  **Corsproxy.io:** Browser-based fallback.
-6.  **Kinopoisk (Search Only):** Last resort if TMDB is fully dead.
+6.  **Kinopoisk (Out-of-band Fallback):**
+    *   Used ONLY for text data (titles, descriptions).
+    *   Triggered ONLY if TMDB is completely unreachable via all above levels.
+
+### 🚦 Traffic Isolation Rule
+**RULE:** DoH (DNS-over-HTTPS) and IP-direct requests are used **TOKYO for API data (JSON)**.
+*   **NEVER** use DoH mechanisms for loading images/posters.
+*   Images have their own resilience logic (Mirrors -> WSRV.NL).
 
 ## 🛡️ Image Resilience
 Images use a separate logic:

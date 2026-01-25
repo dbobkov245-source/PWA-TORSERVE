@@ -2,6 +2,7 @@
  * Status Banner Components - Error states and loading indicators
  */
 import { useState, useEffect } from 'react'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 /**
  * DegradedBanner - Shows when server is in degraded mode (high memory)
@@ -111,6 +112,7 @@ export const BufferingBanner = ({ name, progress }) => {
  * ServerStatusBar - Small indicator showing server health
  */
 export const ServerStatusBar = ({ status, onDiagnosticsClick }) => {
+    const spatialRef = useSpatialItem('main')
     const getStatusInfo = () => {
         switch (status) {
             case 'ok':
@@ -130,8 +132,10 @@ export const ServerStatusBar = ({ status, onDiagnosticsClick }) => {
 
     return (
         <button
+            ref={spatialRef}
+            tabIndex="0"
             onClick={onDiagnosticsClick}
-            className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-2 transition-colors hover:opacity-80 ${info.color}`}
+            className={`focusable px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-2 transition-colors hover:opacity-80 focus:bg-blue-600 focus:text-white ${info.color}`}
         >
             <span>{info.icon}</span>
             <span>{info.text}</span>

@@ -1,3 +1,5 @@
+// REFERENCE IMPLEMENTATION: Use for isolated grids. 
+// WARNING: For global home rows, ensure trapFocus is FALSE.
 import React, { useRef, useEffect } from 'react';
 import useTVNavigation from '../../client/src/hooks/useTVNavigation';
 

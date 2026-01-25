@@ -1,352 +1,183 @@
-/**
- * SettingsPanel Component - App configuration UI
- * Player selection has been removed - system Intent Chooser is always used
- */
-import { useState } from 'react'
-import { CapacitorHttp } from '@capacitor/core'
-import { Capacitor } from '@capacitor/core'
+import { useState, useEffect } from 'react'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
+
+const TABS = [
+    { id: 'general', name: 'Основные', icon: '⚙️' },
+    { id: 'search', name: 'Поиск и кэш', icon: '🧹' }
+]
+
+const SpeedButton = ({ mode, active, disabled, onClick }) => {
+    const spatialRef = useSpatialItem('settings')
+    return (
+        <button
+            ref={spatialRef}
+            disabled={disabled}
+            onClick={onClick}
+            className={`focusable flex-1 p-2 rounded-lg border text-center transition-all disabled:opacity-50 ${active ? 'bg-green-600 border-green-500 text-white shadow-lg' : 'bg-gray-800 border-gray-700 text-gray-400'
+                }`}
+        >
+            <div className="font-bold text-xs">{mode.name}</div>
+            <div className="text-[10px] opacity-70">{mode.desc}</div>
+        </button>
+    )
+}
+
+const SettingsTabButton = ({ tab, active, onClick }) => {
+    const spatialRef = useSpatialItem('settings')
+    return (
+        <button
+            ref={spatialRef}
+            onClick={onClick}
+            className={`focusable w-full flex flex-col items-center justify-center py-4 gap-1 transition-all ${active ? 'bg-purple-600 text-white shadow-xl' : 'bg-transparent text-gray-500 hover:text-gray-300'}`}
+        >
+            <span className="text-xl">{tab.icon}</span>
+            <span className="text-[11px] font-bold uppercase tracking-tight">{tab.name}</span>
+        </button>
+    )
+}
+
 
 const SettingsPanel = ({
     serverUrl,
     onServerUrlChange,
     tmdbProxyUrl,
     onTmdbProxyUrlChange,
-    torrents = []
+    torrents = [],
+    onClose,
+    initialTab = 'general'
 }) => {
-    const [showAdvanced, setShowAdvanced] = useState(false)
-    const [showPosterTest, setShowPosterTest] = useState(false)
-    const [testResult, setTestResult] = useState(null)
-    const [testLoading, setTestLoading] = useState(false)
+    const [activeTab, setActiveTab] = useState(initialTab)
     const [speedMode, setSpeedModeState] = useState(localStorage.getItem('speedMode') || 'balanced')
     const [speedLoading, setSpeedLoading] = useState(false)
 
+    useEffect(() => {
+        setActiveTab(initialTab)
+    }, [initialTab])
+
+    // Spatial Refs
+    const closeBtnRef = useSpatialItem('settings')
+    const serverInputRef = useSpatialItem('settings')
+    const proxyInputRef = useSpatialItem('settings')
+    const clearCacheRef = useSpatialItem('settings')
+    const generalTabRef = useSpatialItem('settings')
+    const searchTabRef = useSpatialItem('settings')
+
+    const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_')).length
+
     const handleClearCache = () => {
-        const keys = Object.keys(localStorage).filter(k => k.startsWith('poster_'))
+        const keys = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_'))
         keys.forEach(k => localStorage.removeItem(k))
-        alert(`Очищено ${keys.length} постеров. Перезагрузите приложение.`)
+        alert(`Очищено ${keys.length} записей кэша. Перезагрузите приложение.`)
         window.location.reload()
     }
 
-    const runPosterTest = async (testName) => {
-        setTestLoading(true)
-        setTestResult(null)
-
-        const query = encodeURIComponent(testName)
-        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || ''
-        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY || ''
-        const CUSTOM_PROXY = import.meta.env.VITE_TMDB_PROXY_URL || ''
-
-        let results = []
-
-        // 1️⃣ Custom Cloudflare Worker
-        if (CUSTOM_PROXY) {
-            try {
-                const proxyUrl = `${CUSTOM_PROXY}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-                const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
-                if (res.ok) {
-                    const data = await res.json()
-                    const r = data.results?.find(x => x.poster_path)
-                    results.push({ name: 'Custom Worker', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
-                } else {
-                    results.push({ name: 'Custom Worker', status: '❌', detail: `HTTP ${res.status}` })
-                }
-            } catch (e) {
-                results.push({ name: 'Custom Worker', status: '❌', detail: e.message })
-            }
-        } else {
-            results.push({ name: 'Custom Worker', status: '⏭️', detail: 'не настроен' })
-        }
-
-        // 2️⃣ Lampa Proxy
-        try {
-            const targetUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-            const lampaUrl = `https://apn-latest.onrender.com/${targetUrl}`
-            const res = await fetch(lampaUrl, { signal: AbortSignal.timeout(15000) })
-            if (res.ok) {
-                const data = await res.json()
-                const r = data.results?.find(x => x.poster_path)
-                results.push({ name: 'Lampa Proxy', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
-            } else {
-                results.push({ name: 'Lampa Proxy', status: '❌', detail: `HTTP ${res.status}` })
-            }
-        } catch (e) {
-            results.push({ name: 'Lampa Proxy', status: '❌', detail: e.message })
-        }
-
-        // 3️⃣ CapacitorHttp (native Android)
-        if (Capacitor.isNativePlatform()) {
-            try {
-                const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-                const response = await CapacitorHttp.get({ url: searchUrl })
-                if (response.data?.results?.length > 0) {
-                    const r = response.data.results.find(x => x.poster_path)
-                    results.push({ name: 'CapacitorHttp', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
-                } else {
-                    results.push({ name: 'CapacitorHttp', status: '⚠️', detail: 'Пустой ответ' })
-                }
-            } catch (e) {
-                if (e.message?.includes('127.0.0.1')) {
-                    results.push({ name: 'CapacitorHttp', status: '🚫', detail: 'DNS POISONING!' })
-                } else {
-                    results.push({ name: 'CapacitorHttp', status: '❌', detail: e.message })
-                }
-            }
-        } else {
-            results.push({ name: 'CapacitorHttp', status: '⏭️', detail: 'только Android' })
-        }
-
-        // 4️⃣ corsproxy.io
-        try {
-            const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(searchUrl)}`
-            const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) })
-            if (res.ok) {
-                const data = await res.json()
-                const r = data.results?.find(x => x.poster_path)
-                results.push({ name: 'corsproxy.io', status: r ? '✅' : '⚠️', detail: r?.title || r?.name || 'Нет постеров' })
-            } else {
-                results.push({ name: 'corsproxy.io', status: '❌', detail: `HTTP ${res.status}` })
-            }
-        } catch (e) {
-            results.push({ name: 'corsproxy.io', status: '❌', detail: e.message })
-        }
-
-        // 5️⃣ Kinopoisk API
-        if (KP_API_KEY) {
-            try {
-                const kpProxy = 'https://cors.kp556.workers.dev:8443/'
-                const kpUrl = `${kpProxy}https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`
-                const res = await fetch(kpUrl, {
-                    headers: { 'X-API-KEY': KP_API_KEY },
-                    signal: AbortSignal.timeout(8000)
-                })
-                if (res.ok) {
-                    const data = await res.json()
-                    const kp = data.films?.find(f => f.posterUrlPreview)
-                    results.push({ name: 'Кинопоиск', status: kp ? '✅' : '⚠️', detail: kp?.nameRu || kp?.nameEn || 'Нет постеров' })
-                } else {
-                    results.push({ name: 'Кинопоиск', status: '❌', detail: `HTTP ${res.status}` })
-                }
-            } catch (e) {
-                results.push({ name: 'Кинопоиск', status: '❌', detail: e.message })
-            }
-        } else {
-            results.push({ name: 'Кинопоиск', status: '⏭️', detail: 'нет API ключа' })
-        }
-
-        // 6️⃣ Image CDN Test
-        try {
-            // Test image: The Beekeeper (or generic popular one)
-            const testPath = '/t6HIqrKwXtvO99k1nyh58x6aWS2.jpg'
-
-            // 6.1 Current Mirror
-            const mirrorUrl = `https://${localStorage.getItem('tmdb_img_mirror') || 'imagetmdb.com'}/t/p/w200${testPath}`
-            const imgRes = await fetch(mirrorUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-            results.push({
-                name: 'CDN Mirror',
-                status: imgRes.ok ? '✅' : '❌',
-                detail: imgRes.ok ? 'OK' : `HTTP ${imgRes.status}`
-            })
-
-            // 6.2 WSRV Proxy (Safety Layer)
-            const originalUrl = `https://image.tmdb.org/t/p/w200${testPath}`
-            const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(originalUrl)}`
-            const proxyRes = await fetch(wsrvUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-            results.push({
-                name: 'WSRV Proxy',
-                status: proxyRes.ok ? '✅' : '❌',
-                detail: proxyRes.ok ? 'OK (Backup Ready)' : `HTTP ${proxyRes.status}`
-            })
-
-        } catch (e) {
-            results.push({ name: 'Image CDN', status: '❌', detail: e.message })
-        }
-
-        setTestResult({ name: testName, results })
-        setTestLoading(false)
-    }
-
-    const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('poster_')).length
-
     return (
-        <div className="mx-6 mb-6 p-6 bg-gray-900 rounded-xl border border-gray-800 shadow-2xl animate-fade-in relative z-20">
-            <h2 className="text-xl font-bold mb-4 text-gray-200">Settings</h2>
-
-            {/* Player Info - Read Only */}
-            <div className="mb-6 p-3 bg-gray-800 rounded-lg border border-gray-700">
-                <p className="text-gray-400 text-sm">
-                    🎬 Плеер: <span className="text-white font-medium">System Chooser</span>
-                </p>
-                <p className="text-gray-500 text-xs mt-1">
-                    Система Android сама предложит выбрать плеер при воспроизведении
-                </p>
-            </div>
-
-            {/* Speed Mode Toggle */}
-            <div className="mb-6">
-                <label className="text-gray-400 text-sm mb-3 block">⚡ Speed Mode</label>
-                <div className="grid grid-cols-3 gap-2">
-                    {[{ id: 'eco', name: '🌱 Eco', desc: '20 peers' }, { id: 'balanced', name: '⚖️ Balance', desc: '40 peers' }, { id: 'turbo', name: '🚀 Turbo', desc: '65 peers' }].map(m => (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-[#1a1a1a] border border-gray-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 flex items-center justify-between border-b border-white/10">
+                    <div className="flex gap-4">
                         <button
-                            key={m.id}
-                            disabled={speedLoading}
-                            onClick={async () => {
-                                setSpeedLoading(true)
-                                try {
-                                    const baseUrl = serverUrl || ''
-                                    const res = await fetch(`${baseUrl}/api/speed-mode`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ mode: m.id })
-                                    })
-                                    if (res.ok) {
-                                        setSpeedModeState(m.id)
-                                        localStorage.setItem('speedMode', m.id)
-                                    }
-                                } catch (e) {
-                                    console.error('Speed mode error:', e)
-                                } finally {
-                                    setSpeedLoading(false)
-                                }
-                            }}
-                            className={`p-3 rounded-lg border text-center transition-all disabled:opacity-50 ${speedMode === m.id
-                                ? 'bg-green-600 border-green-500 text-white'
-                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
-                                }`}
+                            ref={generalTabRef}
+                            tabIndex="0"
+                            onClick={() => setActiveTab('general')}
+                            className={`focusable text-sm font-bold transition-opacity flex items-center gap-2 ${activeTab === 'general' ? 'text-white' : 'text-white/50'}`}
                         >
-                            <div className="font-bold text-sm">{m.name}</div>
-                            <div className="text-xs opacity-75 mt-1">{m.desc}</div>
+                            <span>⚙️</span> Основные
                         </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Advanced Section */}
-            <div className="border-t border-gray-800 pt-4">
-                <button
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="text-gray-500 text-sm hover:text-white flex items-center gap-2"
-                >
-                    {showAdvanced ? '▼' : '▶'} Advanced: Server Connection
-                </button>
-
-                {showAdvanced && (
-                    <div className="mt-3 animate-fade-in">
-                        {/* Server URL */}
-                        <label className="text-gray-400 text-sm mb-2 block">Server URL</label>
-                        <div className="flex gap-2">
-                            <input
-                                value={serverUrl}
-                                onChange={e => onServerUrlChange(e.target.value, false)}
-                                onBlur={e => onServerUrlChange(e.target.value, true)}
-                                placeholder="http://192.168.1.70:3000"
-                                className="bg-gray-800 text-white px-4 py-2 rounded flex-1 border border-gray-700 focus:border-blue-500 outline-none"
-                            />
-                        </div>
-                        <p className="text-xs text-gray-600 mt-1">Change only if moving to a new server IP.</p>
-
-                        {/* TMDB Proxy URL */}
-                        <label className="text-gray-400 text-sm mb-2 block mt-4">TMDB API Proxy (опционально)</label>
-                        <div className="flex gap-2">
-                            <input
-                                value={tmdbProxyUrl}
-                                onChange={e => onTmdbProxyUrlChange(e.target.value, false)}
-                                onBlur={e => onTmdbProxyUrlChange(e.target.value, true)}
-                                placeholder="https://your-proxy.com/3"
-                                className="bg-gray-800 text-white px-4 py-2 rounded flex-1 border border-gray-700 focus:border-purple-500 outline-none"
-                            />
-                        </div>
-                        <p className="text-xs text-gray-600 mt-1">
-                            Обход блокировки TMDB. Формат: <code>https://proxy/3</code>
-                        </p>
-                        <p className="text-xs text-gray-600">
-                            🔗 Примеры: api.themoviedb.org, tmdb.apps.lol, apitmdb.example.com
-                        </p>
+                        <button
+                            ref={searchTabRef}
+                            tabIndex="0"
+                            onClick={() => setActiveTab('search')}
+                            className={`focusable text-sm font-bold transition-opacity flex items-center gap-2 ${activeTab === 'search' ? 'text-white' : 'text-white/50'}`}
+                        >
+                            <span>🧹</span> Поиск и кэш
+                        </button>
                     </div>
-                )}
+                    <button ref={closeBtnRef} tabIndex="0" onClick={onClose} className="focusable text-gray-400 hover:text-white px-2 text-xl">✕</button>
+                </div>
 
-                {/* Clear Poster Cache Button */}
-                <button
-                    onClick={handleClearCache}
-                    className="mt-4 text-red-400 text-sm hover:text-red-300 flex items-center gap-2"
-                >
-                    🗑️ Очистить кэш постеров ({cacheCount} шт.)
-                </button>
-
-                {/* TV-Friendly Poster Test */}
-                <button
-                    onClick={() => setShowPosterTest(!showPosterTest)}
-                    className="mt-2 text-blue-400 text-sm hover:text-blue-300 flex items-center gap-2"
-                >
-                    🧪 Тест постеров {showPosterTest ? '▼' : '▶'}
-                </button>
-
-                {showPosterTest && (
-                    <div className="mt-3 p-4 bg-gray-800 rounded-lg border border-gray-700 animate-fade-in">
-                        <p className="text-gray-400 text-sm mb-3">Выберите фильм для теста:</p>
-
-                        {/* Torrent List - TV-friendly buttons with D-pad navigation */}
-                        <div className="max-h-48 overflow-y-auto space-y-2 mb-4" role="listbox">
-                            {torrents.length === 0 ? (
-                                <p className="text-gray-500 text-sm">Нет загруженных торрентов</p>
-                            ) : (
-                                torrents.map((t, idx) => (
-                                    <button
-                                        key={t.infoHash}
-                                        tabIndex={0}
-                                        autoFocus={idx === 0}
-                                        onClick={() => runPosterTest(cleanTitle(t.name) || t.name)}
-                                        disabled={testLoading}
-                                        className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 focus:bg-blue-600 focus:ring-2 focus:ring-blue-500 focus:outline-none rounded-lg transition-all text-sm truncate disabled:opacity-50"
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'ArrowDown') {
-                                                e.preventDefault()
-                                                e.target.nextElementSibling?.focus()
-                                            } else if (e.key === 'ArrowUp') {
-                                                e.preventDefault()
-                                                e.target.previousElementSibling?.focus()
-                                            }
-                                        }}
-                                    >
-                                        🎬 {cleanTitle(t.name) || t.name}
-                                    </button>
-                                ))
-                            )}
-                        </div>
-
-                        {/* Loading State */}
-                        {testLoading && (
-                            <div className="text-center py-4">
-                                <span className="animate-pulse text-blue-400">⏳ Тестирование...</span>
-                            </div>
-                        )}
-
-                        {/* Test Results */}
-                        {testResult && (
-                            <div className="mt-4 p-3 bg-gray-900 rounded-lg border border-gray-600">
-                                <h4 className="font-bold text-white mb-2 text-sm">
-                                    🎬 "{testResult.name}"
-                                </h4>
-                                <div className="space-y-1">
-                                    {testResult.results.map((r, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-xs">
-                                            <span>{r.status}</span>
-                                            <span className="text-gray-400">{r.name}:</span>
-                                            <span className="text-gray-300 truncate">{r.detail}</span>
-                                        </div>
+                {/* Content Area */}
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                    {/* --- GENERAL TAB --- */}
+                    {activeTab === 'general' && (
+                        <div className="space-y-6 animate-fade-in">
+                            <section>
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 block">⚡ Скорость загрузки</label>
+                                <div className="flex gap-2">
+                                    {[{ id: 'eco', name: '🌱 Eco', desc: '20 peers' }, { id: 'balanced', name: '⚖️ Balance', desc: '40 peers' }, { id: 'turbo', name: '🚀 Turbo', desc: '65 peers' }].map(m => (
+                                        <SpeedButton
+                                            key={m.id}
+                                            mode={m}
+                                            active={speedMode === m.id}
+                                            disabled={speedLoading}
+                                            onClick={async () => {
+                                                setSpeedLoading(true)
+                                                try {
+                                                    const res = await fetch(`${serverUrl || ''}/api/speed-mode`, {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ mode: m.id })
+                                                    })
+                                                    if (res.ok) {
+                                                        setSpeedModeState(m.id)
+                                                        localStorage.setItem('speedMode', m.id)
+                                                    }
+                                                } catch (e) { console.error(e) } finally { setSpeedLoading(false) }
+                                            }}
+                                        />
                                     ))}
                                 </div>
-                                <p className="text-xs text-gray-500 mt-3">
-                                    💡 Все ❌ → VPN | DNS Poison → 1.1.1.1
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            </section>
+
+                            <section>
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🖥️ Адрес сервера</label>
+                                <input
+                                    ref={serverInputRef}
+                                    value={serverUrl}
+                                    onChange={e => onServerUrlChange(e.target.value, false)}
+                                    onBlur={e => onServerUrlChange(e.target.value, true)}
+                                    className="focusable w-full bg-gray-800 text-sm text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-blue-500 outline-none transition-colors"
+                                    placeholder="http://192.168.x.x:3000"
+                                />
+                            </section>
+                        </div>
+                    )}
+
+                    {/* --- SEARCH & CACH TAB --- */}
+                    {activeTab === 'search' && (
+                        <div className="space-y-6 animate-fade-in">
+                            <section>
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🛡️ TMDB Proxy (Обход блокировок)</label>
+                                <input
+                                    ref={proxyInputRef}
+                                    value={tmdbProxyUrl}
+                                    onChange={e => onTmdbProxyUrlChange(e.target.value, false)}
+                                    onBlur={e => onTmdbProxyUrlChange(e.target.value, true)}
+                                    className="focusable w-full bg-gray-800 text-sm text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-purple-500 outline-none transition-colors"
+                                    placeholder="Пусто для авто-выбора"
+                                />
+                                <p className="text-[10px] text-gray-500 mt-2 italic">Используйте это, если не грузятся обложки фильмов. Оставьте пустым для авто-настройки.</p>
+                            </section>
+
+                            <section className="pt-4 border-t border-white/5">
+                                <button
+                                    ref={clearCacheRef}
+                                    onClick={handleClearCache}
+                                    className="focusable w-full bg-red-900/10 text-red-400 p-4 rounded-xl border border-red-900/30 text-sm flex items-center justify-center gap-3 hover:bg-red-900/20 transition-all font-bold"
+                                >
+                                    <span>🗑️</span> Очистить кэш ({cacheCount})
+                                </button>
+                                <p className="text-[10px] text-gray-500 mt-3 text-center">Удаляет сохраненные описания и картинки чтобы освободить место.</p>
+                            </section>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     )
 }
 
 export default SettingsPanel
+
