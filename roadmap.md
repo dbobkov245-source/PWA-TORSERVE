@@ -906,6 +906,7 @@ tmdbId !== null только если source === 'tmdb'
 никаких «угадываний» дальше по коду
 
 ЭТАП 2. Постеры сезонов
+**Status:** ✅ COMPLETED (v2.9.9)
 
 Enrichment Layer. Lazy. Detail-only.
 
