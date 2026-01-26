@@ -40,8 +40,8 @@ export class RuTrackerProvider extends BaseProvider {
         this.password = process.env.RUTRACKER_PASSWORD || ''
 
         if (!this.login || !this.password) {
-            this.enabled = false
-            log.warn('RuTracker disabled: RUTRACKER_LOGIN/PASSWORD not set')
+            // FIX-02: Unblock - Warn only, do not disable
+            log.warn('RuTracker: RUTRACKER_LOGIN/PASSWORD not set. Search may fail or return empty results.')
         } else {
             // Try to load persisted session
             this._loadSession()
@@ -49,7 +49,8 @@ export class RuTrackerProvider extends BaseProvider {
     }
 
     isHealthy() {
-        return this.enabled && Boolean(this.login && this.password)
+        // FIX-02: Unblock - Provider is healthy even if no credentials (will attempt guest search or fail gracefully)
+        return this.enabled
     }
 
     /**

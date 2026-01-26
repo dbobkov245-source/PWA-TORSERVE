@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { App } from '@capacitor/app'
 import { cleanTitle, formatSize, organizeFiles } from '../utils/helpers'
 import { getMetadata } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -53,7 +54,29 @@ const TorrentModal = ({
     useEffect(() => {
         // Prevent phantom clicks from previous screen
         const timer = setTimeout(() => setAllowInteraction(true), 500)
-        return () => clearTimeout(timer)
+
+        // NAV-04: Focus Trap & Restore
+        const previousActive = document.activeElement
+        if (playBtnRef.current) playBtnRef.current.focus()
+        else if (closeBtnRef.current) closeBtnRef.current.focus()
+
+        // NAV-04: Capacitor Back Button Listener (Android TV)
+        let backListener
+        const setupListener = async () => {
+            backListener = await App.addListener('backButton', () => {
+                onClose()
+            })
+        }
+        setupListener()
+
+        return () => {
+            clearTimeout(timer)
+            if (backListener) backListener.remove()
+            // Restore focus
+            if (previousActive && typeof previousActive.focus === 'function') {
+                previousActive.focus()
+            }
+        }
     }, [])
 
     useEffect(() => {

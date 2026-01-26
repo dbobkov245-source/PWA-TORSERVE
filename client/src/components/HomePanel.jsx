@@ -60,6 +60,9 @@ const HomePanel = ({
         }
     }, [focusedItem, activeMovie, activePerson, activeCategory])
 
+    // NAV-01: Header Bridge (Removed as per User Request to restore natural navigation)
+    // Effect removed.
+
     // Handlers
     const handleItemClick = (item) => setActiveMovie(item)
     const handlePersonClick = (person) => setActivePerson(person)

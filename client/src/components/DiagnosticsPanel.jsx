@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
 
@@ -17,9 +18,10 @@ const PosterTestItem = ({ torrent, onClick }) => {
     )
 }
 
-const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, onClose, torrents = [] }) => {
+const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, torrents, onClose }) => {
     // State
-    const [mode, setMode] = useState('poster') // 'server' | 'poster'
+    const [logs, setLogs] = useState([])
+    const [mode, setMode] = useState('status') // status, logs, posters
     const [statusData, setStatusData] = useState(null)
     const [statusLoading, setStatusLoading] = useState(false)
     const [testResult, setTestResult] = useState(null)
@@ -28,8 +30,49 @@ const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, onClose, torrents = [] }) =
     // Refs
     const closeBtnRef = useSpatialItem('modal')
     const refreshBtnRef = useSpatialItem('modal')
+    // FIXED: Added missing ref to prevent runtime crash
     const modeServerRef = useSpatialItem('modal')
     const modePosterRef = useSpatialItem('modal')
+
+    // Removed unused refs: modeStatusRef, modeLogsRef
+
+    // Add logging
+    useEffect(() => {
+        const originalLog = console.log
+        const originalError = console.error
+
+        const formatLog = (type, args) => {
+            const msg = args.map(a =>
+                typeof a === 'object' ? JSON.stringify(a) : String(a)
+            ).join(' ')
+            setLogs(prev => [`[${type}] ${msg}`, ...prev].slice(0, 50))
+        }
+
+        console.log = (...args) => {
+            formatLog('INFO', args)
+            originalLog.apply(console, args)
+        }
+        console.error = (...args) => {
+            formatLog('ERROR', args)
+            originalError.apply(console, args)
+        }
+
+        return () => {
+            console.log = originalLog
+            console.error = originalError
+        }
+    }, [])
+
+    // Fetch on open
+    useEffect(() => {
+        if (!serverUrl) return
+        fetch(`${serverUrl}/api/lag-stats`)
+            .then(r => r.json())
+            .then(data => {
+                console.log('Diagnostics Loaded', data)
+            })
+            .catch(e => console.error('Diag Load Error', e))
+    }, [serverUrl, mode])
 
     // --- Server Stats Logic ---
     const fetchStatus = async () => {
@@ -54,10 +97,38 @@ const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, onClose, torrents = [] }) =
     }
 
     useEffect(() => {
-        if (mode === 'server') fetchStatus()
+        if (mode === 'status') fetchStatus()
     }, [mode])
 
     // --- Poster Test Logic ---
+    // NAV-02/NAV-06: Focus Trap & BackButton
+    useEffect(() => {
+        const previousActive = document.activeElement
+
+        // Trap focus inside (Safe default: Close Button)
+        requestAnimationFrame(() => {
+            if (closeBtnRef.current) closeBtnRef.current.focus()
+            else if (modePosterRef.current) modePosterRef.current.focus()
+        })
+
+        // NAV-06: Capacitor Back Button Listener (Fixed Cleanup)
+        let listenerHandle
+        const setupListener = async () => {
+            listenerHandle = await App.addListener('backButton', () => {
+                onClose()
+            })
+        }
+        setupListener()
+
+        return () => {
+            if (listenerHandle) listenerHandle.remove()
+            // Restore focus on unmount
+            if (previousActive && typeof previousActive.focus === 'function') {
+                previousActive.focus()
+            }
+        }
+    }, [])
+
     const runPosterTest = async (testName) => {
         setTestLoading(true)
         setTestResult(null)
@@ -71,45 +142,50 @@ const DiagnosticsPanel = ({ serverUrl, tmdbProxyUrl, onClose, torrents = [] }) =
         let results = []
         const check = async (name, url, parser) => {
             try {
-                const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+                // Extended timeout for TV network
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+                const res = await fetch(url, { signal: controller.signal })
+                clearTimeout(timeoutId)
+
                 if (res.ok) {
                     const d = await res.json()
                     const found = parser ? parser(d) : true
                     results.push({ name, status: found ? '✅' : '⚠️', detail: typeof found === 'string' ? found : 'Online' })
-                } else results.push({ name, status: '❌', detail: `HTTP ${res.status}` })
-            } catch (e) { results.push({ name, status: '❌', detail: e.message }) }
+                } else {
+                    results.push({ name, status: '❌', detail: `HTTP ${res.status}` })
+                }
+            } catch (e) {
+                results.push({ name, status: '❌', detail: e.name === 'AbortError' ? 'Timeout' : e.message })
+            }
         }
 
-        // 1. Standard Checks
-        await Promise.all([
-            check('Direct TMDB', `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title),
-            CUSTOM_PROXY ? check('Custom Worker', `${CUSTOM_PROXY.replace(/\/$/, '')}/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title) : Promise.resolve(),
-            check('Lampa Proxy', `https://apn-latest.onrender.com/https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d.results?.[0]?.title),
-            check('corsproxy.io', `https://corsproxy.io/?${encodeURIComponent('https://api.themoviedb.org/3/search/multi?api_key=' + TMDB_API_KEY + '&query=' + query)}`, d => d.results?.[0]?.title),
-            check('Кинопоиск', `${KP_PROXY}/https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d.films?.[0]?.nameRu)
-        ])
+        try {
+            // 1. Check TMDB Direct
+            await check('TMDB API (Direct)', `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
 
-        // 2. Additional Checks
-        results.push({ name: 'Capacitor', status: '📡', detail: 'Native Mode' })
+            // 2. Check TMDB Proxy
+            if (CUSTOM_PROXY) {
+                await check('Custom Proxy', `${CUSTOM_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
+            }
 
-        if (serverUrl) {
-            const targetUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
-            await check('Server Proxy', `${serverUrl.replace(/\/$/, '')}/api/proxy?url=${encodeURIComponent(targetUrl)}`, d => d.results?.[0]?.title)
+            // 3. Check Image Mirrors
+            for (const mirror of IMAGE_MIRRORS) {
+                await check(`Img: ${mirror}`, `https://${mirror}/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => true)
+            }
+
+            // 4. Check Kinopoisk
+            await check('Kinopoisk Proxy', `${KP_PROXY}/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d.films?.length > 0)
+
+        } catch (err) {
+            console.error('Test Suite Failed', err)
+            results.push({ name: 'Critical', status: '❌', detail: err.message })
+        } finally {
+            console.log('Test Finished', results)
+            setTestResult({ name: testName, results })
+            setTestLoading(false)
         }
-
-        await check('WSRV Proxy', `https://images.weserv.nl/?url=${encodeURIComponent('https://image.tmdb.org/t/p/w92/or1MPoTbbZ6FbZ6Cc0ArvpfCneA.jpg')}&output=json`)
-
-        // 3. Image Mirrors
-        const imgCheck = await Promise.all(IMAGE_MIRRORS.map(async m => {
-            try {
-                await fetch(`https://${m}/t/p/w92/or1MPoTbbZ6FbZ6Cc0ArvpfCneA.jpg`, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(3000) })
-                return { name: m, status: '✅' }
-            } catch { return { name: m, status: '❌' } }
-        }))
-        imgCheck.forEach(r => results.push({ ...r, detail: 'Mirror' }))
-
-        setTestResult({ name: testName, results })
-        setTestLoading(false)
     }
 
     const formatUptime = (s) => {

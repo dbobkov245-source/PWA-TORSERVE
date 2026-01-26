@@ -67,6 +67,20 @@ function recordFailure(providerName) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// STAB-01: Auto-Reset Failures (Resilience)
+// ─────────────────────────────────────────────────────────────
+setInterval(() => {
+    log.debug('Circuit Breaker: Resetting failure counters')
+    for (const [provider, state] of circuitBreakers.entries()) {
+        if (state.failures > 0 && !state.openedAt) {
+            // Reset failures if circuit is NOT open (transient failures)
+            // If circuit is OPEN, we wait for RECOVERY_TIMEOUT (handled in isCircuitOpen)
+            state.failures = 0
+        }
+    }
+}, 5 * 60 * 1000) // Every 5 minutes
+
+// ─────────────────────────────────────────────────────────────
 
 /**
  * Search across all enabled providers (with cache)

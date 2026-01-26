@@ -190,26 +190,42 @@ export async function restoreTorrents() {
     }
 }
 
+// Helper to extract infoHash (regex from aggregator.js logic)
+const extractInfoHash = (magnet) => {
+    if (!magnet) return null
+    const hexMatch = magnet.match(/urn:btih:([a-fA-F0-9]{40})/i)
+    if (hexMatch) return hexMatch[1].toLowerCase()
+    const base32Match = magnet.match(/urn:btih:([A-Z2-7]{32})/i)
+    if (base32Match) return base32Match[1].toLowerCase()
+    return null
+}
+
 export const addTorrent = (magnetURI, skipSave = false) => {
     return new Promise((resolve, reject) => {
-        // Simple duplicate check
-        for (const [key, engine] of engines.entries()) {
-            if (key === magnetURI) {
-                console.log('Torrent engine already exists for this magnet')
-                return resolve(formatEngine(engine))
+        // 🔥 FIX-03: Smart Deduplication by infoHash
+        const infoHash = extractInfoHash(magnetURI)
+        if (!infoHash) {
+            console.warn('[Torrent] Invalid magnet Link or missing infoHash:', magnetURI)
+            return reject(new Error('Invalid magnet link: cannot extract infoHash'))
+        }
+
+        // Check active engines by infoHash
+        for (const engine of engines.values()) {
+            if (engine.infoHash?.toLowerCase() === infoHash) {
+                 console.log(`[Torrent] Dedup: Engine already exists for hash ${infoHash}`)
+                 return resolve(formatEngine(engine))
             }
         }
 
         // Check frozen torrents (Keep-Alive: instant resume!)
-        for (const [hash, frozen] of frozenTorrents.entries()) {
-            if (frozen.magnetURI === magnetURI || magnetURI.includes(hash)) {
-                console.log(`[Keep-Alive] Reusing frozen torrent: ${hash}`)
-                const engine = frozen.engine
-                frozenTorrents.delete(hash)
-                engines.set(magnetURI, engine)
-                engines.set(engine.infoHash, engine)
-                return resolve(formatEngine(engine))
-            }
+        if (frozenTorrents.has(infoHash)) {
+            console.log(`[Keep-Alive] Reusing frozen torrent: ${infoHash}`)
+            const frozen = frozenTorrents.get(infoHash)
+            const engine = frozen.engine
+            frozenTorrents.delete(infoHash)
+            engines.set(magnetURI, engine)
+            engines.set(engine.infoHash, engine)
+            return resolve(formatEngine(engine))
         }
 
         const path = process.env.DOWNLOAD_PATH || './downloads'
@@ -252,23 +268,28 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
             // ────────────────────────────────────────────────────────
-            // Download ALL files + AGGRESSIVE PRIORITIZATION
-            // Prioritize first video file immediately for instant playback
+            // FIX-01: Smart Selection (Video Only, Sort by Size)
             // ────────────────────────────────────────────────────────
             if (engine.files && engine.files.length > 0) {
-                let firstVideoIdx = -1
-                engine.files.forEach((file, idx) => {
-                    file.select()
-                    // Find first video file
-                    if (firstVideoIdx === -1 && /\.(mp4|mkv|avi|webm|mov)$/i.test(file.name)) {
-                        firstVideoIdx = idx
-                    }
-                })
+                // 1. Filter video extensions
+                const videoFiles = engine.files.filter(f => 
+                    /\.(mp4|mkv|avi|webm|mov|mpg|mpeg)$/i.test(f.name)
+                )
 
-                // Aggressive priority: immediately prioritize first video
-                if (firstVideoIdx >= 0) {
-                    console.log(`[Torrent] Auto-prioritizing first video: ${engine.files[firstVideoIdx].name}`)
-                    prioritizeFileInternal(engine, firstVideoIdx)
+                // 2. Sort by length DESC
+                videoFiles.sort((a, b) => b.length - a.length)
+
+                // 3. Select LARGEST video file (if any)
+                if (videoFiles.length > 0) {
+                    const largestVideo = videoFiles[0]
+                    console.log(`[Torrent] Kickstart: Prioritizing largest video: ${largestVideo.name} (${(largestVideo.length / 1024 / 1024).toFixed(1)} MB)`)
+                    largestVideo.select()
+                    
+                    // Also enable priority strategy
+                    const idx = engine.files.indexOf(largestVideo)
+                    if (idx !== -1) prioritizeFileInternal(engine, idx)
+                } else {
+                     console.log('[Torrent] IsKickstart: No video files found, nothing selected automatically.')
                 }
             }
 

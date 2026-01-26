@@ -1,7 +1,7 @@
 /**
  * Status Banner Components - Error states and loading indicators
  */
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 /**
@@ -111,8 +111,10 @@ export const BufferingBanner = ({ name, progress }) => {
 /**
  * ServerStatusBar - Small indicator showing server health
  */
-export const ServerStatusBar = ({ status, onDiagnosticsClick }) => {
-    const spatialRef = useSpatialItem('main')
+/**
+ * ServerStatusBar - Small indicator showing server health
+ */
+export const ServerStatusBar = React.forwardRef(({ status, onDiagnosticsClick }, ref) => {
     const getStatusInfo = () => {
         switch (status) {
             case 'ok':
@@ -132,13 +134,18 @@ export const ServerStatusBar = ({ status, onDiagnosticsClick }) => {
 
     return (
         <button
-            ref={spatialRef}
+            ref={ref}
             tabIndex="0"
             onClick={onDiagnosticsClick}
             className={`focusable px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-2 transition-colors hover:opacity-80 focus:bg-blue-600 focus:text-white ${info.color}`}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                    onDiagnosticsClick()
+                }
+            }}
         >
             <span>{info.icon}</span>
             <span>{info.text}</span>
         </button>
     )
-}
+})
