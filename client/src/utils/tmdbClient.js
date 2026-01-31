@@ -17,6 +17,16 @@
 import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
 
+// ─── Polyfills ────────────────────────────────────────────────
+const timeoutSignal = (ms) => {
+    try {
+        if (AbortSignal.timeout) return AbortSignal.timeout(ms)
+    } catch (e) { /* ignore */ }
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), ms)
+    return controller.signal
+}
+
 // ─── Configuration ─────────────────────────────────────────────
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
 const KP_API_KEY = import.meta.env.VITE_KP_API_KEY
@@ -366,7 +376,7 @@ async function tryCustomWorker(endpoint) {
         const url = `${CUSTOM_PROXY}${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         console.log('[TMDB] Trying Custom Worker...')
 
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
+        const res = await fetch(url, { signal: timeoutSignal(5000) })
         // ... (rest same)
     } catch (e) {
         // ...
@@ -385,7 +395,7 @@ async function tryLampaProxy(endpoint) {
         const url = `${LAMPA_PROXY}/${targetUrl}`
         console.log('[TMDB] Trying Lampa Proxy...')
 
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+        const res = await fetch(url, { signal: timeoutSignal(8000) })
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ Lampa Proxy success')
@@ -410,7 +420,7 @@ async function tryServerProxy(endpoint) {
         const proxyUrl = `${apiBase}/api/proxy?url=${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying Server Proxy:', proxyUrl)
 
-        const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+        const res = await fetch(proxyUrl, { signal: timeoutSignal(8000) })
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ Server Proxy success')
@@ -475,7 +485,7 @@ async function tryCorsProxy(endpoint) {
         const url = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying corsproxy.io...')
 
-        const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
+        const res = await fetch(url, { signal: timeoutSignal(6000) })
         if (res.ok) {
             const data = await res.json()
             console.log('[TMDB] ✅ corsproxy.io success')
@@ -499,7 +509,7 @@ async function tryKinopoisk(query) {
 
         const res = await fetch(url, {
             headers: { 'X-API-KEY': KP_API_KEY },
-            signal: AbortSignal.timeout(6000)
+            signal: timeoutSignal(6000)
         })
 
         if (res.ok) {

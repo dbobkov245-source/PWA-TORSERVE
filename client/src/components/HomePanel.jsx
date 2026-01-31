@@ -60,13 +60,16 @@ const HomePanel = ({
         }
     }, [focusedItem, activeMovie, activePerson, activeCategory])
 
-    // NAV-01: Header Bridge (Removed as per User Request to restore natural navigation)
-    // Effect removed.
-
     // Handlers
     const handleItemClick = (item) => setActiveMovie(item)
-    const handlePersonClick = (person) => setActivePerson(person)
+
+    const handlePersonClick = (person) => {
+        setActiveMovie(null)
+        setActivePerson(person)
+    }
+
     const handleGenreClick = (genre, type = 'movie') => {
+        setActiveMovie(null)
         setActiveCategory({
             id: `genre-${genre.id}`,
             name: genre.name,
@@ -105,7 +108,7 @@ const HomePanel = ({
             onBack={() => setActiveMovie(null)}
             onSearch={onSearch}
             onSelect={setActiveMovie}
-            onSelectPerson={setActivePerson}
+            onSelectPerson={handlePersonClick}
             onSelectGenre={handleGenreClick}
         />
     )

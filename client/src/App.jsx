@@ -7,7 +7,6 @@ import { Capacitor } from '@capacitor/core'
 // Components
 import Poster from './components/Poster'
 import { DegradedBanner, ErrorScreen, BufferingBanner, ServerStatusBar } from './components/StatusBanners'
-import DiagnosticsPanel from './components/DiagnosticsPanel'
 import SettingsPanel from './components/SettingsPanel'
 import SearchPanel from './components/SearchPanel'
 import TorrentModal from './components/TorrentModal'
@@ -15,7 +14,7 @@ import AutoDownloadPanel from './components/AutoDownloadPanel'
 import HomePanel from './components/HomePanel'
 
 // Hooks
-import { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
+import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
 
 // Helpers
 import { cleanTitle } from './utils/helpers'
@@ -90,7 +89,6 @@ function App() {
   // State: UI
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState('general')
-  const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
   const [buffering, setBuffering] = useState(null)
@@ -130,7 +128,6 @@ function App() {
   // ─── Spatial Registry ───
   const handleBack = useCallback(() => {
     if (selectedTorrent) setSelectedTorrent(null)
-    else if (showDiagnostics) setShowDiagnostics(false)
     else if (showSettings) setShowSettings(false)
     else if (showSearch) { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }
     else if (showSidebar) setShowSidebar(false)
@@ -150,19 +147,22 @@ function App() {
   const autoDownloadRef = useSpatialItem('main')
   const refreshRef = useSpatialItem('main')
   const settingsBtnRef = useSpatialItem('main')
-  // FIX-08: Diagnostics Button Real Ref
+  // Diagnostics Button Ref -> Now opens Settings (Status Tab)
   const diagnosticsRef = useSpatialItem('main')
 
   // My List View Refs
   const continuePlayRef = useSpatialItem('main')
-  const mainSearchBtnRef = useSpatialItem('main')
+  const mainSearchBtnRef = useSpatialItem('main', 'list-search-btn')
   const addMagnetBtnRef = useSpatialItem('main')
+  // We need dynamic refs for list items, but `useSpatialItem` is a hook.
+  // For lists/categories, we should use a sub-component with useSpatialItem OR the spatial navigation library's auto-detection if configured.
+  // The current codebase uses `ListCategoryButton` sub-component at lines 26-38. But in the render loop at 487, it uses a plain <button>.
+  // I should replace the plain button loop with `ListCategoryButton`.
 
   // ─── Effects ───
   // 1. Zone Management (Passive)
   useEffect(() => {
-    if (showDiagnostics) setActiveZone('modal')
-    else if (showSettings) setActiveZone('settings')
+    if (showSettings) setActiveZone('settings')
     else if (selectedTorrent) setActiveZone('modal')
     else if (showSearch) setActiveZone('search')
     else if (showAutoDownload) setActiveZone('auto-download')
@@ -292,9 +292,14 @@ function App() {
         body: JSON.stringify({ magnet })
       })
       if (res.ok) {
+        // Clear search state FIRST to unmount SearchResultItem components
+        setSearchResults([])
+        setSearchProviders({})
         setShowSearch(false)
         setActiveView('list')
         fetchStatus()
+        // Use recoverFocus with retry logic instead of focusId
+        setTimeout(() => SpatialEngine.recoverFocus('main'), 100)
       }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
@@ -358,14 +363,11 @@ function App() {
             <button ref={homeTabRef} tabIndex="0" onClick={() => { setActiveView('home'); setActiveMovie(null); setActivePerson(null); setActiveCategory(null); }} className={`focusable px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'home' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>🏠</button>
             <button ref={listTabRef} tabIndex="0" onClick={() => { setActiveView('list'); setShowSearch(false); }} className={`focusable px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>📚</button>
           </div>
-          <ServerStatusBar ref={diagnosticsRef} status={serverStatus} onDiagnosticsClick={() => setShowDiagnostics(true)} />
+          <ServerStatusBar ref={diagnosticsRef} status={serverStatus} onDiagnosticsClick={() => { setSettingsTab('status'); setShowSettings(true); }} />
           <button ref={autoDownloadRef} tabIndex="0" onClick={() => setShowAutoDownload(true)} className="focusable p-2 hover:bg-gray-800 rounded-full transition-colors" title="Авто-загрузка">📺</button>
-          <button ref={refreshRef} tabIndex="0" onClick={fetchStatus} className="focusable p-2 hover:bg-gray-800 rounded-full transition-colors">🔄</button>
-          <button ref={settingsBtnRef} tabIndex="0" onClick={() => { setSettingsTab('general'); setShowSettings(!showSettings); }} className="focusable p-2 hover:bg-gray-800 rounded-full transition-colors">⚙️</button>
         </div>
       </div>
 
-      {showDiagnostics && <DiagnosticsPanel serverUrl={serverUrl} tmdbProxyUrl={tmdbProxyUrl} torrents={torrents} onClose={() => setShowDiagnostics(false)} />}
       {showAutoDownload && <AutoDownloadPanel serverUrl={serverUrl} torrents={torrents} onClose={() => setShowAutoDownload(false)} />}
       {serverStatus === 'degraded' && <DegradedBanner lastStateChange={lastStateChange} />}
       {showSettings && (
@@ -400,72 +402,128 @@ function App() {
 
         {activeView === 'list' && (
           <div className="h-full overflow-y-auto px-6 py-4 custom-scrollbar">
-            {/* FIX-13: Unified Master Toolbar (All Controls in One Row) */}
-            <div
-              className="master-toolbar mb-2 flex items-center gap-3 overflow-x-auto pb-4 pt-2 -mx-2 px-2 custom-scrollbar outline-none"
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  document.querySelector('.grid [tabindex="0"]')?.focus()
-                }
-              }}
-            >
-              <h2 className="text-xl font-semibold text-gray-200 px-1 whitespace-nowrap mr-2">Мои торренты</h2>
+            {/* Continue Watching Banner (cc51200 style) */}
+            {lastPlayed?.torrentName && torrents.find(t => t.infoHash === lastPlayed.infoHash) && (
+              <div className="mb-6 bg-gradient-to-r from-purple-900/50 to-blue-900/50 border border-purple-500/30 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-purple-300 uppercase tracking-wide mb-1">▶ Продолжить просмотр</div>
+                    <div className="text-white font-bold truncate">{cleanTitle(lastPlayed.torrentName)}</div>
+                    <div className="text-gray-400 text-sm truncate">{cleanTitle(lastPlayed.fileName)}</div>
+                  </div>
+                  <button
+                    ref={continuePlayRef}
+                    tabIndex="0"
+                    onClick={() => handlePlay(lastPlayed.infoHash, lastPlayed.fileIndex, lastPlayed.fileName)}
+                    className="focusable ml-4 bg-purple-600 hover:bg-purple-500 px-5 py-3 rounded-lg font-bold text-white flex items-center gap-2 transition-colors focus:ring-4 focus:ring-purple-400"
+                  >
+                    ▶ Play
+                  </button>
+                </div>
+              </div>
+            )}
 
-              {/* Continue Button */}
-              {lastPlayed?.torrentName && torrents.find(t => t.infoHash === lastPlayed.infoHash) && (
+            {/* Header (cc51200 style) */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-200">Мои торренты</h2>
+              <div className="flex gap-2">
                 <button
-                  ref={continuePlayRef}
+                  ref={mainSearchBtnRef}
                   tabIndex="0"
-                  onClick={() => handlePlay(lastPlayed.infoHash, lastPlayed.fileIndex, lastPlayed.fileName)}
-                  className="focusable flex-shrink-0 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 px-5 py-2.5 rounded-full font-bold text-white flex items-center gap-2 transition-all hover:scale-105 shadow-lg shadow-purple-900/20"
+                  onClick={() => setShowSearch(!showSearch)}
+                  className="focusable bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105 focus:ring-4 focus:ring-purple-400"
                 >
-                  <span>▶</span>
-                  <span className="max-w-[200px] truncate">{cleanTitle(lastPlayed.torrentName)}</span>
+                  🔍 Поиск
                 </button>
-              )}
-
-              {/* Search Button */}
-              <button
-                ref={mainSearchBtnRef}
-                tabIndex="0"
-                onClick={() => setShowSearch(!showSearch)}
-                className="focusable flex-shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 px-5 py-2.5 rounded-full text-sm font-bold transition-all hover:scale-105 border border-gray-700 hover:border-gray-500 hover:text-white"
-              >🔍 Поиск</button>
-
-              {/* Magnet Button */}
-              <button
-                ref={addMagnetBtnRef}
-                tabIndex="0"
-                onClick={() => setShowServerInput(!showServerInput)}
-                className="focusable flex-shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 px-5 py-2.5 rounded-full text-sm font-bold transition-all hover:scale-105 border border-gray-700 hover:border-gray-500 hover:text-white"
-              >+ Magnet</button>
-
-              {/* Divider */}
-              <div className="w-px h-8 bg-gray-700 mx-1 flex-shrink-0" />
-
-              {/* Categories */}
-              {CATEGORIES.map(cat => <ListCategoryButton key={cat.id} cat={cat} active={categoryFilter === cat.id} onClick={() => setCategoryFilter(cat.id)} />)}
+                {!showServerInput && (
+                  <button
+                    ref={addMagnetBtnRef}
+                    tabIndex="0"
+                    onClick={() => setShowServerInput(true)}
+                    className="focusable bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-full text-sm font-bold border border-gray-600 transition-transform hover:scale-105 focus:ring-4 focus:ring-gray-400"
+                  >
+                    + Magnet
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Sort Row */}
-            <div className="flex gap-2 mb-6 text-xs pl-1">
+            {/* Search Panel */}
+            {showSearch && (
+              <SearchPanel
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
+                onSearch={searchRuTracker}
+                onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }}
+                onAddTorrent={addFromSearch}
+                searchResults={searchResults}
+                searchLoading={searchLoading}
+                providers={searchProviders}
+              />
+            )}
+
+            {/* Magnet Input */}
+            {showServerInput && (
+              <form onSubmit={addTorrent} className="mb-6">
+                <div className="flex gap-2">
+                  <input
+                    value={magnet}
+                    onChange={(e) => setMagnet(e.target.value)}
+                    placeholder="Вставьте Magnet-ссылку..."
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || !magnet}
+                    className="bg-blue-600 px-6 py-3 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {loading ? '...' : 'Add'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowServerInput(false)}
+                    className="bg-gray-800 px-4 rounded-lg"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded-lg mb-4">
+                {error}
+              </div>
+            )}
+
+            {/* Category Tabs */}
+            <div className="flex gap-2 mb-4 overflow-x-auto pb-3 pt-1 px-1 -mx-1">
+              {CATEGORIES.map(cat => (
+                <ListCategoryButton
+                  key={cat.id}
+                  cat={cat}
+                  active={categoryFilter === cat.id}
+                  onClick={() => setCategoryFilter(cat.id)}
+                />
+              ))}
+            </div>
+
+            {/* Sort Buttons (cc51200 style) */}
+            <div className="flex gap-2 mb-6 text-xs px-1 -mx-1">
               <span className="text-gray-500 self-center">Сортировка:</span>
-              {[{ id: 'name', label: 'Имя' }, { id: 'size', label: 'Размер' }, { id: 'peers', label: 'Пиры' }].map(s => <ListSortButton key={s.id} sort={s} active={sortBy === s.id} onClick={() => saveSortBy(s.id)} />)}
+              {[{ id: 'name', label: 'Имя' }, { id: 'size', label: 'Размер' }, { id: 'peers', label: 'Пиры' }].map(s => (
+                <ListSortButton
+                  key={s.id}
+                  sort={s}
+                  active={sortBy === s.id}
+                  onClick={() => saveSortBy(s.id)}
+                />
+              ))}
             </div>
 
-            {/* Torrents */}
-            {/* Torrents Grid */}
-            <div
-              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 pb-20 outline-none"
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  if (continuePlayRef.current) continuePlayRef.current.focus()
-                  else if (mainSearchBtnRef.current) mainSearchBtnRef.current.focus()
-                }
-              }}
-            >
+            {/* Torrent Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayTorrents.map(t => (
                 <Poster
                   key={t.infoHash} name={t.name} progress={t.progress || 0} peers={t.numPeers || 0}

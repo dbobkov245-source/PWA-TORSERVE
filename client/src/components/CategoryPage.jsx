@@ -55,19 +55,35 @@ const CategoryPage = ({
         }
     }, [category])
 
+    // Use both IntersectionObserver and Scroll Listener for maximum robustness on TV
     useEffect(() => {
         const observer = new IntersectionObserver(
             entries => { if (entries[0].isIntersecting) loadMore() },
             { threshold: 0, rootMargin: '500px' }
         )
         if (observerTarget.current) observer.observe(observerTarget.current)
-        return () => observer.disconnect()
+
+        // Fallback: Scroll listener in case Observer fails on older WebViews
+        const handleScroll = (e) => {
+            const { scrollTop, scrollHeight, clientHeight } = e.target
+            if (scrollHeight - scrollTop <= clientHeight + 1000) {
+                loadMore()
+            }
+        }
+
+        const container = document.querySelector('.category-page')
+        if (container) container.addEventListener('scroll', handleScroll)
+
+        return () => {
+            observer.disconnect()
+            if (container) container.removeEventListener('scroll', handleScroll)
+        }
     }, [loadMore])
 
     if (!category) return null
 
     return (
-        <div className="category-page min-h-screen bg-[#141414] p-6 overflow-y-auto">
+        <div className="category-page h-full w-full bg-[#141414] p-6 overflow-y-auto custom-scrollbar">
             {/* Header */}
             <div className="flex items-center gap-4 mb-6">
                 <button

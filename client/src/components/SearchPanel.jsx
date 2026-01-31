@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import { useDebounce } from '../hooks/useDebounce'
-import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 // ─── Sub-Components ─────────────────────────────────────────
 
@@ -29,11 +29,12 @@ const getHealthIcon = (health) => {
 }
 
 const SearchResultItem = ({ item, index, onAdd }) => {
-    const spatialRef = useSpatialItem('search')
+    const rowRef = useSpatialItem('search')
+
     return (
         <div
-            ref={spatialRef}
-            className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-gray-700 focus:ring-2 focus:ring-purple-500"
+            ref={rowRef}
+            className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors"
             onClick={() => onAdd(item.magnet || item.id, item.title)}
         >
             <div className="flex-1 min-w-0">
@@ -45,7 +46,8 @@ const SearchResultItem = ({ item, index, onAdd }) => {
                     {item.dateTs && <span className="text-gray-500">{formatRelativeDate(item.dateTs)}</span>}
                 </div>
             </div>
-            <button className="ml-2 bg-green-600 px-2.5 py-1 rounded text-xs font-bold opacity-70" tabIndex={-1}>+</button>
+            {/* Visual hint that Enter/OK will add */}
+            <span className="ml-2 text-gray-500 group-focus:text-green-400 text-lg transition-colors">➕</span>
         </div>
     )
 }
@@ -100,6 +102,12 @@ const SearchPanel = ({
     const [isListening, setIsListening] = useState(false)
     const [voiceAvailable, setVoiceAvailable] = useState(false)
     const [providerTooltip, setProviderTooltip] = useState(null)
+
+    // Activate 'search' zone on mount
+    // NOTE: Zone cleanup is handled by App.jsx's zone management useEffect
+    useEffect(() => {
+        SpatialEngine.setActiveZone('search')
+    }, [])
 
     // Spatial Refs
     const inputRef = useSpatialItem('search')
@@ -198,17 +206,20 @@ const SearchPanel = ({
                 <button
                     ref={micRef}
                     onClick={startVoiceSearch}
+                    tabIndex="0"
                     className={`focusable px-4 py-3 rounded-lg font-bold ${isListening ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}
                 >🎤</button>
                 <button
                     ref={searchRef}
                     onClick={() => onSearch(searchQuery)}
                     disabled={searchLoading}
+                    tabIndex="0"
                     className="focusable bg-purple-600 px-6 py-3 rounded-lg font-bold disabled:opacity-50"
                 >{searchLoading ? '...' : '🔍'}</button>
                 <button
                     ref={closeRef}
                     onClick={onClose}
+                    tabIndex="0"
                     className="focusable bg-gray-800 px-4 rounded-lg"
                 >✕</button>
             </div>

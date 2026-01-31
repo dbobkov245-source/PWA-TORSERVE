@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { getImageUrl, getPersonDetails, getPersonCredits } from '../utils/tmdbClient'
 import { getPosterUrl } from '../utils/discover'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -47,25 +48,44 @@ const PersonDetail = ({
     const [loading, setLoading] = useState(true)
 
     // Spatial Refs
+    const { ref: sectionRef } = useSpatialItem('person-detail')
     const backBtnRef = useSpatialItem('person')
 
+    // Handle Hardware Back Button
     useEffect(() => {
+        const handleHardwareBack = async () => {
+            onBack()
+        }
+
+        const listener = CapacitorApp.addListener('backButton', handleHardwareBack)
+        return () => { listener.then(h => h.remove()) }
+    }, [onBack])
+
+    // Load Data
+    useEffect(() => {
+        if (!personId) return
+
         const loadData = async () => {
             setLoading(true)
             try {
+                // Determine if personId is an object (already loaded) or ID
+                const id = typeof personId === 'object' ? personId.id : personId
+
                 const [details, creditsData] = await Promise.all([
-                    getPersonDetails(personId),
-                    getPersonCredits(personId)
+                    getPersonDetails(id),
+                    getPersonCredits(id)
                 ])
+
                 setPerson(details)
                 setCredits(creditsData.cast || [])
             } catch (err) {
-                console.error(err)
+                console.error('Failed to load person details:', err)
             } finally {
                 setLoading(false)
             }
         }
-        if (personId) loadData()
+
+        loadData()
     }, [personId])
 
     if (loading) {
@@ -79,21 +99,25 @@ const PersonDetail = ({
     if (!person) return null
 
     return (
-        <div className="fixed inset-0 z-50 bg-[#141414] overflow-y-auto animate-fade-in custom-scrollbar">
-            {/* Header */}
-            <div className="relative w-full">
-                <div className="absolute top-6 left-6 z-20">
+        <div
+            ref={sectionRef}
+            className="fixed inset-0 z-50 bg-[#141414] animate-fade-in overflow-y-auto custom-scrollbar"
+        >
+            <div className="min-h-full relative p-8">
+                {/* Back Button - Standard Flow */}
+                <div className="pb-8 z-[60] relative">
                     <button
                         ref={backBtnRef}
                         onClick={onBack}
-                        className="focusable px-6 py-3 bg-gray-800/80 hover:bg-gray-700 text-white font-bold rounded-xl flex items-center gap-2 backdrop-blur-md transition-all focus:ring-4 focus:ring-blue-500 scale-100 focus:scale-105"
+                        className="focusable px-6 py-3 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-xl flex items-center gap-2 transition-all focus:ring-4 focus:ring-blue-500 scale-100 focus:scale-105 shadow-xl"
+                        autoFocus
                     >
                         <span className="text-xl">←</span>
                         Назад
                     </button>
                 </div>
 
-                <div className="flex flex-col md:flex-row gap-8 p-8 pt-24">
+                <div className="flex flex-col md:flex-row gap-8 pt-4">
                     {/* Photo */}
                     <div className="flex-shrink-0 mx-auto md:mx-0">
                         <div className="w-64 h-96 rounded-xl overflow-hidden shadow-2xl bg-gray-800">
@@ -122,20 +146,45 @@ const PersonDetail = ({
                         </p>
                     </div>
                 </div>
-            </div>
 
-            {/* Filmography Grid */}
-            <div className="p-8 pb-20">
-                <h2 className="text-2xl font-bold text-white mb-6">Фильмография ({credits.length})</h2>
+                {/* Filmography Grid */}
+                <div className="mt-12 pb-20">
+                    <h2 className="text-2xl font-bold text-white mb-6">Фильмография ({credits.length})</h2>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                    {credits.map((item, idx) => (
-                        <FilmItem
-                            key={`${item.id}-${idx}`}
-                            item={item}
-                            onClick={() => onSelectMovie(item)}
-                        />
-                    ))}
+                    <div
+                        className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6"
+                        onKeyDown={(e) => {
+                            if (e.key === 'ArrowUp') {
+                                const current = document.activeElement
+                                const items = Array.from(e.currentTarget.querySelectorAll('button.focusable'))
+                                const currentIndex = items.indexOf(current)
+                                if (currentIndex === -1) return
+
+                                // Check if there are any items physically above the current one in the grid
+                                const currentRect = current.getBoundingClientRect()
+                                const hasItemAbove = items.some(item => {
+                                    const rect = item.getBoundingClientRect()
+                                    // Item is considered "above" if its center is significantly higher
+                                    return rect.bottom <= currentRect.top + 10 // 10px tolerance
+                                })
+
+                                // If no items above (Top Row), manually jump to Back Button
+                                if (!hasItemAbove) {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    backBtnRef.current?.focus()
+                                }
+                            }
+                        }}
+                    >
+                        {credits.map((item, idx) => (
+                            <FilmItem
+                                key={`${item.id}-${idx}`}
+                                item={item}
+                                onClick={() => onSelectMovie(item)}
+                            />
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>

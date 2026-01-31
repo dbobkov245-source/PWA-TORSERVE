@@ -10,29 +10,78 @@
 import { useCallback, useRef, useEffect } from 'react';
 
 const SpatialEngine = {
-    zones: {}, // { zoneName: Set<HTMLElement> }
+    zones: {},
     activeZone: 'main',
+    idMap: {}, // zone -> id -> element
 
-    register(zone, element) {
+    register(zone, element, id = null) {
         if (!this.zones[zone]) this.zones[zone] = new Set();
         this.zones[zone].add(element);
+
+        if (id) {
+            if (!this.idMap[zone]) this.idMap[zone] = {};
+            this.idMap[zone][id] = element;
+        }
     },
 
     unregister(zone, element) {
         if (this.zones[zone]) {
             this.zones[zone].delete(element);
         }
+        // Cleanup ID map (expensive reverse lookup or just ignore leaking?)
+        // Better: Check if this element is in idMap for this zone
+        if (this.idMap[zone]) {
+            for (const [id, el] of Object.entries(this.idMap[zone])) {
+                if (el === element) {
+                    delete this.idMap[zone][id];
+                    break;
+                }
+            }
+        }
+    },
+
+    focusId(zone, id) {
+        if (this.idMap[zone] && this.idMap[zone][id]) {
+            const element = this.idMap[zone][id];
+            if (element.offsetParent !== null && !element.disabled) { // Check visibility and enabled state
+                console.log(`[SpatialNav] Focusing element with ID '${id}' in zone '${zone}'`);
+                this.activeZone = zone; // Set active zone if focusing by ID
+                element.focus();
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return true;
+            } else {
+                console.warn(`[SpatialNav] Element with ID '${id}' in zone '${zone}' is not visible or disabled.`);
+            }
+        } else {
+            console.warn(`[SpatialNav] Element with ID '${id}' not found in zone '${zone}'.`);
+        }
+        return false;
     },
 
     setActiveZone(zone) {
         console.log(`[SpatialNav] Active Zone: ${this.activeZone} -> ${zone}`);
+
+        // Aggressively cleanup stale references in BOTH old and new zones
+        [this.activeZone, zone].forEach(z => {
+            if (this.zones[z]) {
+                const before = this.zones[z].size;
+                this.zones[z] = new Set(
+                    Array.from(this.zones[z]).filter(el => document.body.contains(el))
+                );
+                const after = this.zones[z].size;
+                if (before !== after) {
+                    console.log(`[SpatialNav] Cleaned ${before - after} stale refs from zone '${z}'`);
+                }
+            }
+        });
+
         this.activeZone = zone;
     },
 
     move(direction) {
         const current = document.activeElement;
         const elements = Array.from(this.zones[this.activeZone] || [])
-            .filter(el => el.offsetParent !== null); // Filter visible
+            .filter(el => document.body.contains(el) && el.offsetParent !== null); // Filter valid + visible
 
         if (!elements.length) return;
 
@@ -45,6 +94,7 @@ const SpatialEngine = {
         const next = this.findNearest(current, elements, direction);
         if (next) {
             next.focus();
+            next.scrollIntoView({ behavior: 'smooth', block: 'center' });
         } else {
             console.warn(`[SpatialNav] Edge reached for ${direction} in zone ${this.activeZone}`);
         }
@@ -86,26 +136,52 @@ const SpatialEngine = {
         });
 
         return bestCandidate;
+    },
+
+    recoverFocus(zone, retryCount = 5) {
+        const targetZone = zone || this.activeZone;
+        const attempt = () => {
+            const elements = Array.from(this.zones[targetZone] || [])
+                .filter(el => document.body.contains(el) && el.offsetParent !== null && !el.disabled);
+
+            if (elements.length > 0) {
+                console.log(`[SpatialNav] Recovering focus in ${targetZone}`);
+                this.activeZone = targetZone;
+                // Prefer elements that are NOT the search buttons if possible, or just first one
+                elements[0].focus();
+                elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return true;
+            }
+            if (retryCount > 0) {
+                retryCount--;
+                setTimeout(attempt, 100);
+            }
+            return false;
+        };
+        attempt();
     }
 };
 
 /**
  * Hook for components to register focusable items
  */
-export const useSpatialItem = (zone = 'main') => {
-    const ref = useRef(null);
+export const useSpatialItem = (zone = 'main', id = null) => {
+    const elementRef = useRef(null);
 
-    useEffect(() => {
-        const el = ref.current;
-        if (el) {
-            SpatialEngine.register(zone, el);
+    const setRef = useCallback((node) => {
+        // If the node has changed (or is unmounting)
+        if (elementRef.current && elementRef.current !== node) {
+            SpatialEngine.unregister(zone, elementRef.current);
         }
-        return () => {
-            if (el) SpatialEngine.unregister(zone, el);
-        };
-    }, [zone]);
 
-    return ref;
+        if (node) {
+            SpatialEngine.register(zone, node, id);
+        }
+
+        elementRef.current = node;
+    }, [zone, id]); // Depend on ID now
+
+    return setRef;
 };
 
 /**
@@ -117,13 +193,17 @@ export const useSpatialArbiter = (onBack) => {
             const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
 
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-                if (isTyping) return;
+                // Allow Up/Down to escape input, and Left/Right if not typing
+                if (isTyping && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+
                 e.preventDefault();
                 SpatialEngine.move(e.key);
             }
 
             if (e.key === 'Enter' || e.key === ' ') {
                 if (isTyping) return;
+
+                e.preventDefault();
                 const active = document.activeElement;
                 if (active && active.classList.contains('focusable')) {
                     active.click();

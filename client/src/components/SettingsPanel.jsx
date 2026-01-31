@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
 
 const TABS = [
     { id: 'general', name: 'Основные', icon: '⚙️' },
-    { id: 'search', name: 'Поиск и кэш', icon: '🧹' }
+    { id: 'search', name: 'Поиск и кэш', icon: '🧹' },
+    { id: 'status', name: 'Сервер', icon: '📊' },
+    { id: 'posters', name: 'Постеры', icon: '🖼️' }
 ]
 
 const SpeedButton = ({ mode, active, disabled, onClick }) => {
@@ -23,20 +26,20 @@ const SpeedButton = ({ mode, active, disabled, onClick }) => {
     )
 }
 
-const SettingsTabButton = ({ tab, active, onClick }) => {
+const PosterTestItem = ({ torrent, onClick }) => {
     const spatialRef = useSpatialItem('settings')
+    const title = cleanTitle(torrent.name) || torrent.name
     return (
         <button
             ref={spatialRef}
-            onClick={onClick}
-            className={`focusable w-full flex flex-col items-center justify-center py-4 gap-1 transition-all ${active ? 'bg-purple-600 text-white shadow-xl' : 'bg-transparent text-gray-500 hover:text-gray-300'}`}
+            tabIndex="0"
+            onClick={() => onClick(title)}
+            className="focusable w-full text-left p-2.5 bg-gray-800 hover:bg-gray-750 rounded text-xs truncate border border-gray-700 mb-1 focus:bg-blue-600 focus:text-white transition-colors"
         >
-            <span className="text-xl">{tab.icon}</span>
-            <span className="text-[11px] font-bold uppercase tracking-tight">{tab.name}</span>
+            🎬 {title}
         </button>
     )
 }
-
 
 const SettingsPanel = ({
     serverUrl,
@@ -48,22 +51,42 @@ const SettingsPanel = ({
     initialTab = 'general'
 }) => {
     const [activeTab, setActiveTab] = useState(initialTab)
+
+    // General State
     const [speedMode, setSpeedModeState] = useState(localStorage.getItem('speedMode') || 'balanced')
     const [speedLoading, setSpeedLoading] = useState(false)
+
+    // Status State
+    const [statusData, setStatusData] = useState(null)
+    const [statusLoading, setStatusLoading] = useState(false)
+
+    // Poster Test State
+    const [testResult, setTestResult] = useState(null)
+    const [testLoading, setTestLoading] = useState(false)
 
     useEffect(() => {
         setActiveTab(initialTab)
     }, [initialTab])
+
+    // Fetch Status when entering Status tab
+    useEffect(() => {
+        if (activeTab === 'status') fetchStatus()
+    }, [activeTab])
 
     // Spatial Refs
     const closeBtnRef = useSpatialItem('settings')
     const serverInputRef = useSpatialItem('settings')
     const proxyInputRef = useSpatialItem('settings')
     const clearCacheRef = useSpatialItem('settings')
+
+    // Tabs
     const generalTabRef = useSpatialItem('settings')
     const searchTabRef = useSpatialItem('settings')
+    const statusTabRef = useSpatialItem('settings')
+    const postersTabRef = useSpatialItem('settings')
+    const refreshStatusRef = useSpatialItem('settings')
 
-    const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_')).length
+    // --- Actions ---
 
     const handleClearCache = () => {
         const keys = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_'))
@@ -72,34 +95,93 @@ const SettingsPanel = ({
         window.location.reload()
     }
 
+    const fetchStatus = async () => {
+        setStatusLoading(true)
+        try {
+            const [sRes, lRes] = await Promise.all([
+                fetch(`${serverUrl}/api/status`).catch(e => ({ ok: false })),
+                fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false }))
+            ])
+            const sData = sRes.ok ? await sRes.json() : {}
+            const lData = lRes.ok ? await lRes.json() : {}
+            setStatusData({
+                server: sData.serverStatus || 'N/A',
+                ram: lData.server?.ram?.rss || 'N/A',
+                uptime: lData.server?.uptime || 0,
+                lags: lData.totalLags || 0,
+                active: lData.server?.torrents?.active || 0,
+                frozen: lData.server?.torrents?.frozen || 0
+            })
+        } catch (e) { console.error(e) }
+        finally { setStatusLoading(false) }
+    }
+
+    const runPosterTest = async (testName) => {
+        setTestLoading(true)
+        setTestResult(null)
+
+        const query = encodeURIComponent(testName)
+        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "c3bec60e67fabf42dd2202281dcbc9a7"
+        const CUSTOM_PROXY = tmdbProxyUrl || import.meta.env.VITE_TMDB_PROXY_URL || ''
+        const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
+        const IMAGE_MIRRORS = ['imagetmdb.com', 'nl.imagetmdb.com', 'lampa.byskaz.ru/tmdb/img']
+
+        let results = []
+        const check = async (name, url, parser) => {
+            try {
+                const controller = new AbortController()
+                const timeoutId = setTimeout(() => controller.abort(), 10000)
+                const res = await fetch(url, { signal: controller.signal })
+                clearTimeout(timeoutId)
+
+                if (res.ok) {
+                    const d = await res.json()
+                    const found = parser ? parser(d) : true
+                    results.push({ name, status: found ? '✅' : '⚠️', detail: typeof found === 'string' ? found : 'Online' })
+                } else {
+                    results.push({ name, status: '❌', detail: `HTTP ${res.status}` })
+                }
+            } catch (e) {
+                results.push({ name, status: '❌', detail: e.name === 'AbortError' ? 'Timeout' : e.message })
+            }
+        }
+
+        try {
+            await check('TMDB API (Direct)', `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
+            if (CUSTOM_PROXY) await check('Custom Proxy', `${CUSTOM_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
+            for (const mirror of IMAGE_MIRRORS) await check(`Img: ${mirror}`, `https://${mirror}/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => true)
+            await check('Kinopoisk Proxy', `${KP_PROXY}/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d.films?.length > 0)
+        } catch (err) {
+            results.push({ name: 'Critical', status: '❌', detail: err.message })
+        } finally {
+            setTestResult({ name: testName, results })
+            setTestLoading(false)
+        }
+    }
+
+    const formatUptime = (s) => {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+        return `${h}h ${m}m`
+    }
+
+    const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_')).length
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-[#1a1a1a] border border-gray-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
                 {/* Header */}
                 <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 flex items-center justify-between border-b border-white/10">
-                    <div className="flex gap-4">
-                        <button
-                            ref={generalTabRef}
-                            tabIndex="0"
-                            onClick={() => setActiveTab('general')}
-                            className={`focusable text-sm font-bold transition-opacity flex items-center gap-2 ${activeTab === 'general' ? 'text-white' : 'text-white/50'}`}
-                        >
-                            <span>⚙️</span> Основные
-                        </button>
-                        <button
-                            ref={searchTabRef}
-                            tabIndex="0"
-                            onClick={() => setActiveTab('search')}
-                            className={`focusable text-sm font-bold transition-opacity flex items-center gap-2 ${activeTab === 'search' ? 'text-white' : 'text-white/50'}`}
-                        >
-                            <span>🧹</span> Поиск и кэш
-                        </button>
+                    <div className="flex gap-2 overflow-x-auto">
+                        <button ref={generalTabRef} onClick={() => setActiveTab('general')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'general' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>⚙️ Основные</button>
+                        <button ref={searchTabRef} onClick={() => setActiveTab('search')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'search' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>🧹 Поиск</button>
+                        <button ref={statusTabRef} onClick={() => setActiveTab('status')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'status' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>📊 Статус</button>
+                        <button ref={postersTabRef} onClick={() => setActiveTab('posters')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'posters' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>🖼️ Постеры</button>
                     </div>
-                    <button ref={closeBtnRef} tabIndex="0" onClick={onClose} className="focusable text-gray-400 hover:text-white px-2 text-xl">✕</button>
+                    <button ref={closeBtnRef} onClick={onClose} className="focusable text-gray-400 hover:text-white px-2 text-xl ml-2">✕</button>
                 </div>
 
                 {/* Content Area */}
-                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar pb-10">
                     {/* --- GENERAL TAB --- */}
                     {activeTab === 'general' && (
                         <div className="space-y-6 animate-fade-in">
@@ -130,35 +212,24 @@ const SettingsPanel = ({
                                     ))}
                                 </div>
                             </section>
-
-                            <section>
-                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🖥️ Адрес сервера</label>
-                                <input
-                                    ref={serverInputRef}
-                                    value={serverUrl}
-                                    onChange={e => onServerUrlChange(e.target.value, false)}
-                                    onBlur={e => onServerUrlChange(e.target.value, true)}
-                                    className="focusable w-full bg-gray-800 text-sm text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-blue-500 outline-none transition-colors"
-                                    placeholder="http://192.168.x.x:3000"
-                                />
-                            </section>
                         </div>
                     )}
 
-                    {/* --- SEARCH & CACH TAB --- */}
+                    {/* --- SEARCH & CACHE TAB --- */}
                     {activeTab === 'search' && (
                         <div className="space-y-6 animate-fade-in">
                             <section>
-                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🛡️ TMDB Proxy (Обход блокировок)</label>
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🛡️ TMDB Proxy</label>
                                 <input
                                     ref={proxyInputRef}
+                                    tabIndex="0"
                                     value={tmdbProxyUrl}
                                     onChange={e => onTmdbProxyUrlChange(e.target.value, false)}
                                     onBlur={e => onTmdbProxyUrlChange(e.target.value, true)}
                                     className="focusable w-full bg-gray-800 text-sm text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-purple-500 outline-none transition-colors"
                                     placeholder="Пусто для авто-выбора"
                                 />
-                                <p className="text-[10px] text-gray-500 mt-2 italic">Используйте это, если не грузятся обложки фильмов. Оставьте пустым для авто-настройки.</p>
+                                <p className="text-[10px] text-gray-500 mt-2 italic">Для обхода блокировок загрузки обложек.</p>
                             </section>
 
                             <section className="pt-4 border-t border-white/5">
@@ -169,8 +240,69 @@ const SettingsPanel = ({
                                 >
                                     <span>🗑️</span> Очистить кэш ({cacheCount})
                                 </button>
-                                <p className="text-[10px] text-gray-500 mt-3 text-center">Удаляет сохраненные описания и картинки чтобы освободить место.</p>
                             </section>
+                        </div>
+                    )}
+
+                    {/* --- STATUS TAB --- */}
+                    {activeTab === 'status' && (
+                        <div className="space-y-6 animate-fade-in">
+                            <section>
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🖥️ Адрес сервера</label>
+                                <input
+                                    ref={serverInputRef}
+                                    tabIndex="0"
+                                    value={serverUrl}
+                                    onChange={e => onServerUrlChange(e.target.value, false)}
+                                    onBlur={e => onServerUrlChange(e.target.value, true)}
+                                    className="focusable w-full bg-gray-800 text-sm text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-blue-500 outline-none transition-colors"
+                                    placeholder="http://192.168.x.x:3000"
+                                />
+                            </section>
+
+                            <div className="pt-4 border-t border-white/10 pb-4">
+                                {statusLoading ? <div className="text-center animate-pulse text-gray-500 py-4">Загрузка данных...</div> : (
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">Status</div><div className={`text-xl font-mono ${statusData?.server === 'ok' ? 'text-green-400' : 'text-yellow-400'}`}>{statusData?.server?.toUpperCase()}</div></div>
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">RAM</div><div className="text-xl font-mono">{statusData?.ram} MB</div></div>
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">Uptime</div><div className="text-xl font-mono">{formatUptime(statusData?.uptime)}</div></div>
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">Lags</div><div className={`text-xl font-mono ${statusData?.lags > 0 ? 'text-red-400' : 'text-green-400'}`}>{statusData?.lags}</div></div>
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">Active</div><div className="text-xl font-mono text-blue-400">{statusData?.active}</div></div>
+                                        <div className="bg-white/5 p-3 rounded-xl border border-white/5"><div className="text-[10px] text-gray-500 font-bold uppercase">Frozen</div><div className="text-xl font-mono text-purple-400">{statusData?.frozen}</div></div>
+                                    </div>
+                                )}
+                                <button
+                                    ref={refreshStatusRef}
+                                    onClick={fetchStatus}
+                                    className="focusable w-full mt-4 py-3 bg-blue-600/20 text-blue-400 rounded-xl font-bold text-sm border border-blue-500/30 hover:bg-blue-600/30 transition-colors"
+                                >
+                                    Обновить статус
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- POSTERS TAB --- */}
+                    {activeTab === 'posters' && (
+                        <div className="space-y-4 animate-fade-in pb-10">
+                            <div className="max-h-40 overflow-y-auto border border-white/10 rounded-xl bg-black/20 p-2 custom-scrollbar">
+                                {torrents.map(t => <PosterTestItem key={t.infoHash} torrent={t} onClick={runPosterTest} />)}
+                                {torrents.length === 0 && <div className="text-center text-xs text-gray-500 py-10">Нет торрентов для теста</div>}
+                            </div>
+
+                            {testLoading && <div className="text-center text-xs text-blue-400 animate-pulse">Тестируем загрузку постеров...</div>}
+
+                            {testResult && (
+                                <div className="bg-black/40 rounded-xl border border-white/10 p-3 text-[11px] space-y-1">
+                                    <div className="font-bold text-gray-300 border-b border-white/10 pb-1 mb-1">{testResult.name}</div>
+                                    {testResult.results.map((r, i) => (
+                                        <div key={i} className="flex justify-between items-center">
+                                            <span className={`${r.status === '✅' ? 'text-green-400' : 'text-red-400'}`}>{r.status} {r.name}</span>
+                                            <span className="text-gray-500 truncate max-w-[120px]">{r.detail}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -180,4 +312,3 @@ const SettingsPanel = ({
 }
 
 export default SettingsPanel
-
