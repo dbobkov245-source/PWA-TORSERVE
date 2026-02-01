@@ -469,7 +469,7 @@ function extractMetadata(title) {
 
 #### ⚠️ Phase 2: Performance & Polish — ACTIVE
 *Цель: Плавность интерфейса на слабых TV Box и исправление фокуса.*
-* ✅ **BUG-04:** Fix Modal Focus Loss — Критично для TV. Если метаданные обновляются, фокус слетает в `body`.
+* ⚠️ **BUG-04:** Modal Focus Loss — **ACCEPTED LIMITATION.** Частично решено через Zone Management (ADR выше). Полное решение требует рефакторинга React state.
 * ✅ **OPT-02:** Torrent Status Cache — Критично для ARM. Снижает нагрузку CPU при поллинге (0ms vs 200ms).
 * ⛔ **OPT-01:** Виртуализация списков — **ЗАМОРОЖЕН**.
 * 🔄 **UX-04:** Client-side Debounce для кнопок. **TODO**
@@ -498,7 +498,7 @@ function extractMetadata(title) {
 | **UX-08** | **Smooth Poster Scroll** | ✅ DONE | ~~SHOULD~~ | Low | **Код добавлен:** `HomeRow.jsx` + `index.css`. scrollTo с центрированием, CSS scroll-behavior. |
 | **UX-09** | **Extended Movie Card** | ✅ DONE | ~~SHOULD~~ | Medium | **Код добавлен:** `MovieDetail.jsx` + `tmdbClient.js`. Режиссёры, актёры с фото, трейлер. |
 | **TEST-02** | **Client Unit Tests** | ✅ DONE | ~~SHOULD~~ | Low | Vitest настроен. 30/30 тестов: `discover.test.js`, `helpers.test.js`. |
-| **BUG-04** | **Modal Focus Fix** | 🔄 TODO | MUST | Mid | **Stability:** Исправляет потерю фокуса при обновлении метаданных. Использует `activeElement` capture. |
+| **BUG-04** | **Modal Focus Fix** | ⚠️ ACCEPTED | ~~MUST~~ | Mid | **Status:** Частично решено через Zone Management fixes. Остаточные edge cases — acceptable limitation для текущей архитектуры. |
 | **OPT-02** | **Torrent Status Cache** | ✅ DONE | MUST | Mid | **Perf:** Кэш JSON ответа (5 сек). Код уже в `server/torrent.js`:381. Исправляет фризы на ARM. |
 
 ---
