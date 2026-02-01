@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 // TV Remote focusable button component with tabIndex
 function FocusableButton({ onClick, disabled, className, children, autoFocus, tabIndex = 0 }) {
@@ -49,6 +50,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
     // Refs for focus management
     const panelRef = useRef(null)
     const firstFocusableRef = useRef(null)
+    const closeBtnRef = useSpatialItem('auto-download')
 
     const getApiUrl = (path) => serverUrl ? `${serverUrl}${path}` : path
 
@@ -322,7 +324,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
         >
             <div
                 ref={panelRef}
-                className="bg-gray-900 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+                className="bg-gray-900 rounded-2xl w-full max-w-xl max-h-[75vh] overflow-hidden flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
@@ -330,13 +332,14 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
                         📺 Авто-загрузка сериалов
                     </h2>
-                    <FocusableButton
+                    <button
+                        ref={closeBtnRef}
                         onClick={onClose}
-                        className="text-gray-400 hover:text-white text-2xl p-2 rounded-lg"
+                        className="focusable text-gray-400 hover:text-white text-2xl p-2 rounded-lg focus:ring-4 focus:ring-blue-500 focus:outline-none"
                         tabIndex={0}
                     >
                         ✕
-                    </FocusableButton>
+                    </button>
                 </div>
 
                 {/* Content - scrollable */}

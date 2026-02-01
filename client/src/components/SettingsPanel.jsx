@@ -123,8 +123,11 @@ const SettingsPanel = ({
         const query = encodeURIComponent(testName)
         const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "c3bec60e67fabf42dd2202281dcbc9a7"
         const CUSTOM_PROXY = tmdbProxyUrl || import.meta.env.VITE_TMDB_PROXY_URL || ''
+        const LAMPA_PROXY = 'https://apn-latest.onrender.com'
         const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
-        const IMAGE_MIRRORS = ['imagetmdb.com', 'nl.imagetmdb.com', 'lampa.byskaz.ru/tmdb/img']
+        const CORS_PROXY = 'https://corsproxy.io/?'
+        const CDN_MIRROR = 'https://imagetmdb.com'
+        const WSRV_PROXY = 'https://wsrv.nl/?url='
 
         let results = []
         const check = async (name, url, parser) => {
@@ -135,22 +138,67 @@ const SettingsPanel = ({
                 clearTimeout(timeoutId)
 
                 if (res.ok) {
-                    const d = await res.json()
+                    const d = await res.json().catch(() => null)
                     const found = parser ? parser(d) : true
                     results.push({ name, status: found ? '✅' : '⚠️', detail: typeof found === 'string' ? found : 'Online' })
                 } else {
                     results.push({ name, status: '❌', detail: `HTTP ${res.status}` })
                 }
             } catch (e) {
-                results.push({ name, status: '❌', detail: e.name === 'AbortError' ? 'Timeout' : e.message })
+                // Check for DNS poisoning (redirect to localhost)
+                const isPoisoned = e.message?.includes('127.0.0.1') || e.message?.includes('0.0.0.0')
+                results.push({
+                    name,
+                    status: isPoisoned ? '🚫' : '❌',
+                    detail: isPoisoned ? 'DNS POISONING!' : (e.name === 'AbortError' ? 'Timeout' : e.message)
+                })
             }
         }
 
         try {
-            await check('TMDB API (Direct)', `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
-            if (CUSTOM_PROXY) await check('Custom Proxy', `${CUSTOM_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d.total_results > 0)
-            for (const mirror of IMAGE_MIRRORS) await check(`Img: ${mirror}`, `https://${mirror}/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => true)
-            await check('Kinopoisk Proxy', `${KP_PROXY}/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d.films?.length > 0)
+            // 1. Custom Worker (user's proxy)
+            if (CUSTOM_PROXY) {
+                await check('Custom Worker', `${CUSTOM_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+            }
+
+            // 2. Lampa Proxy
+            await check('Lampa Proxy', `${LAMPA_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+
+            // 3. CapacitorHttp (direct, may be DNS poisoned)
+            await check('CapacitorHttp', `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+
+            // 4. corsproxy.io
+            await check('corsproxy.io', `${CORS_PROXY}https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+
+            // 5. Kinopoisk
+            await check('Кинопоиск', `${KP_PROXY}/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d?.films?.length > 0 ? d.films[0]?.nameRu || d.films[0]?.nameEn : false)
+
+            // --- IMAGE MIRRORS ---
+            results.push({ name: '── Зеркала изображений ──', status: '', detail: '' })
+
+            // 6. Original TMDB (may be blocked)
+            await check('image.tmdb.org', 'https://image.tmdb.org/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg', () => 'OK')
+
+            // 7. CDN Mirror (imagetmdb.com)  
+            await check('imagetmdb.com', `${CDN_MIRROR}/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => 'OK')
+
+            // 8. StaticTMDB (statictmdb.com)
+            await check('statictmdb.com', 'https://statictmdb.com/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg', () => 'OK')
+
+            // 9. StaticIM (staticim.net)
+            await check('staticim.net', 'https://staticim.net/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg', () => 'OK')
+
+            // 10. WSRV Proxy (image proxy)
+            await check('wsrv.nl', `${WSRV_PROXY}https://image.tmdb.org/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => 'OK')
+
+            // Summary line
+            const working = results.filter(r => r.status === '✅').length
+            const total = results.filter(r => r.status !== '').length
+            const poisoned = results.filter(r => r.status === '🚫').length
+            let summary = `💡 ${working}/${total} работают`
+            if (poisoned > 0) summary += ` | DNS Poison → 1.1.1.1`
+            results.push({ name: '', status: '', detail: summary })
+
         } catch (err) {
             results.push({ name: 'Critical', status: '❌', detail: err.message })
         } finally {
@@ -171,13 +219,13 @@ const SettingsPanel = ({
             <div className="bg-[#1a1a1a] border border-gray-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
                 {/* Header */}
                 <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 flex items-center justify-between border-b border-white/10">
-                    <div className="flex gap-2 overflow-x-auto">
-                        <button ref={generalTabRef} onClick={() => setActiveTab('general')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'general' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>⚙️ Основные</button>
-                        <button ref={searchTabRef} onClick={() => setActiveTab('search')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'search' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>🧹 Поиск</button>
-                        <button ref={statusTabRef} onClick={() => setActiveTab('status')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'status' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>📊 Статус</button>
-                        <button ref={postersTabRef} onClick={() => setActiveTab('posters')} className={`focusable text-sm font-bold px-3 py-1.5 rounded-full transition-all ${activeTab === 'posters' ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'}`}>🖼️ Постеры</button>
+                    <div className="flex gap-2 overflow-x-auto overflow-y-visible py-1 pl-1">
+                        <button ref={generalTabRef} onClick={() => setActiveTab('general')} className={`focusable shrink-0 text-sm font-bold px-3 py-1.5 rounded-full transition-all focus:ring-2 focus:ring-blue-500 ${activeTab === 'general' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/5'}`}>⚙️ Основные</button>
+                        <button ref={searchTabRef} onClick={() => setActiveTab('search')} className={`focusable shrink-0 text-sm font-bold px-3 py-1.5 rounded-full transition-all focus:ring-2 focus:ring-blue-500 ${activeTab === 'search' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/5'}`}>🧹 Поиск</button>
+                        <button ref={statusTabRef} onClick={() => setActiveTab('status')} className={`focusable shrink-0 text-sm font-bold px-3 py-1.5 rounded-full transition-all focus:ring-2 focus:ring-blue-500 ${activeTab === 'status' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/5'}`}>📊 Статус</button>
+                        <button ref={postersTabRef} onClick={() => setActiveTab('posters')} className={`focusable shrink-0 text-sm font-bold px-3 py-1.5 rounded-full transition-all focus:ring-2 focus:ring-blue-500 ${activeTab === 'posters' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/5'}`}>🖼️ Постеры</button>
                     </div>
-                    <button ref={closeBtnRef} onClick={onClose} className="focusable text-gray-400 hover:text-white px-2 text-xl ml-2">✕</button>
+                    <button ref={closeBtnRef} onClick={onClose} className="focusable shrink-0 text-gray-400 hover:text-white px-2 text-xl ml-2 focus:ring-2 focus:ring-blue-500 rounded">✕</button>
                 </div>
 
                 {/* Content Area */}
@@ -284,22 +332,28 @@ const SettingsPanel = ({
 
                     {/* --- POSTERS TAB --- */}
                     {activeTab === 'posters' && (
-                        <div className="space-y-4 animate-fade-in pb-10">
-                            <div className="max-h-40 overflow-y-auto border border-white/10 rounded-xl bg-black/20 p-2 custom-scrollbar">
+                        <div className="space-y-3 animate-fade-in">
+                            <div className="max-h-28 overflow-y-auto border border-white/10 rounded-xl bg-black/20 p-2 custom-scrollbar">
                                 {torrents.map(t => <PosterTestItem key={t.infoHash} torrent={t} onClick={runPosterTest} />)}
-                                {torrents.length === 0 && <div className="text-center text-xs text-gray-500 py-10">Нет торрентов для теста</div>}
+                                {torrents.length === 0 && <div className="text-center text-xs text-gray-500 py-4">Нет торрентов для теста</div>}
                             </div>
 
-                            {testLoading && <div className="text-center text-xs text-blue-400 animate-pulse">Тестируем загрузку постеров...</div>}
+                            {testLoading && <div className="text-center text-[10px] text-blue-400 animate-pulse">Тестируем...</div>}
 
                             {testResult && (
-                                <div className="bg-black/40 rounded-xl border border-white/10 p-3 text-[11px] space-y-1">
-                                    <div className="font-bold text-gray-300 border-b border-white/10 pb-1 mb-1">{testResult.name}</div>
+                                <div className="bg-black/40 rounded-xl border border-white/10 p-2 text-[9px] leading-tight">
+                                    <div className="font-bold text-gray-300 text-[10px] mb-1">🔍 {testResult.name}</div>
                                     {testResult.results.map((r, i) => (
-                                        <div key={i} className="flex justify-between items-center">
-                                            <span className={`${r.status === '✅' ? 'text-green-400' : 'text-red-400'}`}>{r.status} {r.name}</span>
-                                            <span className="text-gray-500 truncate max-w-[120px]">{r.detail}</span>
-                                        </div>
+                                        r.status === '' && r.name ? (
+                                            <div key={i} className="text-gray-500 text-[8px] mt-1 mb-0.5 border-t border-white/5 pt-1">{r.name}</div>
+                                        ) : r.status === '' && !r.name ? (
+                                            <div key={i} className="text-blue-400 text-[10px] font-medium mt-1 pt-1 border-t border-white/10">{r.detail}</div>
+                                        ) : (
+                                            <div key={i} className="flex justify-between items-center">
+                                                <span className={r.status === '✅' ? 'text-green-400' : 'text-red-400'}>{r.status} {r.name}</span>
+                                                <span className="text-gray-500 truncate max-w-[100px]">{r.detail}</span>
+                                            </div>
+                                        )
                                     ))}
                                 </div>
                             )}

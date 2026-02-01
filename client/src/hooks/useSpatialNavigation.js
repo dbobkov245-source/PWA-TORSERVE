@@ -80,13 +80,21 @@ const SpatialEngine = {
 
     move(direction) {
         const current = document.activeElement;
-        const elements = Array.from(this.zones[this.activeZone] || [])
+        const allZoneElements = Array.from(this.zones[this.activeZone] || []);
+        const elements = allZoneElements
             .filter(el => document.body.contains(el) && el.offsetParent !== null); // Filter valid + visible
 
-        if (!elements.length) return;
+        // Debug logging: track focus and zone state
+        console.log(`[SpatialNav] move(${direction}): activeElement=${current?.tagName}#${current?.id || 'no-id'}, class=${current?.className?.substring(0, 30)}, zone=${this.activeZone}, zoneSize=${allZoneElements.length}, visible=${elements.length}`);
+
+        if (!elements.length) {
+            console.warn(`[SpatialNav] No visible elements in zone ${this.activeZone}`);
+            return;
+        }
 
         // If nothing focused, focus first or best
         if (!elements.includes(current)) {
+            console.log(`[SpatialNav] Current element not in zone, focusing first element`);
             elements[0].focus();
             return;
         }
@@ -140,16 +148,38 @@ const SpatialEngine = {
 
     recoverFocus(zone, retryCount = 5) {
         const targetZone = zone || this.activeZone;
+
+        // Clean stale references before recovery (BUG-1 fix)
+        if (this.zones[targetZone]) {
+            const before = this.zones[targetZone].size;
+            this.zones[targetZone] = new Set(
+                Array.from(this.zones[targetZone]).filter(el => document.body.contains(el))
+            );
+            const after = this.zones[targetZone].size;
+            if (before !== after) {
+                console.log(`[SpatialNav] Cleaned ${before - after} stale refs before recovery in '${targetZone}'`);
+            }
+        }
+
         const attempt = () => {
             const elements = Array.from(this.zones[targetZone] || [])
                 .filter(el => document.body.contains(el) && el.offsetParent !== null && !el.disabled);
 
             if (elements.length > 0) {
-                console.log(`[SpatialNav] Recovering focus in ${targetZone}`);
+                console.log(`[SpatialNav] Recovering focus in ${targetZone}, ${elements.length} candidates`);
                 this.activeZone = targetZone;
-                // Prefer elements that are NOT the search buttons if possible, or just first one
-                elements[0].focus();
-                elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                // Prefer elements in current viewport (visible without scroll) - BUG-1 fix v2
+                const viewportHeight = window.innerHeight;
+                const inViewport = elements.filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.top >= 0 && rect.bottom <= viewportHeight;
+                });
+
+                // Focus first visible element, or fallback to first registered
+                const target = inViewport[0] || elements[0];
+                target.focus();
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return true;
             }
             if (retryCount > 0) {

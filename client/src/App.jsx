@@ -167,11 +167,12 @@ function App() {
     else if (showSearch) setActiveZone('search')
     else if (showAutoDownload) setActiveZone('auto-download')
     else if (showSidebar) setActiveZone('sidebar')
-    else if (activeMovie) setActiveZone('detail')
-    else if (activePerson) setActiveZone('person')
-    else if (activeCategory) setActiveZone('category')
+    // Home-specific zones: only apply when HomePanel is visible
+    else if (activeView === 'home' && activeMovie) setActiveZone('detail')
+    else if (activeView === 'home' && activePerson) setActiveZone('person')
+    else if (activeView === 'home' && activeCategory) setActiveZone('category')
     else setActiveZone('main')
-  }, [showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, setActiveZone])
+  }, [showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
 
   const fetchStatus = useCallback(async () => {
     const baseUrl = serverUrl || ''
@@ -191,6 +192,45 @@ function App() {
     const timer = setInterval(fetchStatus, 5000)
     return () => clearInterval(timer)
   }, [fetchStatus])
+
+  // Handle external magnet links (Android intent-filter) - BUG-2 fix
+  useEffect(() => {
+    const handleAppUrlOpen = async ({ url }) => {
+      console.log('[Intent] Received URL:', url)
+      if (!url || !url.startsWith('magnet:')) return
+
+      try {
+        // Wait for app to be ready
+        await new Promise(resolve => setTimeout(resolve, 500))
+
+        const res = await fetch(`${serverUrl}/api/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ magnet: url })
+        })
+
+        if (res.ok) {
+          console.log('[Intent] Torrent added successfully')
+          setActiveView('list')
+          fetchStatus()
+        } else {
+          console.error('[Intent] Failed to add torrent:', res.status)
+        }
+      } catch (e) {
+        console.error('[Intent] Error adding torrent:', e)
+      }
+    }
+
+    // Listen for runtime intents
+    const listener = CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
+
+    // Check if app was cold-started with an intent
+    CapacitorApp.getLaunchUrl().then(result => {
+      if (result?.url) handleAppUrlOpen(result)
+    })
+
+    return () => { listener.remove() }
+  }, [serverUrl, fetchStatus])
 
   const addTorrent = async (e) => {
     e.preventDefault()
@@ -292,14 +332,21 @@ function App() {
         body: JSON.stringify({ magnet })
       })
       if (res.ok) {
-        // Clear search state FIRST to unmount SearchResultItem components
+        // 1. Clear search state to unmount SearchResultItem components
         setSearchResults([])
         setSearchProviders({})
-        setShowSearch(false)
-        setActiveView('list')
-        fetchStatus()
-        // Use recoverFocus with retry logic instead of focusId
-        setTimeout(() => SpatialEngine.recoverFocus('main'), 100)
+        // 2. Close panel AFTER clearing (allows React to complete unmount)
+        requestAnimationFrame(() => {
+          setShowSearch(false)
+          setActiveView('list')
+          fetchStatus()
+          // 3. Recover focus after DOM settles - BUG-1 fix: use timeout instead of rAF
+          // to ensure search zone elements are fully unregistered before recovery
+          setTimeout(() => {
+            SpatialEngine.setActiveZone('main')
+            SpatialEngine.recoverFocus()
+          }, 150)
+        })
       }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
