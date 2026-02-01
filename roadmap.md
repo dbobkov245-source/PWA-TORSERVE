@@ -864,8 +864,8 @@ function startFrozenCleanup() {
 | ID | Task Name | Priority | Complexity | Description |
 |---|---|---|---|---|
 | **AND-01** | **Intent Lifecycle Fix** | ✅ DONE | High | **Stop Double Chooser.** Prevent `chooser` from reappearing after playback. Add `FLAG_ACTIVITY_SINGLE_TOP` / `CLEAR_TOP`. Ensure `onResume` doesn't re-trigger intent. |
-| **AND-02** | **Player Preference Verification** | SHOULD | Low | **Verify Persistence.** Ensure "Default Player" setting in `SettingsPanel` is actually respected by the `TVPlayer` plugin intent logic. |
-| **AND-03** | **Double Player Launch Guard** | ✅ PARTIAL | Mid | **Race Condition.** Prevent double launch of player due to multiple rapid clicks or rapid state updates. Temporary `isPlaying` guard implemented. Needs more robust lifecycle handling. |
+| **AND-02** | **Player Preference Verification** | ✅ DONE | Low | **Verify Persistence.** Настройки выбора плеера работают корректно. Intent формируется с учётом выбранного package. |
+| **AND-03** | **Double Player Launch Guard** | ✅ DONE | Mid | **Race Condition.** Решено через флаги состояния и `isPlaying` guard. Двойной запуск предотвращён. |
 
 ### � Batch 3: TMDB Content Graph (Rehab)
 *Turning TMDB from a static data source into a navigable graph.*
