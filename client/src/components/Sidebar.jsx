@@ -1,9 +1,25 @@
-import React, { useState, useRef } from 'react'
-import { useSpatialItem } from '../hooks/useSpatialNavigation'
+/**
+ * Sidebar.jsx – ADR-003 Compliant "Dumb" Component
+ * 
+ * This component:
+ * - ❌ Does NOT handle keyboard navigation
+ * - ❌ Does NOT use useSpatialItem/useSpatialNavigation
+ * - ❌ Does NOT store focus state
+ * - ✅ Renders items based on props only
+ * - ✅ Calls onSelect callback when item clicked
+ * - ✅ Scrolls focused item into view (ADR-003 compliant: visual effect only)
+ */
 
-const Sidebar = ({ onSelect, isOpen = false, onClose }) => {
-    // Generate years from 2026 down to 1980
+import React, { useRef, useEffect } from 'react'
+
+const Sidebar = ({
+    isOpen = false,
+    focusedIndex = 0,
+    onSelect,
+    onClose
+}) => {
     const years = Array.from({ length: 2026 - 1980 + 1 }, (_, i) => 2026 - i)
+    const itemRefs = useRef([])
 
     const menuItems = [
         { id: 'close', icon: '❌', label: 'Закрыть' },
@@ -18,29 +34,30 @@ const Sidebar = ({ onSelect, isOpen = false, onClose }) => {
         { id: 'ai_picks', icon: '🤖', label: 'Подборки AI' },
     ]
 
-    const sidebarRef = useRef(null)
-    const [expanded, setExpanded] = useState(false)
+    // Combine menu items and years into single list for index-based focus
+    const allItems = [
+        ...menuItems,
+        ...years.map(year => ({ id: `year_${year}`, icon: '📅', label: String(year), type: 'year', year }))
+    ]
 
-    // Handle Focus Expansion
-    const handleFocus = () => setExpanded(true)
-    const handleBlur = (e) => {
-        if (!sidebarRef.current?.contains(e.relatedTarget)) {
-            setExpanded(false)
+    // Scroll focused item into view when focusedIndex changes
+    useEffect(() => {
+        if (isOpen && itemRefs.current[focusedIndex]) {
+            itemRefs.current[focusedIndex].scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest',
+                inline: 'nearest'
+            })
         }
-    }
+    }, [focusedIndex, isOpen])
 
     return (
         <div
-            ref={sidebarRef}
             className={`
                 fixed left-0 top-0 bottom-0 z-40 bg-black/95 border-r border-white/10
                 transition-all duration-300 ease-out flex flex-col py-6
                 ${isOpen ? 'w-64 translate-x-0 shadow-2xl' : 'w-0 -translate-x-full overflow-hidden'}
             `}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            onMouseEnter={() => setExpanded(true)}
-            onMouseLeave={() => setExpanded(false)}
         >
             {/* Logo */}
             <div className="mb-6 px-0 flex justify-center sticky top-0 bg-black z-10 w-full">
@@ -48,29 +65,16 @@ const Sidebar = ({ onSelect, isOpen = false, onClose }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-hide px-2">
-                {/* Main Menu */}
-                {menuItems.map((item) => (
+                {allItems.map((item, index) => (
                     <SidebarItem
                         key={item.id}
+                        ref={el => itemRefs.current[index] = el}
                         item={item}
-                        expanded={expanded}
+                        isFocused={isOpen && index === focusedIndex}
                         onClick={() => {
                             if (item.id === 'close') onClose?.()
-                            else onSelect(item)
+                            else onSelect?.(item)
                         }}
-                    />
-                ))}
-
-                {/* Separator */}
-                <div className="h-px bg-white/10 my-4 mx-2" />
-
-                {/* Years Grid */}
-                {years.map((year) => (
-                    <SidebarItem
-                        key={year}
-                        item={{ id: year, icon: '📅', label: year }}
-                        expanded={expanded}
-                        onClick={() => onSelect({ id: `year_${year}`, type: 'year', year, label: `${year} год` })}
                     />
                 ))}
             </div>
@@ -78,24 +82,34 @@ const Sidebar = ({ onSelect, isOpen = false, onClose }) => {
     )
 }
 
-const SidebarItem = ({ item, expanded, onClick }) => {
-    const spatialRef = useSpatialItem('sidebar')
+// Get total items count for navigation bounds
+Sidebar.getItemsCount = () => {
+    const menuCount = 10 // menu items
+    const yearsCount = 2026 - 1980 + 1
+    return menuCount + yearsCount
+}
 
+const SidebarItem = React.forwardRef(({ item, isFocused, onClick }, ref) => {
     return (
         <button
-            ref={spatialRef}
-            className="focusable flex items-center rounded-lg mb-2 p-3 w-full text-left transition-all duration-200 text-gray-400 hover:text-white focus:bg-white focus:text-black focus:scale-105"
+            ref={ref}
+            className={`
+                flex items-center rounded-lg mb-2 p-3 w-full text-left 
+                transition-all duration-200
+                ${isFocused
+                    ? 'bg-white text-black scale-105'
+                    : 'text-gray-400 hover:text-white'
+                }
+            `}
             onClick={onClick}
+            data-focused={isFocused}
         >
             <span className="text-xl min-w-[24px] text-center">{item.icon}</span>
-            <span className={`
-                ml-4 font-medium whitespace-nowrap overflow-hidden transition-opacity duration-200
-                ${expanded ? 'opacity-100' : 'opacity-0 w-0'}
-            `}>
+            <span className="ml-4 font-medium whitespace-nowrap overflow-hidden">
                 {item.label}
             </span>
         </button>
     )
-}
+})
 
 export default Sidebar

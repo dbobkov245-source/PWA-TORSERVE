@@ -111,6 +111,7 @@
 
 История сессий разработки:
 
+*   [**2026-02-02**](docs/sessions/2026-02-02.md) — Sidebar scroll fix (scrollIntoView for remote navigation).
 *   [**2026-02-01**](docs/sessions/2026-02-01.md) — Fix BUG-FREEZE, UI Polish.
 *   [**2026-01-31**](docs/sessions/2026-01-31.md) — My List Freeze debugging, Search focus fix.
 *   [**2026-01-26**](docs/sessions/2026-01-26.md) — Backend Fixes, Navigation Dead Zones (failed attempt).
