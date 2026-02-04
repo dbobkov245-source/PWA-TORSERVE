@@ -7,11 +7,12 @@ import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
 import fsPromises from 'fs/promises'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen } from './torrent.js'
 import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
 import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
+import { parseRange } from './utils/range.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -766,7 +767,7 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
 // API: Stream
 app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const { infoHash, fileIndex } = req.params
-    const range = req.headers.range
+    const rangeHeader = req.headers.range
 
     // 🔥 ACTIVATE TURBO MODE when user starts watching
     boostTorrent(infoHash)
@@ -781,13 +782,23 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     // Smart Priority: Prioritize this file's first chunks for instant playback
     prioritizeFile(infoHash, parseInt(fileIndex, 10))
 
+    // 📺 Mark files as seen when playback starts (resets new episode counter)
+    markTorrentFilesSeen(infoHash)
+
     // Detect Content-Type
     const ext = path.extname(file.name).toLowerCase()
     const contentType = mimeMap[ext] || 'application/octet-stream'
 
     // Note: Download path check moved to startup (cached)
 
-    if (!range) {
+    const parsedRange = rangeHeader ? parseRange(rangeHeader, file.length) : null
+
+    if (rangeHeader && !parsedRange) {
+        res.set('Content-Range', `bytes */${file.length}`)
+        return res.status(416).send('Invalid Range')
+    }
+
+    if (!parsedRange) {
         const head = {
             'Content-Length': file.length,
             'Content-Type': contentType,
@@ -795,9 +806,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         res.writeHead(200, head)
         file.createReadStream().pipe(res)
     } else {
-        const parts = range.replace(/bytes=/, "").split("-")
-        const start = parseInt(parts[0], 10)
-        const end = parts[1] ? parseInt(parts[1], 10) : file.length - 1
+        const { start, end } = parsedRange
         const chunksize = (end - start) + 1
 
         // 🔥 READAHEAD: Prioritize chunks starting from seek position

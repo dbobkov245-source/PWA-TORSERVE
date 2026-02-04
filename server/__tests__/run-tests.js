@@ -10,6 +10,8 @@ import { runTests } from './test-runner.js'
 await import('./logger.test.js')
 await import('./torrent.test.js')
 await import('./watchdog.test.js')
+await import('./range.test.js')
+await import('./autodownloader.test.js')
 
 // Run all registered tests
 await runTests()

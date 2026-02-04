@@ -118,6 +118,32 @@ function updateSeenFiles(infoHash, currentFiles) {
     safeWrite(db).catch(e => console.warn('[Watchlist] Failed to save seenFiles:', e.message))
 }
 
+function areSameFileList(a, b) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false
+    }
+    return true
+}
+
+/**
+ * Mark current files as seen (used when playback starts).
+ * Returns true if an update was applied.
+ */
+export function markTorrentFilesSeen(infoHash) {
+    const engine = engines.get(infoHash)
+    if (!engine || !engine.files) return false
+
+    const currentNames = engine.files.map(f => f.name)
+    const seen = db.data.seenFiles?.[infoHash] || []
+    if (areSameFileList(seen, currentNames)) {
+        return false
+    }
+
+    updateSeenFiles(infoHash, engine.files)
+    return true
+}
+
 // ────────────────────────────────────────────────────────
 // 🔥 v2.3: Cache for isTorrentCompleted (expensive string search)
 // ────────────────────────────────────────────────────────
@@ -726,7 +752,7 @@ export const destroyAllTorrents = () => {
 // ────────────────────────────────────────────────────────
 // 📊 v2.3: Diagnostics helpers
 // ────────────────────────────────────────────────────────
-export const getActiveTorrentsCount = () => engines.size
+export const getActiveTorrentsCount = () => new Set(engines.values()).size
 export const getFrozenTorrentsCount = () => frozenTorrents.size
 
 // ────────────────────────────────────────────────────────

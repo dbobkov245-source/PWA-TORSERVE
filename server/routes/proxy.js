@@ -1,6 +1,7 @@
 import express from 'express';
 import { getSmartConfig } from '../utils/doh.js';
 import https from 'https';
+import http from 'http';
 import { URL } from 'url';
 
 const router = express.Router();
@@ -38,6 +39,7 @@ router.get('/', async (req, res) => {
         // Get DoH resolved config
         const config = await getSmartConfig(url);
 
+        const isHttps = targetUrl.protocol === 'https:';
         const options = {
             method: 'GET',
             headers: config.headers,
@@ -48,11 +50,16 @@ router.get('/', async (req, res) => {
         // If we have a resolved IP, we use it for the connection but keep the hostname for TLS SNI
         if (config.resolvedIP) {
             options.hostname = config.resolvedIP;
-            options.servername = config.hostname; // This is the SNI part
             options.path = targetUrl.pathname + targetUrl.search;
+            options.port = targetUrl.port || (isHttps ? 443 : 80);
+
+            if (isHttps) {
+                options.servername = config.hostname; // This is the SNI part
+            }
         }
 
-        const proxyReq = https.request(config.resolvedIP ? options : url, (proxyRes) => {
+        const transport = isHttps ? https : http;
+        const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
             // Forward status
             res.status(proxyRes.statusCode);
 

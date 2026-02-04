@@ -244,7 +244,45 @@ function generateQueryVariants(query) {
 }
 
 // ────────────────────────────────────────────────────────
-// �📺 Enhanced Title Parser
+// 📦 Size Helpers
+// ────────────────────────────────────────────────────────
+
+function parseSizeStringToBytes(sizeStr) {
+    if (!sizeStr || typeof sizeStr !== 'string') return 0
+    const normalized = sizeStr.replace(',', '.').trim()
+    const match = normalized.match(/([\d.]+)\s*(GB|MB|KB|TB)/i)
+    if (!match) return 0
+
+    const num = parseFloat(match[1])
+    const unit = match[2].toUpperCase()
+    const mult = { 'KB': 1024, 'MB': 1024 ** 2, 'GB': 1024 ** 3, 'TB': 1024 ** 4 }
+    return num * (mult[unit] || 1)
+}
+
+/**
+ * Extract size in GB from normalized or raw provider result
+ * Uses sizeBytes when available, falls back to parsing size string.
+ */
+export function getSizeGBFromResult(result) {
+    if (!result) return 0
+    if (typeof result.sizeBytes === 'number' && result.sizeBytes > 0) {
+        return result.sizeBytes / (1024 ** 3)
+    }
+    if (typeof result.Size === 'number' && result.Size > 0) {
+        return result.Size / (1024 ** 3)
+    }
+
+    const sizeStr =
+        (typeof result.size === 'string' && result.size) ||
+        (typeof result.Size === 'string' && result.Size) ||
+        ''
+
+    const bytes = parseSizeStringToBytes(sizeStr)
+    return bytes > 0 ? bytes / (1024 ** 3) : 0
+}
+
+// ────────────────────────────────────────────────────────
+// 📺 Enhanced Title Parser
 // ────────────────────────────────────────────────────────
 
 export function parseTorrentTitle(title, sizeFromAPI = 0) {
@@ -626,7 +664,7 @@ export async function checkRules() {
                     continue
                 }
 
-                const sizeGB = torrent.Size ? parseFloat(torrent.Size) / (1024 ** 3) : 0
+                const sizeGB = getSizeGBFromResult(torrent)
                 const parsed = parseTorrentTitle(torrent.title, sizeGB)
 
                 if (matchesRule(parsed, rule)) {

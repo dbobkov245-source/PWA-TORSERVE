@@ -82,9 +82,9 @@ async function runTests() {
     console.log('═'.repeat(50))
     console.log(`\n📊 Results: ${passed} passed, ${failed} failed, ${tests.length} total\n`)
 
-    if (failed > 0) {
-        process.exit(1)
-    }
+    const exitCode = failed > 0 ? 1 : 0
+    // Force exit so background intervals (e.g., keep-alive cleanup) don't hang tests.
+    setTimeout(() => process.exit(exitCode), 0)
 }
 
 // Export for test files

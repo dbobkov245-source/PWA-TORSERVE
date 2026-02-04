@@ -35,7 +35,10 @@ db.data = { ...defaultData, ...db.data }
 // Ensure nested objects are initialized
 db.data.progress ||= {}
 db.data.seenFiles ||= {}
-db.data.autoDownloadSettings ||= { enabled: false, intervalMinutes: 30 }
+db.data.autoDownloadSettings = {
+    ...defaultData.autoDownloadSettings,
+    ...(db.data.autoDownloadSettings || {})
+}
 db.data.autoDownloadRules ||= []
 db.data.autoDownloadHistory ||= []
 db.data.favorites ||= []
@@ -44,4 +47,3 @@ db.data.viewHistory ||= []
 await db.write()
 
 export { db, safeWrite }
-
