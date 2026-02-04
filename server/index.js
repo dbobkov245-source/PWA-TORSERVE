@@ -491,6 +491,193 @@ app.post('/api/autodownload/check', async (req, res) => {
     }
 })
 
+// ────────────────────────────────────────────────────────
+// ❤️ Favorites API (FAV-01)
+// ────────────────────────────────────────────────────────
+
+app.get('/api/favorites', (req, res) => {
+    res.json(db.data.favorites || [])
+})
+
+app.post('/api/favorites', async (req, res) => {
+    const { tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, genreIds } = req.body
+    if (!tmdbId) return res.status(400).json({ error: 'tmdbId required' })
+
+    // Prevent duplicates
+    const exists = db.data.favorites.find(f => f.tmdbId === tmdbId && f.mediaType === mediaType)
+    if (exists) return res.json({ status: 'already_exists', item: exists })
+
+    const item = { tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, genreIds: genreIds || [], addedAt: Date.now() }
+    db.data.favorites.push(item)
+    await safeWrite(db)
+    res.json({ status: 'added', item })
+})
+
+app.delete('/api/favorites/:tmdbId', async (req, res) => {
+    const tmdbId = parseInt(req.params.tmdbId, 10)
+    const before = db.data.favorites.length
+    db.data.favorites = db.data.favorites.filter(f => f.tmdbId !== tmdbId)
+    if (db.data.favorites.length === before) return res.status(404).json({ error: 'Not found' })
+    await safeWrite(db)
+    res.json({ status: 'removed' })
+})
+
+// ────────────────────────────────────────────────────────
+// 🕒 View History API (HIST-01)
+// ────────────────────────────────────────────────────────
+
+app.get('/api/history', (req, res) => {
+    // Return sorted by lastWatched desc
+    const sorted = [...(db.data.viewHistory || [])].sort((a, b) => b.lastWatched - a.lastWatched)
+    res.json(sorted)
+})
+
+app.post('/api/history', async (req, res) => {
+    const { tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, genreIds } = req.body
+    if (!tmdbId) return res.status(400).json({ error: 'tmdbId required' })
+
+    // Upsert: update lastWatched if exists, else add
+    const idx = db.data.viewHistory.findIndex(h => h.tmdbId === tmdbId && h.mediaType === mediaType)
+    const entry = { tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, genreIds: genreIds || [], lastWatched: Date.now() }
+
+    if (idx !== -1) {
+        db.data.viewHistory[idx] = entry
+    } else {
+        db.data.viewHistory.push(entry)
+        // LRU: keep only last 200
+        if (db.data.viewHistory.length > 200) {
+            db.data.viewHistory.sort((a, b) => b.lastWatched - a.lastWatched)
+            db.data.viewHistory = db.data.viewHistory.slice(0, 200)
+        }
+    }
+    await safeWrite(db)
+    res.json({ status: 'recorded', item: entry })
+})
+
+app.delete('/api/history/:tmdbId', async (req, res) => {
+    const tmdbId = parseInt(req.params.tmdbId, 10)
+    const before = db.data.viewHistory.length
+    db.data.viewHistory = db.data.viewHistory.filter(h => h.tmdbId !== tmdbId)
+    if (db.data.viewHistory.length === before) return res.status(404).json({ error: 'Not found' })
+    await safeWrite(db)
+    res.json({ status: 'removed' })
+})
+
+app.delete('/api/history', async (req, res) => {
+    db.data.viewHistory = []
+    await safeWrite(db)
+    res.json({ status: 'cleared' })
+})
+
+// ────────────────────────────────────────────────────────
+// 🤖 AI Picks API (AI-01) — Personalized recommendations
+// Analyzes viewHistory genres → TMDB discover → exclude watched
+// ────────────────────────────────────────────────────────
+
+app.get('/api/ai-picks', async (req, res) => {
+    try {
+        const history = db.data.viewHistory || []
+        if (history.length < 3) {
+            return res.json([]) // Not enough data for recommendations
+        }
+
+        // 1. Count genre frequencies from history
+        const genreCount = {}
+        history.forEach(entry => {
+            (entry.genreIds || []).forEach(gid => {
+                genreCount[gid] = (genreCount[gid] || 0) + 1
+            })
+        })
+
+        // 2. Sort genres by frequency, take top 3
+        const topGenres = Object.entries(genreCount)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([id]) => id)
+
+        if (topGenres.length === 0) {
+            return res.json([])
+        }
+
+        // 3. Fetch recommendations from TMDB discover
+        const watchedIds = new Set(history.map(h => h.tmdbId))
+        const genreParam = topGenres.join(',')
+        const results = []
+
+        // Fetch 2 pages for more variety
+        for (let page = 1; page <= 2; page++) {
+            const url = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&language=ru-RU&sort_by=vote_average.desc&vote_count.gte=100&vote_average.gte=7&with_genres=${genreParam}&page=${page}`
+            try {
+                const response = await smartFetch(url)
+                const items = response.data?.results || []
+                for (const item of items) {
+                    if (!watchedIds.has(item.id) && item.poster_path) {
+                        results.push({
+                            tmdbId: item.id,
+                            mediaType: 'movie',
+                            title: item.title || item.name,
+                            posterPath: item.poster_path,
+                            backdropPath: item.backdrop_path,
+                            voteAverage: item.vote_average,
+                            year: (item.release_date || '').slice(0, 4),
+                            genreIds: item.genre_ids || []
+                        })
+                    }
+                }
+            } catch (err) {
+                console.warn(`[AI-Picks] TMDB page ${page} failed:`, err.message)
+            }
+        }
+
+        // Also try TV if user watches TV shows
+        const tvEntries = history.filter(h => h.mediaType === 'tv')
+        if (tvEntries.length >= 2) {
+            const tvGenreCount = {}
+            tvEntries.forEach(entry => {
+                (entry.genreIds || []).forEach(gid => {
+                    tvGenreCount[gid] = (tvGenreCount[gid] || 0) + 1
+                })
+            })
+            const tvTopGenres = Object.entries(tvGenreCount)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([id]) => id)
+
+            if (tvTopGenres.length > 0) {
+                const tvGenreParam = tvTopGenres.join(',')
+                const tvUrl = `https://api.themoviedb.org/3/discover/tv?api_key=${TMDB_API_KEY}&language=ru-RU&sort_by=vote_average.desc&vote_count.gte=50&vote_average.gte=7&with_genres=${tvGenreParam}&page=1`
+                try {
+                    const response = await smartFetch(tvUrl)
+                    const items = response.data?.results || []
+                    for (const item of items) {
+                        if (!watchedIds.has(item.id) && item.poster_path) {
+                            results.push({
+                                tmdbId: item.id,
+                                mediaType: 'tv',
+                                title: item.name || item.title,
+                                posterPath: item.poster_path,
+                                backdropPath: item.backdrop_path,
+                                voteAverage: item.vote_average,
+                                year: (item.first_air_date || '').slice(0, 4),
+                                genreIds: item.genre_ids || []
+                            })
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[AI-Picks] TMDB TV failed:', err.message)
+                }
+            }
+        }
+
+        // 4. Shuffle and limit
+        const shuffled = results.sort(() => Math.random() - 0.5).slice(0, 40)
+        res.json(shuffled)
+    } catch (err) {
+        console.error('[AI-Picks] Error:', err)
+        res.status(500).json({ error: 'AI picks generation failed' })
+    }
+})
+
 // API: Generate M3U Playlist for Video Files
 // Helper: sanitize filename for M3U metadata (remove newlines and control chars)
 const sanitizeM3U = (str) => str.replace(/[\r\n\x00-\x1f]/g, ' ').trim()

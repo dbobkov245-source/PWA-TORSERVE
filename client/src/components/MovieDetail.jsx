@@ -3,7 +3,9 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery, getImageUrl } from '../utils/discover'
 import { getGenreObjectsForItem } from '../utils/genres'
-import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations } from '../utils/tmdbClient'
+import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations, getCollection, getKeywords, getDiscoverByKeywords } from '../utils/tmdbClient'
+import { getFavorites, addFavorite, removeFavorite, recordHistory } from '../utils/serverApi'
+import { Capacitor } from '@capacitor/core'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 // ─── Sub-Components ─────────────────────────────────────────
@@ -19,7 +21,7 @@ const GenreButton = ({ genre, onClick }) => {
     )
 }
 
-const CastButton = ({ actor, onClick }) => {
+const CastButton = ({ actor, onClick, subtitle }) => {
     const spatialRef = useSpatialItem('detail')
     return (
         <button
@@ -30,6 +32,7 @@ const CastButton = ({ actor, onClick }) => {
             <img src={getImageUrl(actor.profile_path, 'w185')} className="w-full h-full object-cover" />
             <div className="absolute bottom-0 inset-x-0 bg-black/60 p-1">
                 <p className="text-[10px] text-white font-bold truncate">{actor.name}</p>
+                {subtitle && <p className="text-[9px] text-gray-400 truncate">{subtitle}</p>}
             </div>
         </button>
     )
@@ -94,25 +97,67 @@ const MovieDetail = ({
     onSelectGenre,
 }) => {
     const [directors, setDirectors] = useState([])
+    const [crew, setCrew] = useState([])
     const [cast, setCast] = useState([])
     const [seasons, setSeasons] = useState([])
     const [selectedSeason, setSelectedSeason] = useState(null)
     const [episodes, setEpisodes] = useState([])
     const [recommendations, setRecommendations] = useState([])
     const [trailer, setTrailer] = useState(null)
+    const [collection, setCollection] = useState(null)
+    const [keywords, setKeywords] = useState([])
+    const [keywordRecs, setKeywordRecs] = useState([])
+    const [showTrailerInline, setShowTrailerInline] = useState(false)
     const [loadingExtra, setLoadingExtra] = useState(true)
     const [allowInteraction, setAllowInteraction] = useState(false)
+    // FAV-01: Favorite state
+    const [isFavorite, setIsFavorite] = useState(false)
+    const [favLoading, setFavLoading] = useState(false)
 
     // Spatial Refs
     const searchBtnRef = useSpatialItem('detail')
     const backBtnRef = useSpatialItem('detail')
     const trailerBtnRef = useSpatialItem('detail')
+    const favBtnRef = useSpatialItem('detail')
 
     useEffect(() => {
         // Prevent phantom clicks from previous screen (common on TV)
         const timer = setTimeout(() => setAllowInteraction(true), 500)
         return () => clearTimeout(timer)
     }, [])
+
+    // FAV-01: Check if item is in favorites
+    useEffect(() => {
+        if (!item?.id) return
+        getFavorites().then(favs => {
+            setIsFavorite(favs.some(f => f.tmdbId === item.id))
+        }).catch(() => {})
+    }, [item?.id])
+
+    // HIST-01: Auto-record view in history
+    useEffect(() => {
+        if (!item?.id) return
+        recordHistory(item).catch(() => {})
+    }, [item?.id])
+
+    // FAV-01: Toggle favorite
+    const handleToggleFavorite = async () => {
+        if (favLoading) return
+        setFavLoading(true)
+        try {
+            if (isFavorite) {
+                await removeFavorite(item.id)
+                setIsFavorite(false)
+            } else {
+                await addFavorite(item)
+                setIsFavorite(true)
+            }
+        } catch (err) {
+            console.warn('[Favorites] Toggle failed:', err)
+        } finally {
+            setFavLoading(false)
+        }
+    }
 
     if (!item) return null
 
@@ -151,16 +196,58 @@ const MovieDetail = ({
         const controller = new AbortController()
         const load = async () => {
             setLoadingExtra(true)
+            setCollection(null)
+            setKeywords([])
+            setKeywordRecs([])
+            setShowTrailerInline(false)
             try {
                 const details = await getDetails(item.id, mediaType)
                 if (details && mediaType === 'tv') setSeasons(details.seasons || [])
+
+                // Коллекция / Франшиза (COLL-01)
+                if (details?.belongs_to_collection) {
+                    getCollection(details.belongs_to_collection.id).then(c => {
+                        if (!controller.signal.aborted && c?.parts) setCollection(c)
+                    }).catch(() => {})
+                }
+
                 const creditsData = await getCredits(item.id, mediaType)
                 setDirectors(creditsData.crew?.filter(p => p.job === 'Director') || [])
                 setCast(creditsData.cast?.slice(0, 8) || [])
+
+                // Расширенный Crew (CREW-01)
+                const CREW_JOBS = ['Screenplay', 'Writer', 'Original Music Composer', 'Director of Photography', 'Producer']
+                const keyCrew = creditsData.crew
+                    ?.filter(p => CREW_JOBS.includes(p.job) && p.profile_path)
+                    ?.reduce((acc, p) => {
+                        if (!acc.find(x => x.id === p.id)) acc.push(p)
+                        return acc
+                    }, [])
+                    ?.slice(0, 6) || []
+                setCrew(keyCrew)
+
                 const videosData = await getVideos(item.id, mediaType)
                 setTrailer(videosData.results?.find(v => v.type === 'Trailer') || videosData.results?.[0])
                 const recData = await getRecommendations(item.id, mediaType)
                 setRecommendations(recData.results || [])
+
+                // Ключевые слова (KW-01)
+                getKeywords(item.id, mediaType).then(kwData => {
+                    if (controller.signal.aborted) return
+                    const kws = kwData.keywords || kwData.results || []
+                    setKeywords(kws.slice(0, 8))
+                    // Discover по топ-3 ключевым словам
+                    if (kws.length > 0) {
+                        const kwIds = kws.slice(0, 3).map(k => k.id).join(',')
+                        getDiscoverByKeywords(kwIds, mediaType).then(dr => {
+                            if (!controller.signal.aborted) {
+                                const filtered = (dr.results || []).filter(r => r.id !== item.id && r.poster_path)
+                                setKeywordRecs(filtered.slice(0, 10))
+                            }
+                        }).catch(() => {})
+                    }
+                }).catch(() => {})
+
             } catch (err) { console.warn(err) }
             finally { if (!controller.signal.aborted) setLoadingExtra(false) }
         }
@@ -211,10 +298,27 @@ const MovieDetail = ({
                             {trailer && (
                                 <button
                                     ref={trailerBtnRef}
-                                    onClick={() => allowInteraction && Browser.open({ url: `https://www.youtube.com/watch?v=${trailer.key}` })}
+                                    onClick={() => {
+                                        if (!allowInteraction) return
+                                        if (Capacitor.isNativePlatform()) {
+                                            Browser.open({ url: `https://www.youtube.com/watch?v=${trailer.key}` })
+                                        } else {
+                                            setShowTrailerInline(prev => !prev)
+                                        }
+                                    }}
                                     className="focusable px-6 py-3 bg-red-600 focus:bg-red-400 focus:ring-4 focus:ring-red-300 text-white font-bold rounded-xl transition-all"
-                                >▶️ Трейлер</button>
+                                >{showTrailerInline ? '✕ Закрыть' : '▶️ Трейлер'}</button>
                             )}
+                            {/* FAV-01: Favorite button */}
+                            <button
+                                ref={favBtnRef}
+                                onClick={() => allowInteraction && handleToggleFavorite()}
+                                className={`focusable px-6 py-3 font-bold rounded-xl transition-all focus:ring-4 ${
+                                    isFavorite
+                                        ? 'bg-pink-600 focus:bg-pink-400 focus:ring-pink-300 text-white'
+                                        : 'bg-gray-800 focus:bg-pink-600 focus:ring-pink-300 text-white'
+                                } ${favLoading ? 'opacity-50' : ''}`}
+                            >{isFavorite ? '❤️ В избранном' : '🤍 Избранное'}</button>
                         </div>
 
                         {/* Genres */}
@@ -224,10 +328,38 @@ const MovieDetail = ({
                             ))}
                         </div>
 
+                        {/* Inline Trailer (TRAIL-01) */}
+                        {showTrailerInline && trailer && (
+                            <div className="mt-2 rounded-2xl overflow-hidden shadow-2xl max-w-3xl aspect-video">
+                                <iframe
+                                    src={`https://www.youtube.com/embed/${trailer.key}?autoplay=1&rel=0`}
+                                    className="w-full h-full"
+                                    allow="autoplay; encrypted-media"
+                                    allowFullScreen
+                                    title="Trailer"
+                                />
+                            </div>
+                        )}
+
                         {/* Description */}
                         <div className="bg-black/40 p-5 rounded-2xl backdrop-blur-sm max-w-3xl">
                             <p className="text-gray-200 leading-relaxed">{overview}</p>
                         </div>
+
+                        {/* Directors + Crew (CREW-01) */}
+                        {(directors.length > 0 || crew.length > 0) && (
+                            <div className="mt-4">
+                                <h3 className="text-xl font-bold text-white mb-4">🎬 Создатели</h3>
+                                <div className="flex gap-4 overflow-x-auto py-4 custom-scrollbar px-2 -my-2">
+                                    {directors.map((d) => (
+                                        <CastButton key={`dir-${d.id}`} actor={d} subtitle="Режиссёр" onClick={onSelectPerson} />
+                                    ))}
+                                    {crew.map((c) => (
+                                        <CastButton key={`crew-${c.id}-${c.job}`} actor={c} subtitle={c.job === 'Screenplay' ? 'Сценарий' : c.job === 'Writer' ? 'Автор' : c.job === 'Original Music Composer' ? 'Композитор' : c.job === 'Director of Photography' ? 'Оператор' : c.job === 'Producer' ? 'Продюсер' : c.job} onClick={onSelectPerson} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Cast */}
                         {cast.length > 0 && (
@@ -271,16 +403,56 @@ const MovieDetail = ({
                             </div>
                         )}
 
+                        {/* Collection / Franchise (COLL-01) */}
+                        {collection && collection.parts?.length > 1 && (
+                            <div className="mt-8">
+                                <h3 className="text-xl font-bold text-white mb-4">🎞️ {collection.name}</h3>
+                                <div className="flex gap-4 overflow-x-auto py-4 custom-scrollbar px-2 -my-2">
+                                    {collection.parts
+                                        .sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''))
+                                        .map((part) => (
+                                            <RecButton
+                                                key={part.id}
+                                                rec={part}
+                                                onClick={() => onSelect?.({ ...part, media_type: 'movie' })}
+                                            />
+                                        ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Recommendations */}
                         {recommendations.length > 0 && (
                             <div className="mt-8">
                                 <h3 className="text-xl font-bold text-white mb-4">✨ Похожее</h3>
-                                <div className="flex gap-4 overflow-x-auto pt-4 pb-12 custom-scrollbar px-2 -my-4">
+                                <div className="flex gap-4 overflow-x-auto py-4 custom-scrollbar px-2 -my-2">
                                     {recommendations.slice(0, 10).map((rec) => (
                                         <RecButton key={rec.id} rec={rec} onClick={onSelect} />
                                     ))}
                                 </div>
                             </div>
+                        )}
+
+                        {/* Keywords + Discover (KW-01) */}
+                        {keywordRecs.length > 0 && (
+                            <div className="mt-8">
+                                <h3 className="text-xl font-bold text-white mb-2">🏷️ По теме</h3>
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {keywords.map(kw => (
+                                        <span key={kw.id} className="px-2 py-1 bg-gray-800/60 rounded-full text-xs text-gray-400">{kw.name}</span>
+                                    ))}
+                                </div>
+                                <div className="flex gap-4 overflow-x-auto pt-4 pb-12 custom-scrollbar px-2 -my-4">
+                                    {keywordRecs.map((rec) => (
+                                        <RecButton key={rec.id} rec={rec} onClick={onSelect} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Bottom padding for last scrollable row */}
+                        {recommendations.length === 0 && keywordRecs.length === 0 && (
+                            <div className="pb-12" />
                         )}
                     </div>
                 </div>

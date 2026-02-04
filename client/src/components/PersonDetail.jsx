@@ -1,8 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
-import { getImageUrl, getPersonDetails, getPersonCredits } from '../utils/tmdbClient'
+import { getImageUrl, getPersonDetails, getPersonCredits, getPersonImages } from '../utils/tmdbClient'
 import { getPosterUrl } from '../utils/discover'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+
+const FilterTab = ({ label, active, onClick }) => {
+    const spatialRef = useSpatialItem('person')
+    return (
+        <button
+            ref={spatialRef}
+            onClick={onClick}
+            className={`focusable px-4 py-2 rounded-lg font-bold text-sm transition-all focus:ring-4 focus:ring-blue-500 ${active ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+        >{label}</button>
+    )
+}
 
 const FilmItem = ({ item, onClick }) => {
     const spatialRef = useSpatialItem('person')
@@ -44,12 +55,19 @@ const PersonDetail = ({
     onSelectMovie
 }) => {
     const [person, setPerson] = useState(null)
-    const [credits, setCredits] = useState([])
+    const [castCredits, setCastCredits] = useState([])
+    const [crewCredits, setCrewCredits] = useState([])
+    const [photos, setPhotos] = useState([])
+    const [filter, setFilter] = useState('all') // 'all' | 'cast' | 'crew'
     const [loading, setLoading] = useState(true)
 
-    // Spatial Refs
-    const { ref: sectionRef } = useSpatialItem('person-detail')
-    const backBtnRef = useSpatialItem('person')
+    // Spatial Refs — dual ref pattern: callback ref for spatial + useRef for programmatic focus
+    const backBtnDomRef = useRef(null)
+    const backBtnSpatialRef = useSpatialItem('person')
+    const backBtnRef = useCallback((node) => {
+        backBtnDomRef.current = node
+        backBtnSpatialRef(node)
+    }, [backBtnSpatialRef])
 
     // Handle Hardware Back Button
     useEffect(() => {
@@ -67,8 +85,8 @@ const PersonDetail = ({
 
         const loadData = async () => {
             setLoading(true)
+            setFilter('all')
             try {
-                // Determine if personId is an object (already loaded) or ID
                 const id = typeof personId === 'object' ? personId.id : personId
 
                 const [details, creditsData] = await Promise.all([
@@ -77,7 +95,24 @@ const PersonDetail = ({
                 ])
 
                 setPerson(details)
-                setCredits(creditsData.cast || [])
+                setCastCredits(creditsData.cast || [])
+
+                // Crew: дедупликация по id, фильтрация без постеров, сортировка по популярности
+                const crewRaw = creditsData.crew || []
+                const crewDeduped = crewRaw
+                    .filter(c => c.poster_path)
+                    .reduce((acc, c) => {
+                        if (!acc.find(x => x.id === c.id)) acc.push(c)
+                        return acc
+                    }, [])
+                    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+                setCrewCredits(crewDeduped)
+
+                // Фото (декоративные)
+                getPersonImages(id).then(imgData => {
+                    setPhotos((imgData.profiles || []).slice(0, 8))
+                }).catch(() => {})
+
             } catch (err) {
                 console.error('Failed to load person details:', err)
             } finally {
@@ -87,6 +122,27 @@ const PersonDetail = ({
 
         loadData()
     }, [personId])
+
+    // Global ArrowUp handler: if spatial nav can't find anything above, jump to Back button
+    useEffect(() => {
+        const handleArrowUp = (e) => {
+            if (e.key !== 'ArrowUp') return
+            const current = document.activeElement
+            if (!current || current === backBtnDomRef.current) return
+
+            // After spatial nav processes, check if focus stayed on the same element
+            requestAnimationFrame(() => {
+                if (document.activeElement === current && current !== backBtnDomRef.current) {
+                    // Focus didn't move — edge reached, jump to Back button
+                    backBtnDomRef.current?.focus()
+                    backBtnDomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }
+            })
+        }
+
+        window.addEventListener('keydown', handleArrowUp)
+        return () => window.removeEventListener('keydown', handleArrowUp)
+    }, [])
 
     if (loading) {
         return (
@@ -100,7 +156,6 @@ const PersonDetail = ({
 
     return (
         <div
-            ref={sectionRef}
             className="fixed inset-0 z-50 bg-[#141414] animate-fade-in overflow-y-auto custom-scrollbar"
         >
             <div className="min-h-full relative p-8">
@@ -147,37 +202,64 @@ const PersonDetail = ({
                     </div>
                 </div>
 
+                {/* Photo Gallery (decorative) */}
+                {photos.length > 1 && (
+                    <div className="mt-10">
+                        <h2 className="text-xl font-bold text-white mb-4">Фото</h2>
+                        <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2">
+                            {photos.map((photo, idx) => (
+                                <div key={idx} className="flex-shrink-0 w-28 h-40 rounded-lg overflow-hidden bg-gray-800">
+                                    <img src={getImageUrl(photo.file_path, 'w185')} className="w-full h-full object-cover" loading="lazy" />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Best Works */}
+                {castCredits.length > 0 && (() => {
+                    const topRated = [...castCredits]
+                        .filter(c => c.vote_average > 0 && c.vote_count > 50)
+                        .sort((a, b) => b.vote_average - a.vote_average)
+                        .slice(0, 5)
+                    if (topRated.length === 0) return null
+                    return (
+                        <div className="mt-10">
+                            <h2 className="text-xl font-bold text-white mb-4">Лучшие работы</h2>
+                            <div className="flex gap-4 overflow-x-auto py-4 custom-scrollbar px-2 -my-2">
+                                {topRated.map((item, idx) => (
+                                    <FilmItem
+                                        key={`top-${item.id}-${idx}`}
+                                        item={item}
+                                        onClick={() => onSelectMovie(item)}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )
+                })()}
+
                 {/* Filmography Grid */}
                 <div className="mt-12 pb-20">
-                    <h2 className="text-2xl font-bold text-white mb-6">Фильмография ({credits.length})</h2>
+                    {/* Filter Tabs */}
+                    <div className="flex items-center gap-4 mb-6">
+                        <h2 className="text-2xl font-bold text-white">Фильмография</h2>
+                        {crewCredits.length > 0 && (
+                            <div className="flex gap-2">
+                                <FilterTab label="Все" active={filter === 'all'} onClick={() => setFilter('all')} />
+                                <FilterTab label={`Актёр (${castCredits.length})`} active={filter === 'cast'} onClick={() => setFilter('cast')} />
+                                <FilterTab label={`За кадром (${crewCredits.length})`} active={filter === 'crew'} onClick={() => setFilter('crew')} />
+                            </div>
+                        )}
+                    </div>
 
                     <div
                         className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6"
-                        onKeyDown={(e) => {
-                            if (e.key === 'ArrowUp') {
-                                const current = document.activeElement
-                                const items = Array.from(e.currentTarget.querySelectorAll('button.focusable'))
-                                const currentIndex = items.indexOf(current)
-                                if (currentIndex === -1) return
-
-                                // Check if there are any items physically above the current one in the grid
-                                const currentRect = current.getBoundingClientRect()
-                                const hasItemAbove = items.some(item => {
-                                    const rect = item.getBoundingClientRect()
-                                    // Item is considered "above" if its center is significantly higher
-                                    return rect.bottom <= currentRect.top + 10 // 10px tolerance
-                                })
-
-                                // If no items above (Top Row), manually jump to Back Button
-                                if (!hasItemAbove) {
-                                    e.preventDefault()
-                                    e.stopPropagation()
-                                    backBtnRef.current?.focus()
-                                }
-                            }
-                        }}
                     >
-                        {credits.map((item, idx) => (
+                        {(filter === 'all' ? [...castCredits, ...crewCredits].sort((a, b) => (b.popularity || 0) - (a.popularity || 0)) :
+                          filter === 'cast' ? castCredits :
+                          crewCredits
+                        ).map((item, idx) => (
                             <FilmItem
                                 key={`${item.id}-${idx}`}
                                 item={item}

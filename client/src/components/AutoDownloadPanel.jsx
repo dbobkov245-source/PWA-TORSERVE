@@ -12,15 +12,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
-// TV Remote focusable button component with tabIndex
-function FocusableButton({ onClick, disabled, className, children, autoFocus, tabIndex = 0 }) {
+// TV Remote focusable button — registered in spatial navigation
+function FocusableButton({ onClick, disabled, className, children, autoFocus }) {
+    const spatialRef = useSpatialItem('auto-download')
     return (
         <button
+            ref={spatialRef}
             onClick={onClick}
             disabled={disabled}
             autoFocus={autoFocus}
-            tabIndex={disabled ? -1 : tabIndex}
             className={`
+                focusable
                 focus:ring-4 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900
                 focus:outline-none focus:scale-105 transition-all
                 ${className}
@@ -29,6 +31,18 @@ function FocusableButton({ onClick, disabled, className, children, autoFocus, ta
             {children}
         </button>
     )
+}
+
+// Focusable input registered in spatial navigation
+function FocusableInput({ className, ...props }) {
+    const spatialRef = useSpatialItem('auto-download')
+    return <input ref={spatialRef} className={`focusable ${className}`} {...props} />
+}
+
+// Focusable select registered in spatial navigation
+function FocusableSelect({ className, children, ...props }) {
+    const spatialRef = useSpatialItem('auto-download')
+    return <select ref={spatialRef} className={`focusable ${className}`} {...props}>{children}</select>
 }
 
 export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose }) {
@@ -49,7 +63,6 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
 
     // Refs for focus management
     const panelRef = useRef(null)
-    const firstFocusableRef = useRef(null)
     const closeBtnRef = useSpatialItem('auto-download')
 
     const getApiUrl = (path) => serverUrl ? `${serverUrl}${path}` : path
@@ -100,20 +113,10 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
         }
     }, [])
 
-    // D-pad / Arrow key navigation handler
+    // Close on Escape/Backspace only — spatial engine handles arrow navigation
     useEffect(() => {
-        const getFocusableElements = () => {
-            return Array.from(panelRef.current?.querySelectorAll(
-                'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]'
-            ) || [])
-        }
-
         const handleKeyDown = (e) => {
-            const key = e.key
-            const keyCode = e.keyCode
-
-            // ESC or Back button to close
-            if (key === 'Escape' || key === 'Backspace' || keyCode === 10009) {
+            if (e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009) {
                 e.preventDefault()
                 e.stopPropagation()
                 if (showPicker) {
@@ -121,81 +124,11 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                 } else {
                     onClose()
                 }
-                return
-            }
-
-            // Arrow keys / D-pad navigation
-            if (key === 'ArrowUp' || key === 'ArrowDown' || keyCode === 38 || keyCode === 40) {
-                e.preventDefault()
-                e.stopPropagation()
-
-                const focusable = getFocusableElements()
-                if (!focusable.length) return
-
-                const currentIndex = focusable.indexOf(document.activeElement)
-                let nextIndex
-
-                if (key === 'ArrowDown' || keyCode === 40) {
-                    nextIndex = currentIndex < focusable.length - 1 ? currentIndex + 1 : 0
-                } else {
-                    nextIndex = currentIndex > 0 ? currentIndex - 1 : focusable.length - 1
-                }
-
-                focusable[nextIndex]?.focus()
-                focusable[nextIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-                return
-            }
-
-            // Left/Right for horizontal navigation
-            if (key === 'ArrowLeft' || key === 'ArrowRight' || keyCode === 37 || keyCode === 39) {
-                // Allow default behavior for inputs
-                if (document.activeElement?.tagName === 'INPUT') {
-                    return
-                }
-                e.preventDefault()
-                e.stopPropagation()
-            }
-
-            // Tab key - focus trap
-            if (key === 'Tab') {
-                e.preventDefault()
-                e.stopPropagation()
-
-                const focusable = getFocusableElements()
-                if (!focusable.length) return
-
-                const currentIndex = focusable.indexOf(document.activeElement)
-                let nextIndex
-
-                if (e.shiftKey) {
-                    nextIndex = currentIndex > 0 ? currentIndex - 1 : focusable.length - 1
-                } else {
-                    nextIndex = currentIndex < focusable.length - 1 ? currentIndex + 1 : 0
-                }
-
-                focusable[nextIndex]?.focus()
             }
         }
 
-        // Block ALL scroll events from reaching background
-        const blockScroll = (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-        }
-
-        // Capture phase to intercept before anything else
         window.addEventListener('keydown', handleKeyDown, true)
-        document.addEventListener('scroll', blockScroll, true)
-
-        // Focus first element
-        setTimeout(() => {
-            firstFocusableRef.current?.focus()
-        }, 50)
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown, true)
-            document.removeEventListener('scroll', blockScroll, true)
-        }
+        return () => window.removeEventListener('keydown', handleKeyDown, true)
     }, [showPicker, onClose])
 
     // Fetch rules and settings
@@ -336,7 +269,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                         ref={closeBtnRef}
                         onClick={onClose}
                         className="focusable text-gray-400 hover:text-white text-2xl p-2 rounded-lg focus:ring-4 focus:ring-blue-500 focus:outline-none"
-                        tabIndex={0}
+
                     >
                         ✕
                     </button>
@@ -356,11 +289,9 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                 </div>
                             </div>
                             <FocusableButton
-                                ref={firstFocusableRef}
                                 onClick={toggleEnabled}
                                 className={`w-14 h-8 rounded-full transition-colors relative ${settings.enabled ? 'bg-green-600' : 'bg-gray-600'
                                     }`}
-                                tabIndex={0}
                             >
                                 <div className={`absolute w-6 h-6 bg-white rounded-full top-1 transition-all ${settings.enabled ? 'left-7' : 'left-1'
                                     }`} />
@@ -382,7 +313,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                         ? 'bg-blue-600 text-white'
                                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                                         }`}
-                                    tabIndex={0}
+            
                                 >
                                     {opt.label}
                                 </FocusableButton>
@@ -395,7 +326,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                         onClick={runCheck}
                         disabled={checking}
                         className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2"
-                        tabIndex={0}
+
                     >
                         {checking ? (
                             <>
@@ -432,7 +363,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                 <FocusableButton
                                     onClick={() => setShowPicker(!showPicker)}
                                     className="bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 px-3 py-1 rounded-lg text-sm"
-                                    tabIndex={0}
+            
                                 >
                                     📋 Выбрать ({seriesList.length})
                                 </FocusableButton>
@@ -448,7 +379,6 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                         key={idx}
                                         onClick={() => addFromTorrent(series)}
                                         className="w-full text-left bg-gray-800 hover:bg-gray-700 rounded-lg p-3"
-                                        tabIndex={0}
                                         autoFocus={idx === 0}
                                     >
                                         <div className="font-medium text-white truncate">{series.name}</div>
@@ -462,31 +392,28 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                         )}
 
                         <div className="grid grid-cols-2 gap-3">
-                            <input
+                            <FocusableInput
                                 value={newRule.query}
                                 onChange={(e) => setNewRule({ ...newRule, query: e.target.value })}
                                 placeholder="Название сериала..."
-                                tabIndex={0}
                                 className="col-span-2 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 outline-none"
                             />
-                            <select
+                            <FocusableSelect
                                 value={newRule.resolution}
                                 onChange={(e) => setNewRule({ ...newRule, resolution: e.target.value })}
-                                tabIndex={0}
                                 className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500 outline-none"
                             >
                                 <option value="">Любое качество</option>
                                 <option value="2160">4K (2160p)</option>
                                 <option value="1080">1080p</option>
                                 <option value="720">720p</option>
-                            </select>
-                            <input
+                            </FocusableSelect>
+                            <FocusableInput
                                 type="number"
                                 min="0"
                                 value={newRule.lastEpisode}
                                 onChange={(e) => setNewRule({ ...newRule, lastEpisode: parseInt(e.target.value, 10) || 0 })}
                                 placeholder="Последняя серия"
-                                tabIndex={0}
                                 className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500 outline-none"
                             />
                         </div>
@@ -494,7 +421,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                             onClick={addRule}
                             disabled={!newRule.query.trim()}
                             className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-2 rounded-lg"
-                            tabIndex={0}
+    
                         >
                             Добавить
                         </FocusableButton>
@@ -520,7 +447,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                         onClick={() => toggleRule(rule)}
                                         className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${rule.enabled ? 'bg-green-600' : 'bg-gray-600'
                                             }`}
-                                        tabIndex={0}
+                
                                     >
                                         {rule.enabled ? '✓' : '○'}
                                     </FocusableButton>
@@ -534,7 +461,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
                                     <FocusableButton
                                         onClick={() => deleteRule(rule.id)}
                                         className="text-red-500 hover:text-red-400 p-2 text-xl"
-                                        tabIndex={0}
+                
                                     >
                                         🗑️
                                     </FocusableButton>

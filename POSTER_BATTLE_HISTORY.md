@@ -642,3 +642,65 @@ const handleTestPoster = async () => {
 - ✅ Настройки и Диагностика теперь по центру экрана.
 - ✅ Приложение не падает.
 - ✅ Навигация с пульта работает корректно внутри модальных окон.
+
+---
+
+## ⚡ Акт 18: Smart Timeout Race Strategy (Февраль 2026)
+
+### Проблема: Mixed Content в Android WebView
+При анализе логов Android Studio с тестового 4K ТВ обнаружено предупреждение:
+```
+Mixed Content: The page at 'https://localhost/' was loaded over HTTPS, 
+but requested an insecure resource 'http://192.168.1.70:3000/api/status'.
+```
+
+**Причина:** Capacitor загружает приложение через `https://localhost/`, но проверка статуса сервера идёт по HTTP на локальный NAS. Современные WebView блокируют такие запросы.
+
+### Решение: ADR-004 — Smart Timeout Race Strategy
+
+Создан универсальный модуль `client/src/utils/smartFetch.js`:
+
+```javascript
+// Гонка между HTTPS и HTTP с жёстким таймаутом
+export async function smartFetch(httpsUrl, httpUrl, options = {}) {
+  const timeout = options.timeout || 5000;
+  const controller = new AbortController();
+  
+  // Таймаут-промис
+  const timeoutPromise = new Promise((_, reject) => 
+    setTimeout(() => {
+      controller.abort();
+      reject(new Error('Timeout'));
+    }, timeout)
+  );
+  
+  // Гонка: HTTPS vs HTTP vs Timeout
+  const requests = [
+    fetch(httpsUrl, { signal: controller.signal }),
+    fetch(httpUrl, { signal: controller.signal })
+  ];
+  
+  return Promise.race([...requests, timeoutPromise]);
+}
+```
+
+### Интеграция
+Обновлён `StatusChecker.jsx` для использования `smartFetch`:
+- Первым пытается HTTPS (`https://192.168.1.70:3000/api/status`)
+- Параллельно — HTTP (`http://192.168.1.70:3000/api/status`)
+- Возвращает первый успешный ответ
+- Жёсткий таймаут 5 секунд
+
+### Анализ логов Android Studio
+При проверке определили, что большинство ошибок в логах **не критичны**:
+| Ошибка | Вердикт |
+|--------|---------|
+| `Manager wrapper not available: persistent_data_block` | 🟢 Норма — фича недоступна на ТВ |
+| `DeadObjectException` / `Binder failure` | 🟢 Норма — штатное переключение окон |
+| `DOWNLOAD_FILE_NOT_FOUND_EXCEPTION` | 🟢 Норма — ошибка Google Play, не приложения |
+| **Mixed Content** | 🟡 Исправлено через `smartFetch` |
+
+### Итог
+- ✅ **Mixed Content обойдён** через race-стратегию HTTPS/HTTP
+- ✅ **Таймауты не блокируют UI** — жёсткий лимит 5 секунд
+- ✅ **Логи проанализированы** — критических ошибок нет

@@ -9,13 +9,35 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import HomeRow from './HomeRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
 import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
-import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
+import tmdbClient, { getDiscoverByGenre, searchMulti, filterDiscoveryResults } from '../utils/tmdbClient'
+import { getFavorites, getHistory, toTmdbItem } from '../utils/serverApi'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
+
+const HomeHeaderButtons = ({ onMenuClick, onVoiceClick, isListening }) => {
+    const menuRef = useSpatialItem('main')
+    const voiceRef = useSpatialItem('main')
+    return (
+        <div className="fixed top-4 left-4 z-50 flex gap-2">
+            <button
+                ref={menuRef}
+                onClick={onMenuClick}
+                className="focusable p-3 bg-gray-800 focus:bg-blue-600 rounded-full text-white shadow-xl transition-all"
+            >☰</button>
+            <button
+                ref={voiceRef}
+                onClick={onVoiceClick}
+                className={`focusable p-3 rounded-full text-white shadow-xl transition-all ${isListening ? 'bg-red-600 animate-pulse' : 'bg-gray-800 focus:bg-blue-600'}`}
+            >🎤</button>
+        </div>
+    )
+}
 
 const HomePanel = ({
     activeMovie, setActiveMovie,
@@ -35,6 +57,43 @@ const HomePanel = ({
     const [activeArea, setActiveArea] = useState('content') // 'content' | 'sidebar'
     const [sidebarIndex, setSidebarIndex] = useState(0)
     const sidebarItemsCount = Sidebar.getItemsCount()
+
+    // VOICE-01: Voice search on Home
+    const [isListening, setIsListening] = useState(false)
+
+    const handleVoiceSearch = useCallback(async () => {
+        let query = null
+        try {
+            const { available } = await SpeechRecognition.available()
+            if (available) {
+                await SpeechRecognition.requestPermissions()
+                setIsListening(true)
+                const result = await SpeechRecognition.start({
+                    language: 'ru-RU', maxResults: 1,
+                    prompt: 'Что хотите посмотреть?', partialResults: false, popup: true
+                })
+                setIsListening(false)
+                query = result?.matches?.[0]?.trim()
+            } else {
+                query = prompt('Что хотите посмотреть?')?.trim()
+            }
+        } catch {
+            setIsListening(false)
+            query = prompt('Что хотите посмотреть?')?.trim()
+        }
+
+        if (!query) return
+
+        try {
+            const data = await searchMulti(query)
+            const filtered = filterDiscoveryResults(data.results || [])
+            if (filtered.length > 0) {
+                setActiveMovie(filtered[0])
+            }
+        } catch (err) {
+            console.warn('[VoiceSearch] TMDB search failed:', err)
+        }
+    }, [setActiveMovie])
 
     // Data Loading
     useEffect(() => {
@@ -217,6 +276,42 @@ const HomePanel = ({
         }
         if (item.id === 'search') {
             onSearch?.('')
+        } else if (item.id === 'favorites') {
+            // FAV-01: Show favorites as CategoryPage
+            setActiveCategory({
+                id: 'favorites',
+                name: 'Избранное',
+                icon: '❤️',
+                fetcher: async () => {
+                    const favs = await getFavorites()
+                    return { results: favs.map(toTmdbItem), total_pages: 1 }
+                }
+            })
+        } else if (item.id === 'history') {
+            // HIST-01: Show history as CategoryPage
+            setActiveCategory({
+                id: 'history',
+                name: 'История просмотров',
+                icon: '🕒',
+                fetcher: async () => {
+                    const hist = await getHistory()
+                    return { results: hist.map(toTmdbItem), total_pages: 1 }
+                }
+            })
+        } else if (item.id === 'ai_picks') {
+            // AI-01: Show AI recommendations as CategoryPage
+            setActiveCategory({
+                id: 'ai_picks',
+                name: 'Подборки AI',
+                icon: '🤖',
+                fetcher: async () => {
+                    const base = localStorage.getItem('serverUrl')?.replace(/\/$/, '') || window.location.origin
+                    const res = await fetch(`${base}/api/ai-picks`)
+                    if (!res.ok) return { results: [], total_pages: 1 }
+                    const data = await res.json()
+                    return { results: data.map(toTmdbItem), total_pages: 1 }
+                }
+            })
         } else if (item.type === 'year') {
             setActiveCategory({
                 id: `year_${item.year}`,
@@ -288,12 +383,13 @@ const HomePanel = ({
                     ))}
                 </div>
 
-                {/* Menu / Sidebar Trigger */}
+                {/* Menu / Sidebar Trigger + Voice Search */}
                 {!showSidebar && (
-                    <button
-                        onClick={() => setShowSidebar(true)}
-                        className="focusable fixed top-4 left-4 z-50 p-3 bg-gray-800 focus:bg-blue-600 rounded-full text-white shadow-xl transition-all"
-                    >☰</button>
+                    <HomeHeaderButtons
+                        onMenuClick={() => setShowSidebar(true)}
+                        onVoiceClick={handleVoiceSearch}
+                        isListening={isListening}
+                    />
                 )}
             </div>
         </div>

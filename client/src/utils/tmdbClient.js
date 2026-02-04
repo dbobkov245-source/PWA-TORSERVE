@@ -21,7 +21,7 @@ import { Capacitor } from '@capacitor/core'
 const timeoutSignal = (ms) => {
     try {
         if (AbortSignal.timeout) return AbortSignal.timeout(ms)
-    } catch (e) { /* ignore */ }
+    } catch { /* AbortSignal.timeout not supported */ }
     const controller = new AbortController()
     setTimeout(() => controller.abort(), ms)
     return controller.signal
@@ -40,6 +40,59 @@ const METADATA_CACHE_PREFIX = 'metadata_v1_' // Consolidated from Poster.jsx
 const METADATA_CACHE_LIMIT = 300
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for search
 const DISCOVERY_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for discovery
+
+// ─── ADR-004: Anti-DPI Infrastructure ──────────────────────────
+// ANTI-01: Smart Timeout & Race Strategy
+const RACE_TIMEOUT_MS = 1500 // First-layer race timeout
+
+// ANTI-02: Adaptive Timeout Memory
+const providerLatency = new Map()
+
+function recordLatency(provider, ms) {
+    const data = providerLatency.get(provider) || { total: 0, count: 0, avg: 5000 }
+    data.total += ms
+    data.count++
+    data.avg = data.total / data.count
+    providerLatency.set(provider, data)
+}
+
+function getAdaptiveTimeout(provider, defaultTimeout = 5000) {
+    const data = providerLatency.get(provider)
+    if (!data || data.count < 3) return defaultTimeout
+    // Timeout = avg + 50% buffer, capped at 8s, min 1s
+    return Math.max(1000, Math.min(data.avg * 1.5, 8000))
+}
+
+// ANTI-03: Client-Side Circuit Breaker
+const clientCircuits = new Map()
+const CIRCUIT_THRESHOLD = 3
+const CIRCUIT_COOLDOWN_MS = 60 * 1000 // 60 seconds
+
+function isLayerAvailable(layer) {
+    const circuit = clientCircuits.get(layer)
+    if (!circuit?.open) return true
+    // Half-open: allow one attempt after cooldown
+    if (Date.now() - circuit.lastFailure > CIRCUIT_COOLDOWN_MS) {
+        console.log(`[Cascade] 🟡 ${layer} entering half-open state`)
+        return true
+    }
+    return false
+}
+
+function recordLayerFailure(layer) {
+    const circuit = clientCircuits.get(layer) || { failures: 0, open: false, lastFailure: 0 }
+    circuit.failures++
+    circuit.lastFailure = Date.now()
+    if (circuit.failures >= CIRCUIT_THRESHOLD) {
+        circuit.open = true
+        console.warn(`[Cascade] 🔴 Circuit OPEN for ${layer}`)
+    }
+    clientCircuits.set(layer, circuit)
+}
+
+function recordLayerSuccess(layer) {
+    clientCircuits.set(layer, { failures: 0, open: false, lastFailure: 0 })
+}
 
 // ─── Image Mirrors (from Lampa) ────────────────────────────────
 // 5 CDN mirrors with automatic failover and ban system
@@ -225,7 +278,7 @@ function getCached(endpoint) {
             }
             localStorage.removeItem(key)
         }
-    } catch { }
+    } catch { /* localStorage not available */ }
     return null
 }
 
@@ -293,7 +346,7 @@ export const getMetadata = (name) => {
         if (cached) {
             return JSON.parse(cached)
         }
-    } catch { }
+    } catch { /* parse error */ }
     return null
 }
 
@@ -307,7 +360,7 @@ export const resolveMetadata = async (name) => {
     if (!name) return null
 
     // 1. Check cache first
-    const cleanName = name.replace(/[\._]/g, ' ').trim()
+    const cleanName = name.replace(/[._]/g, ' ').trim()
     const cached = getMetadata(cleanName)
     if (cached) return cached
 
@@ -376,14 +429,17 @@ async function tryCustomWorker(endpoint) {
         const url = `${CUSTOM_PROXY}${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
         console.log('[TMDB] Trying Custom Worker...')
 
-        const res = await fetch(url, { signal: timeoutSignal(5000) })
-        // ... (rest same)
-    } catch (e) {
-        // ...
+        const res = await fetch(url, { signal: timeoutSignal(getAdaptiveTimeout('worker', 5000)) })
+        if (res.ok) {
+            const data = await res.json()
+            console.log('[TMDB] ✅ Custom Worker success')
+            return { ...data, source: 'tmdb', method: 'worker' }
+        }
+    } catch {
+        console.warn('[TMDB] Custom Worker failed')
     }
     return null
 }
-// Note: I will apply this pattern to all functions.
 
 /**
  * Strategy 2: Lampa Proxy (apn-latest.onrender.com)
@@ -543,7 +599,86 @@ async function tryKinopoisk(query) {
 // ─── Main Client Function ──────────────────────────────────────
 
 /**
+ * ADR-004: Race wrapper for a single layer with timing
+ */
+async function tryLayerWithTiming(layerName, fn) {
+    if (!isLayerAvailable(layerName)) {
+        return null
+    }
+
+    const start = Date.now()
+    try {
+        const result = await fn()
+        if (result) {
+            const elapsed = Date.now() - start
+            recordLatency(layerName, elapsed)
+            recordLayerSuccess(layerName)
+            console.log(`[Cascade] ⏱️ ${layerName}: ${elapsed}ms`)
+        }
+        return result
+    } catch (e) {
+        recordLayerFailure(layerName)
+        throw e
+    }
+}
+
+/**
+ * ADR-004: Race first two layers (Worker + Lampa) with timeout
+ * Hybrid Strategy: Race for speed, waterfall for reliability
+ */
+async function raceFirstLayers(endpoint) {
+    const raceLayers = []
+
+    // Only add available layers
+    if (CUSTOM_PROXY && isLayerAvailable('worker')) {
+        raceLayers.push(
+            tryLayerWithTiming('worker', () => tryCustomWorker(endpoint))
+                .catch(() => null)
+        )
+    }
+
+    if (isLayerAvailable('lampa')) {
+        raceLayers.push(
+            tryLayerWithTiming('lampa', () => tryLampaProxy(endpoint))
+                .catch(() => null)
+        )
+    }
+
+    if (raceLayers.length === 0) {
+        console.log('[Cascade] No race layers available, skipping to fallbacks')
+        return null
+    }
+
+    // Timeout promise
+    const timeoutPromise = new Promise(resolve =>
+        setTimeout(() => {
+            console.log(`[Cascade] ⏰ Race timeout (${RACE_TIMEOUT_MS}ms)`)
+            resolve(null)
+        }, RACE_TIMEOUT_MS)
+    )
+
+    // Race: first valid response wins
+    try {
+        const result = await Promise.race([
+            Promise.any(raceLayers.map(p => p.then(r => r ? r : Promise.reject()))),
+            timeoutPromise
+        ])
+
+        if (result) {
+            console.log(`[Cascade] 🏆 Race winner: ${result.method}`)
+            return result
+        }
+    } catch {
+        // All failed or rejected
+        console.log('[Cascade] Race: no winners')
+    }
+
+    return null
+}
+
+/**
  * Fetch from TMDB with automatic fallback cascade
+ * ADR-004: Hybrid Race + Waterfall Strategy
  * 
  * @param {string} endpoint - TMDB API endpoint (e.g., '/search/multi?query=...')
  * @param {Object} options - Additional options
@@ -576,42 +711,50 @@ export async function tmdbClient(endpoint, options = {}) {
         r.id                 // single item details
     )
 
-    // Try all strategies in order
     let result = null
 
-    result = await tryCustomWorker(endpoint)
+    // ═══ PHASE 1: Race Strategy (Worker + Lampa in parallel) ═══
+    result = await raceFirstLayers(endpoint)
     if (isValidResponse(result)) {
         if (useCache) setCache(endpoint, result, cacheTTL)
         return result
     }
 
-    result = await tryLampaProxy(endpoint)
-    if (isValidResponse(result)) {
-        if (useCache) setCache(endpoint, result, cacheTTL)
-        return result
+    // ═══ PHASE 2: Waterfall Fallbacks ═══
+    // Server Proxy (our own DoH-enabled proxy)
+    if (isLayerAvailable('server_proxy')) {
+        result = await tryLayerWithTiming('server_proxy', () => tryServerProxy(endpoint))
+            .catch(() => null)
+        if (isValidResponse(result)) {
+            if (useCache) setCache(endpoint, result, cacheTTL)
+            return result
+        }
     }
 
-    result = await tryServerProxy(endpoint)
-    if (isValidResponse(result)) {
-        if (useCache) setCache(endpoint, result, cacheTTL)
-        return result
+    // Capacitor with DoH (Android native only)
+    if (isLayerAvailable('capacitor')) {
+        result = await tryLayerWithTiming('capacitor', () => tryCapacitorWithDoH(endpoint))
+            .catch(() => null)
+        if (isValidResponse(result)) {
+            if (useCache) setCache(endpoint, result, cacheTTL)
+            return result
+        }
     }
 
-    result = await tryCapacitorWithDoH(endpoint)
-    if (isValidResponse(result)) {
-        if (useCache) setCache(endpoint, result, cacheTTL)
-        return result
+    // CORS Proxy (browser last resort)
+    if (isLayerAvailable('corsproxy')) {
+        result = await tryLayerWithTiming('corsproxy', () => tryCorsProxy(endpoint))
+            .catch(() => null)
+        if (isValidResponse(result)) {
+            if (useCache) setCache(endpoint, result, cacheTTL)
+            return result
+        }
     }
 
-    result = await tryCorsProxy(endpoint)
-    if (isValidResponse(result)) {
-        if (useCache) setCache(endpoint, result, cacheTTL)
-        return result
-    }
-
-    // Kinopoisk fallback (only for search queries)
-    if (searchQuery) {
-        result = await tryKinopoisk(searchQuery)
+    // ═══ PHASE 3: Out-of-band Fallback (Kinopoisk) ═══
+    if (searchQuery && isLayerAvailable('kinopoisk')) {
+        result = await tryLayerWithTiming('kinopoisk', () => tryKinopoisk(searchQuery))
+            .catch(() => null)
         if (isValidResponse(result)) {
             if (useCache) setCache(endpoint, result, cacheTTL)
             return result
@@ -760,6 +903,43 @@ export async function getPersonCredits(personId) {
 export async function getDiscoverByGenre(genreId, type = 'movie', page = 1) {
     const endpoint = `/discover/${type}?with_genres=${genreId}&page=${page}&sort_by=popularity.desc`
     return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get collection details (franchise)
+ * @param {number} collectionId - TMDB Collection ID
+ */
+export async function getCollection(collectionId) {
+    const endpoint = `/collection/${collectionId}?`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get keywords for a movie or TV show
+ * @param {number} id - TMDB ID
+ * @param {string} type - 'movie' or 'tv'
+ */
+export async function getKeywords(id, type = 'movie') {
+    const endpoint = `/${type}/${id}/keywords?`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Discover by keyword IDs
+ * @param {string} keywordIds - Comma-separated keyword IDs
+ * @param {string} type - 'movie' or 'tv'
+ */
+export async function getDiscoverByKeywords(keywordIds, type = 'movie') {
+    const endpoint = `/discover/${type}?with_keywords=${keywordIds}&sort_by=popularity.desc`
+    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+}
+
+/**
+ * Get person images (photos)
+ * @param {number} personId - TMDB Person ID
+ */
+export async function getPersonImages(personId) {
+    return tmdbClient(`/person/${personId}/images`, { cacheTTL: DISCOVERY_CACHE_TTL })
 }
 
 /**

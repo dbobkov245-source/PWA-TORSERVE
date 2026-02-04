@@ -16,7 +16,11 @@ const defaultData = {
         intervalMinutes: 720  // 12 hours
     },
     autoDownloadRules: [],     // [{ id, query, resolution, group, season, lastEpisode, enabled }]
-    autoDownloadHistory: []    // Array of magnet hashes to prevent duplicates
+    autoDownloadHistory: [],   // Array of magnet hashes to prevent duplicates
+    // Favorites (FAV-01)
+    favorites: [],             // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, addedAt }]
+    // View History (HIST-01)
+    viewHistory: []            // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, lastWatched, genreIds }]
 }
 const dbPath = process.env.DB_PATH || 'db.json'
 const adapter = new JSONFile(dbPath)
@@ -34,6 +38,8 @@ db.data.seenFiles ||= {}
 db.data.autoDownloadSettings ||= { enabled: false, intervalMinutes: 30 }
 db.data.autoDownloadRules ||= []
 db.data.autoDownloadHistory ||= []
+db.data.favorites ||= []
+db.data.viewHistory ||= []
 
 await db.write()
 

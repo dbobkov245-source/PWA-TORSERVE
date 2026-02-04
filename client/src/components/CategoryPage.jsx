@@ -36,10 +36,17 @@ const CategoryPage = ({
             if (response && response.results && response.results.length > 0) {
                 const newItems = filterDiscoveryResults(response.results)
                 if (newItems.length > 0) {
-                    setDisplayedItems(prev => [...prev, ...newItems])
+                    setDisplayedItems(prev => {
+                        const existingIds = new Set(prev.map(i => i.id))
+                        const unique = newItems.filter(i => !existingIds.has(i.id))
+                        return unique.length > 0 ? [...prev, ...unique] : prev
+                    })
                 }
                 setPage(nextPage)
-                if (response.results.length < 20) setHasMore(false)
+                // Stop pagination if: few results, or server says only 1 page, or we exceeded total pages
+                if (response.results.length < 20 || response.total_pages === 1 || (response.total_pages && nextPage >= response.total_pages)) {
+                    setHasMore(false)
+                }
             } else { setHasMore(false) }
         } catch (e) {
             console.error(e)

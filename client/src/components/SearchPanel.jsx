@@ -58,7 +58,7 @@ const SearchFilter = ({ tag, active, onClick }) => {
         <button
             ref={spatialRef}
             onClick={onClick}
-            className={`focusable px-2.5 py-1 rounded-full text-xs border ${active ? 'bg-purple-600 border-purple-400' : 'bg-gray-800 text-gray-400'}`}
+            className={`focusable px-4 py-2 rounded-full text-sm border focus:ring-4 focus:ring-purple-500 focus:scale-110 transition-all ${active ? 'bg-purple-600 border-purple-400 text-white' : 'bg-gray-800 text-gray-400 border-gray-600'}`}
         >{tag.toUpperCase()}</button>
     )
 }
@@ -69,8 +69,8 @@ const SearchSort = ({ opt, active, onClick }) => {
         <button
             ref={spatialRef}
             onClick={onClick}
-            className={`focusable px-2.5 py-1 rounded text-xs ${active ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}
-        >{opt === 'seeders' ? '⬆' : opt === 'size' ? '📦' : '📅'}</button>
+            className={`focusable px-4 py-2 rounded text-sm focus:ring-4 focus:ring-purple-500 focus:scale-110 transition-all ${active ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+        >{opt === 'seeders' ? '⬆ Сиды' : opt === 'size' ? '📦 Размер' : '📅 Дата'}</button>
     )
 }
 
@@ -247,7 +247,7 @@ const SearchPanel = ({
 
             {/* Filters & Sort */}
             {searchResults.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 mb-3">
+                <div className="flex flex-wrap items-center gap-3 mb-4 py-2">
                     {filterOptions.map(tag => (
                         <SearchFilter
                             key={tag}
