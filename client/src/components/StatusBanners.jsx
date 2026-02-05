@@ -42,8 +42,9 @@ export const DegradedBanner = ({ lastStateChange }) => {
 
 /**
  * ErrorScreen - Full-screen error for circuit breaker / critical errors
+ * NOTE: Now includes Settings button for mobile users who need to change server URL
  */
-export const ErrorScreen = ({ status, retryAfter, onRetry }) => {
+export const ErrorScreen = ({ status, retryAfter, onRetry, onSettings }) => {
     const [countdown, setCountdown] = useState(retryAfter || 300)
 
     useEffect(() => {
@@ -57,10 +58,10 @@ export const ErrorScreen = ({ status, retryAfter, onRetry }) => {
 
     const isCircuitOpen = status === 'circuit_open'
     const icon = isCircuitOpen ? '🔌' : '⚠️'
-    const title = isCircuitOpen ? 'Storage Unavailable' : 'Server Error'
+    const title = isCircuitOpen ? 'Storage Unavailable' : 'Ошибка сервера'
     const message = isCircuitOpen
         ? 'NFS/Storage is not responding. The server will retry automatically.'
-        : 'A critical error occurred. Please wait for recovery.'
+        : 'Не удалось подключиться к серверу. Проверьте адрес в настройках.'
 
     return (
         <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6">
@@ -68,12 +69,29 @@ export const ErrorScreen = ({ status, retryAfter, onRetry }) => {
                 <div className="text-6xl mb-4">{icon}</div>
                 <h1 className="text-2xl font-bold text-red-400 mb-2">{title}</h1>
                 <p className="text-gray-300 mb-6">{message}</p>
-                <button
-                    onClick={onRetry}
-                    className="mt-6 bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold transition-colors"
-                >
-                    Retry Now
-                </button>
+
+                <div className="flex flex-col gap-3">
+                    {/* Settings button - critical for mobile users */}
+                    {onSettings && (
+                        <button
+                            onClick={onSettings}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                        >
+                            ⚙️ Настройки сервера
+                        </button>
+                    )}
+
+                    <button
+                        onClick={onRetry}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                    >
+                        🔄 Повторить
+                    </button>
+                </div>
+
+                <p className="text-gray-500 text-sm mt-4">
+                    Авто-повтор через {countdown}с
+                </p>
             </div>
         </div>
     )

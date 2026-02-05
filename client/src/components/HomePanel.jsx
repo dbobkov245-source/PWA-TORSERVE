@@ -379,7 +379,7 @@ const HomePanel = ({
     )
 
     return (
-        <div className="flex h-full w-full bg-[#141414] overflow-hidden">
+        <div className="flex h-full w-full bg-[#141414]">
             <Sidebar
                 isOpen={showSidebar}
                 focusedIndex={sidebarIndex}
@@ -390,7 +390,8 @@ const HomePanel = ({
             <div className={`flex-1 relative transition-all duration-300 ${showSidebar ? 'opacity-50 blur-sm pointer-events-none' : ''}`}>
                 <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
 
-                <div className="relative z-10 pt-4 pb-20 px-8 h-full overflow-y-auto custom-scrollbar">
+                {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
+                <div className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
                     {!loading && visibleRows.map((row) => (
                         <HomeRow
                             key={row.id}

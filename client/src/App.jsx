@@ -175,7 +175,7 @@ function App() {
   }, [showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
 
   const fetchStatus = useCallback(async () => {
-    const baseUrl = serverUrl || ''
+    const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
     try {
       if (!baseUrl) return
       const res = await fetch(`${baseUrl}/api/status`)
@@ -358,8 +358,10 @@ function App() {
   }
 
   const handleServerUrlChange = (val, save) => {
-    setServerUrl(val)
-    if (save) localStorage.setItem('serverUrl', val)
+    // Remove trailing slash to prevent double-slash in API paths
+    const cleanUrl = val.replace(/\/+$/, '')
+    setServerUrl(cleanUrl)
+    if (save) localStorage.setItem('serverUrl', cleanUrl)
   }
 
   const handleTmdbProxyUrlChange = (val, save) => {
@@ -393,8 +395,30 @@ function App() {
     })
   }, [filteredTorrents, sortBy])
 
+  // Settings overlay takes priority even in error state (for changing server URL)
+  if (showSettings && (serverStatus === 'circuit_open' || serverStatus === 'error')) {
+    return (
+      <SettingsPanel
+        serverUrl={serverUrl}
+        onServerUrlChange={handleServerUrlChange}
+        tmdbProxyUrl={tmdbProxyUrl}
+        onTmdbProxyUrlChange={handleTmdbProxyUrlChange}
+        torrents={[]}
+        initialTab="general"
+        onClose={() => { setShowSettings(false); fetchStatus(); }}
+      />
+    )
+  }
+
   if (serverStatus === 'circuit_open' || serverStatus === 'error') {
-    return <ErrorScreen status={serverStatus} retryAfter={retryAfter} onRetry={fetchStatus} />
+    return (
+      <ErrorScreen
+        status={serverStatus}
+        retryAfter={retryAfter}
+        onRetry={fetchStatus}
+        onSettings={() => setShowSettings(true)}
+      />
+    )
   }
 
   return (

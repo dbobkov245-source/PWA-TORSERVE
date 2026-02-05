@@ -9,17 +9,22 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrors, setImageErrors }) 
     const title = getTitle(item)
 
     return (
-        <button
+        // Using div instead of button to allow touch scroll on mobile
+        // TV remote works via focus/Enter key which works on any focusable element
+        <div
             ref={spatialRef}
+            role="button"
+            tabIndex={0}
             className="focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border border-transparent overflow-hidden"
             onClick={() => onItemClick?.(item)}
+            onKeyDown={(e) => { if (e.key === 'Enter') onItemClick?.(item) }}
             onFocus={onFocus}
         >
             {posterUrl && !imageErrors.has(posterUrl) ? (
                 <img
                     src={posterUrl}
                     alt={title}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover pointer-events-none"
                     loading="lazy"
                     onError={() => {
                         reportBrokenImage?.(posterUrl)
@@ -40,7 +45,7 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrors, setImageErrors }) 
                     {item.vote_average.toFixed(1)}
                 </div>
             )}
-        </button>
+        </div>
     )
 }
 
@@ -55,6 +60,22 @@ const HomeRow = forwardRef(({
 }, ref) => {
     const [imageErrors, setImageErrors] = useState(new Set())
     const moreRef = useSpatialItem('main')
+    const scrollRef = useRef(null)
+
+    // Touch scroll handler for mobile
+    const touchStartX = useRef(0)
+    const scrollStartX = useRef(0)
+
+    const handleTouchStart = (e) => {
+        touchStartX.current = e.touches[0].clientX
+        scrollStartX.current = scrollRef.current?.scrollLeft || 0
+    }
+
+    const handleTouchMove = (e) => {
+        if (!scrollRef.current) return
+        const deltaX = touchStartX.current - e.touches[0].clientX
+        scrollRef.current.scrollLeft = scrollStartX.current + deltaX
+    }
 
     if (items.length === 0) return null
 
@@ -69,8 +90,13 @@ const HomeRow = forwardRef(({
                 </h2>
             </div>
 
-            {/* Snap Container (Pure CSS Scroll) */}
-            <div className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4">
+            {/* Snap Container (with touch scroll support) */}
+            <div
+                ref={scrollRef}
+                className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4"
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+            >
                 {items.map((item, index) => (
                     <MovieCard
                         key={item.id || index}

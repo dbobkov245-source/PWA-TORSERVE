@@ -151,7 +151,7 @@ async function warmupImageMirrors() {
                 : `https://${mirror}${testPath}`
             await fetch(url, {
                 method: 'HEAD',
-                signal: AbortSignal.timeout(3000)
+                signal: timeoutSignal(3000)
             })
             console.log(`[TMDB] ✅ Mirror ${mirror} OK (${Date.now() - start}ms)`)
         } catch {
