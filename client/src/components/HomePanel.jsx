@@ -115,6 +115,27 @@ const HomePanel = ({
         loadData()
     }, [])
 
+    // ANTI-06: Prefetch Discovery - warm up bypass layers cache after initial load
+    useEffect(() => {
+        if (loading || Object.keys(categories).length === 0) return
+
+        const prefetchTimer = setTimeout(async () => {
+            console.log('[HomePanel] 🔥 Prefetching popular discovery endpoints...')
+            try {
+                // Prefetch popular endpoints to warm up cache and bypass layers
+                await Promise.allSettled([
+                    tmdbClient('/trending/movie/week?page=2'),
+                    tmdbClient('/movie/top_rated?page=1'),
+                ])
+                console.log('[HomePanel] ✅ Prefetch complete')
+            } catch {
+                // Ignore prefetch errors
+            }
+        }, 5000) // Wait 5s after initial load
+
+        return () => clearTimeout(prefetchTimer)
+    }, [loading, categories])
+
     // Update backdrop
     useEffect(() => {
         if (!activeMovie && !activePerson && !activeCategory && focusedItem) {

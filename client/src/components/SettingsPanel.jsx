@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
+import { getLayerStatus } from '../utils/tmdbClient'
 
 const TABS = [
     { id: 'general', name: 'Основные', icon: '⚙️' },
@@ -127,14 +128,16 @@ const SettingsPanel = ({
         const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
         const CORS_PROXY = 'https://corsproxy.io/?'
         const CDN_MIRROR = 'https://imagetmdb.com'
+        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY || '2a4a0808-81a3-40ae-b0d3-e11335ede616'
         const WSRV_PROXY = 'https://wsrv.nl/?url='
 
         let results = []
-        const check = async (name, url, parser) => {
+        // Extended check with optional headers support
+        const check = async (name, url, parser, headers = {}) => {
             try {
                 const controller = new AbortController()
                 const timeoutId = setTimeout(() => controller.abort(), 10000)
-                const res = await fetch(url, { signal: controller.signal })
+                const res = await fetch(url, { signal: controller.signal, headers })
                 clearTimeout(timeoutId)
 
                 if (res.ok) {
@@ -156,13 +159,14 @@ const SettingsPanel = ({
         }
 
         try {
-            // 1. Custom Worker (user's proxy)
+            // 1. Custom Worker (user's proxy) — формат БЕЗ /3 (Worker добавляет сам)
             if (CUSTOM_PROXY) {
-                await check('Custom Worker', `${CUSTOM_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+                await check('Custom Worker', `${CUSTOM_PROXY}/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`, d => d?.total_results > 0 ? d.results[0]?.title : false)
             }
 
-            // 2. Lampa Proxy
-            await check('Lampa Proxy', `${LAMPA_PROXY}/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
+            // 2. Lampa Proxy — требует ПОЛНЫЙ URL после /
+            const lampaTarget = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}&language=ru-RU`
+            await check('Lampa Proxy', `${LAMPA_PROXY}/${lampaTarget}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
 
             // 3. CapacitorHttp (direct, may be DNS poisoned)
             await check('CapacitorHttp', `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
@@ -170,8 +174,8 @@ const SettingsPanel = ({
             // 4. corsproxy.io
             await check('corsproxy.io', `${CORS_PROXY}https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`, d => d?.total_results > 0 ? d.results[0]?.title : false)
 
-            // 5. Kinopoisk
-            await check('Кинопоиск', `${KP_PROXY}/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d?.films?.length > 0 ? d.films[0]?.nameRu || d.films[0]?.nameEn : false)
+            // 5. Kinopoisk — требует X-API-KEY заголовок!
+            await check('Кинопоиск', `${KP_PROXY}/https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${query}`, d => d?.films?.length > 0 ? d.films[0]?.nameRu || d.films[0]?.nameEn : false, { 'X-API-KEY': KP_API_KEY })
 
             // --- IMAGE MIRRORS ---
             results.push({ name: '── Зеркала изображений ──', status: '', detail: '' })
@@ -327,6 +331,26 @@ const SettingsPanel = ({
                                     Обновить статус
                                 </button>
                             </div>
+
+                            {/* ANTI-07: Bypass Layers Status */}
+                            <section className="pt-4 border-t border-white/10">
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🛡️ TMDB Bypass слои</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {getLayerStatus().map(layer => (
+                                        <span
+                                            key={layer.name}
+                                            className={`px-2 py-1 rounded text-xs font-mono ${layer.available
+                                                    ? 'bg-green-900/30 text-green-400 border border-green-700/50'
+                                                    : 'bg-red-900/30 text-red-400 border border-red-700/50'
+                                                }`}
+                                        >
+                                            {layer.available ? '🟢' : '🔴'} {layer.name}
+                                            {layer.circuit.failures > 0 && ` (${layer.circuit.failures})`}
+                                        </span>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">Красный = circuit breaker открыт (слой временно отключён)</p>
+                            </section>
                         </div>
                     )}
 

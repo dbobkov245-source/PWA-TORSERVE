@@ -43,7 +43,25 @@ const DISCOVERY_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for discovery
 
 // ─── ADR-004: Anti-DPI Infrastructure ──────────────────────────
 // ANTI-01: Smart Timeout & Race Strategy
-const RACE_TIMEOUT_MS = 1500 // First-layer race timeout
+const BASE_RACE_TIMEOUT_MS = 4000 // Base timeout for cold start
+
+// ANTI-01b: Dynamic Race Timeout based on latency history
+function getDynamicRaceTimeout() {
+    const workerData = providerLatency.get('worker')
+    const lampaData = providerLatency.get('lampa')
+
+    // If not enough data, use base timeout
+    if ((!workerData || workerData.count < 3) && (!lampaData || lampaData.count < 3)) {
+        return BASE_RACE_TIMEOUT_MS
+    }
+
+    const workerAvg = workerData?.avg || BASE_RACE_TIMEOUT_MS
+    const lampaAvg = lampaData?.avg || BASE_RACE_TIMEOUT_MS
+
+    // Max of both + 50% buffer, min 3s (cold start), max 8s
+    const dynamic = Math.max(workerAvg, lampaAvg) * 1.5
+    return Math.max(3000, Math.min(dynamic, 8000))
+}
 
 // ANTI-02: Adaptive Timeout Memory
 const providerLatency = new Map()
@@ -68,7 +86,7 @@ const clientCircuits = new Map()
 const CIRCUIT_THRESHOLD = 3
 const CIRCUIT_COOLDOWN_MS = 60 * 1000 // 60 seconds
 
-function isLayerAvailable(layer) {
+export function isLayerAvailable(layer) {
     const circuit = clientCircuits.get(layer)
     if (!circuit?.open) return true
     // Half-open: allow one attempt after cooldown
@@ -77,6 +95,16 @@ function isLayerAvailable(layer) {
         return true
     }
     return false
+}
+
+// ANTI-07: Get status of all bypass layers for UI display
+export function getLayerStatus() {
+    const layers = ['worker', 'lampa', 'server_proxy', 'capacitor', 'corsproxy', 'kinopoisk']
+    return layers.map(layer => ({
+        name: layer,
+        available: isLayerAvailable(layer),
+        circuit: clientCircuits.get(layer) || { failures: 0, open: false }
+    }))
 }
 
 function recordLayerFailure(layer) {
@@ -104,6 +132,43 @@ const IMAGE_MIRRORS = [
     'pl.imagetmdb.com',
     'lampa.byskaz.ru/tmdb/img'
 ]
+
+// ANTI-05: Image Mirror Warmup - test mirrors on module load
+let mirrorsWarmedUp = false
+
+async function warmupImageMirrors() {
+    if (mirrorsWarmedUp) return
+    mirrorsWarmedUp = true
+
+    console.log('[TMDB] 🔥 Warming up image mirrors...')
+    const testPath = '/t/p/w92/wwemzKWzjKYJFfCeiB57q3r4Bcm.png'
+
+    for (const mirror of IMAGE_MIRRORS) {
+        const start = Date.now()
+        try {
+            const url = mirror.includes('/')
+                ? `https://${mirror}${testPath}`
+                : `https://${mirror}${testPath}`
+            await fetch(url, {
+                method: 'HEAD',
+                signal: AbortSignal.timeout(3000)
+            })
+            console.log(`[TMDB] ✅ Mirror ${mirror} OK (${Date.now() - start}ms)`)
+        } catch {
+            console.log(`[TMDB] ❌ Mirror ${mirror} failed`)
+            markMirrorBanned(mirror)
+        }
+    }
+}
+
+function markMirrorBanned(mirror) {
+    if (mirrorStats[mirror]) {
+        mirrorStats[mirror].banned = true
+    }
+}
+
+// Auto-warmup after 2 seconds
+setTimeout(warmupImageMirrors, 2000)
 
 const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
 
@@ -649,12 +714,13 @@ async function raceFirstLayers(endpoint) {
         return null
     }
 
-    // Timeout promise
+    // Timeout promise with dynamic timeout
+    const raceTimeout = getDynamicRaceTimeout()
     const timeoutPromise = new Promise(resolve =>
         setTimeout(() => {
-            console.log(`[Cascade] ⏰ Race timeout (${RACE_TIMEOUT_MS}ms)`)
+            console.log(`[Cascade] ⏰ Race timeout (${raceTimeout}ms)`)
             resolve(null)
-        }, RACE_TIMEOUT_MS)
+        }, raceTimeout)
     )
 
     // Race: first valid response wins
@@ -720,28 +786,37 @@ export async function tmdbClient(endpoint, options = {}) {
         return result
     }
 
-    // ═══ PHASE 2: Waterfall Fallbacks ═══
-    // Server Proxy (our own DoH-enabled proxy)
+    // ═══ PHASE 2: Parallel Fallbacks (Server Proxy + Capacitor) ═══
+    const phase2Batch = []
     if (isLayerAvailable('server_proxy')) {
-        result = await tryLayerWithTiming('server_proxy', () => tryServerProxy(endpoint))
-            .catch(() => null)
-        if (isValidResponse(result)) {
-            if (useCache) setCache(endpoint, result, cacheTTL)
-            return result
-        }
+        phase2Batch.push(
+            tryLayerWithTiming('server_proxy', () => tryServerProxy(endpoint))
+                .catch(() => null)
+        )
     }
-
-    // Capacitor with DoH (Android native only)
     if (isLayerAvailable('capacitor')) {
-        result = await tryLayerWithTiming('capacitor', () => tryCapacitorWithDoH(endpoint))
-            .catch(() => null)
-        if (isValidResponse(result)) {
-            if (useCache) setCache(endpoint, result, cacheTTL)
-            return result
+        phase2Batch.push(
+            tryLayerWithTiming('capacitor', () => tryCapacitorWithDoH(endpoint))
+                .catch(() => null)
+        )
+    }
+
+    if (phase2Batch.length > 0) {
+        try {
+            result = await Promise.any(
+                phase2Batch.map(p => p.then(r => r ? r : Promise.reject()))
+            )
+            if (isValidResponse(result)) {
+                if (useCache) setCache(endpoint, result, cacheTTL)
+                return result
+            }
+        } catch {
+            // All Phase 2 batch failed
+            console.log('[Cascade] Phase 2 batch: no winners')
         }
     }
 
-    // CORS Proxy (browser last resort)
+    // CORS Proxy (browser last resort - separate due to rate limits)
     if (isLayerAvailable('corsproxy')) {
         result = await tryLayerWithTiming('corsproxy', () => tryCorsProxy(endpoint))
             .catch(() => null)

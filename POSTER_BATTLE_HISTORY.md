@@ -704,3 +704,75 @@ export async function smartFetch(httpsUrl, httpUrl, options = {}) {
 - ✅ **Mixed Content обойдён** через race-стратегию HTTPS/HTTP
 - ✅ **Таймауты не блокируют UI** — жёсткий лимит 5 секунд
 - ✅ **Логи проанализированы** — критических ошибок нет
+
+---
+
+## ⚡ Акт 9: Bypass Optimization (05.02.2026)
+
+После внедрения ADR-004 (Smart Timeout Race Strategy) была обнаружена регрессия — bypass слои не отвечали из-за агрессивного таймаута и неверных URL-форматов в тестах.
+
+### Фикс регрессии
+| Проблема | Решение |
+|----------|---------|
+| Race Timeout 1500мс слишком короткий | Увеличен до 4000мс базового |
+| Lampa Proxy test URL неверный | Исправлен на полный URL |
+| Custom Worker test URL с `/3` | Убран лишний префикс |
+| Kinopoisk без API-KEY | Добавлен X-API-KEY заголовок |
+
+### 5 Оптимизаций
+
+| # | Улучшение | Описание |
+|---|-----------|----------|
+| 1 | **Dynamic Race Timeout** | Адаптивный таймаут на основе истории латентности провайдеров |
+| 2 | **Parallel Phase 2** | Server Proxy + Capacitor запускаются параллельно (Promise.any) |
+| 3 | **Prefetch Discovery** | Прогрев кэша популярных эндпоинтов через 5с после загрузки |
+| 4 | **Image Mirror Warmup** | Тестирование зеркал при загрузке модуля (ban медленных) |
+| 5 | **UI статус bypass** | Индикаторы 🟢/🔴 circuit breakers в Settings → Статус |
+
+### Ключевые изменения в коде
+
+**`tmdbClient.js`:**
+```javascript
+// ANTI-01b: Dynamic Race Timeout
+function getDynamicRaceTimeout() {
+    const workerAvg = providerLatency.get('worker')?.avg || 4000
+    const lampaAvg = providerLatency.get('lampa')?.avg || 4000
+    return Math.max(3000, Math.min(Math.max(workerAvg, lampaAvg) * 1.5, 8000))
+}
+
+// ANTI-05: Image Mirror Warmup
+async function warmupImageMirrors() { ... }
+
+// ANTI-07: Layer Status для UI
+export function getLayerStatus() {
+    const layers = ['worker', 'lampa', 'server_proxy', 'capacitor', 'corsproxy', 'kinopoisk']
+    return layers.map(layer => ({ name: layer, available: isLayerAvailable(layer), ... }))
+}
+```
+
+**`HomePanel.jsx`:**
+```javascript
+// ANTI-06: Prefetch Discovery
+useEffect(() => {
+    if (loading) return
+    setTimeout(() => {
+        tmdbClient('/trending/movie/week?page=2')
+        tmdbClient('/movie/top_rated?page=1')
+    }, 5000)
+}, [loading])
+```
+
+### Результат: 🏆 ПОЛНАЯ ПОБЕДА
+
+| Слой | Статус без VPN |
+|------|----------------|
+| worker | 🟢 |
+| lampa | 🟢 |
+| server_proxy | 🟢 |
+| capacitor | 🟢 |
+| corsproxy | 🟢 |
+| kinopoisk | 🟢 |
+
+**6 из 6 bypass слоёв работают без VPN!**
+
+UI индикатор в Settings показывает состояние всех circuit breakers в реальном времени.

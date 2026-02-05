@@ -168,6 +168,7 @@
 
 История сессий разработки:
 
+*   [**2026-02-05**](docs/sessions/2026-02-05.md) — ADR-004 Hotfix, 5 Bypass Optimizations (Dynamic Race Timeout, Parallel Phase 2, Image Warmup, Prefetch, UI Status). 6/6 слоёв работают без VPN.
 *   [**2026-02-04**](docs/sessions/2026-02-04.md) — ADR-004: Smart Timeout Race Strategy, Android log analysis.
 *   [**2026-02-02**](docs/sessions/2026-02-02.md) — Sidebar scroll fix (scrollIntoView for remote navigation).
 *   [**2026-02-01**](docs/sessions/2026-02-01.md) — Fix BUG-FREEZE, UI Polish.
