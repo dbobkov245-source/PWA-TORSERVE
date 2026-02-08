@@ -3,6 +3,8 @@ import { getSmartConfig } from '../utils/doh.js';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import fs from 'fs';
+import { getCachedImage, cacheImage } from '../imageCache.js';
 
 const router = express.Router();
 
@@ -19,6 +21,14 @@ const ALLOWED_DOMAINS = [
     'lampa.byskaz.ru'
 ];
 
+// O2: Check if URL is an image request (for disk caching)
+const isImageRequest = (url) => {
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    const pathname = new URL(url).pathname.toLowerCase();
+    return imageExtensions.some(ext => pathname.endsWith(ext)) ||
+        url.includes('image.tmdb.org');
+};
+
 router.get('/', async (req, res) => {
     const { url } = req.query;
 
@@ -34,6 +44,20 @@ router.get('/', async (req, res) => {
             return res.status(403).json({ error: 'Domain not allowed' });
         }
 
+        // O2: Check disk cache for images
+        if (isImageRequest(url)) {
+            const cachedPath = await getCachedImage(url);
+            if (cachedPath) {
+                // Serve from cache
+                const ext = cachedPath.split('.').pop().toLowerCase();
+                const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+                res.set('Content-Type', mimeMap[ext] || 'image/jpeg');
+                res.set('X-Cache', 'HIT');
+                res.set('Cache-Control', 'public, max-age=604800'); // 7 days
+                return fs.createReadStream(cachedPath).pipe(res);
+            }
+        }
+
         console.log(`[Proxy] 🔄 Fetching: ${url}`);
 
         // Get DoH resolved config
@@ -47,33 +71,43 @@ router.get('/', async (req, res) => {
         };
 
         // 🔥 CRITICAL FIX: SNI Support
-        // If we have a resolved IP, we use it for the connection but keep the hostname for TLS SNI
         if (config.resolvedIP) {
             options.hostname = config.resolvedIP;
             options.path = targetUrl.pathname + targetUrl.search;
             options.port = targetUrl.port || (isHttps ? 443 : 80);
 
             if (isHttps) {
-                options.servername = config.hostname; // This is the SNI part
+                options.servername = config.hostname;
             }
         }
 
         const transport = isHttps ? https : http;
         const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
-            // Forward status
             res.status(proxyRes.statusCode);
 
             // Forward allowed headers
-            const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'src'];
+            const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
             console.log(`[Proxy] 📥 Response ${proxyRes.statusCode}: ${proxyRes.headers['content-type']}`);
             for (const h of forwardHeaders) {
                 if (proxyRes.headers[h]) {
                     res.set(h, proxyRes.headers[h]);
                 }
             }
+            res.set('X-Cache', 'MISS');
 
-            // Pipe data
-            proxyRes.pipe(res);
+            // O2: Collect data for caching if image
+            if (isImageRequest(url) && proxyRes.statusCode === 200) {
+                const chunks = [];
+                proxyRes.on('data', chunk => chunks.push(chunk));
+                proxyRes.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    // Save to cache async (fire-and-forget)
+                    cacheImage(url, buffer).catch(() => { });
+                    res.end(buffer);
+                });
+            } else {
+                proxyRes.pipe(res);
+            }
         });
 
         proxyReq.on('error', (err) => {

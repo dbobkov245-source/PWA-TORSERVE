@@ -192,3 +192,49 @@ export const organizeFiles = (files) => {
 
     return { episodes, extras }
 }
+
+/**
+ * Extract quality badges from torrent/file name
+ * Returns array of badge objects with label and color
+ * ADR-001 Item 7: Quality Badges на постерах
+ */
+export const extractQualityBadges = (name) => {
+    if (!name) return []
+    const nameLower = name.toLowerCase()
+    const badges = []
+
+    // Resolution badges (priority order)
+    if (/\b(2160p|4k|uhd)\b/i.test(name)) {
+        badges.push({ label: '4K', color: 'bg-amber-500' })
+    } else if (/\b1080p\b/i.test(name)) {
+        badges.push({ label: '1080p', color: 'bg-blue-500' })
+    } else if (/\b720p\b/i.test(name)) {
+        badges.push({ label: '720p', color: 'bg-gray-500' })
+    }
+
+    // HDR badges
+    if (/\b(dolby\.?vision|dv|dovi)\b/i.test(name)) {
+        badges.push({ label: 'DV', color: 'bg-purple-600' })
+    } else if (/\bhdr10\+?\b/i.test(name)) {
+        badges.push({ label: 'HDR10', color: 'bg-orange-500' })
+    } else if (/\bhdr\b/i.test(name) && !/\bhdr10\b/i.test(name)) {
+        badges.push({ label: 'HDR', color: 'bg-orange-500' })
+    }
+
+    // Source badges
+    if (/\b(remux|bdremux)\b/i.test(name)) {
+        badges.push({ label: 'REMUX', color: 'bg-teal-600' })
+    } else if (/\bbluray\b/i.test(name)) {
+        badges.push({ label: 'BD', color: 'bg-indigo-500' })
+    } else if (/\bweb-?dl\b/i.test(name)) {
+        badges.push({ label: 'WEB', color: 'bg-sky-600' })
+    }
+
+    // Audio badges
+    if (/\batmos\b/i.test(name)) {
+        badges.push({ label: 'ATMOS', color: 'bg-pink-600' })
+    }
+
+    // Limit to 3 badges max
+    return badges.slice(0, 3)
+}

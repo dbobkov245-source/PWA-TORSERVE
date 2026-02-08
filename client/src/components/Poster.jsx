@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient } from '../utils/helpers'
+import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient, extractQualityBadges } from '../utils/helpers'
 import { getMetadata, resolveMetadata } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
@@ -72,6 +72,16 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
             )}
 
             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/10 flex flex-col justify-end p-3 text-left">
+                {/* Quality badges - top left */}
+                <div className="absolute top-2 left-2 flex gap-0.5 flex-wrap max-w-[60%]">
+                    {extractQualityBadges(name).map((badge, i) => (
+                        <span key={i} className={`${badge.color} text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm`}>
+                            {badge.label}
+                        </span>
+                    ))}
+                </div>
+
+                {/* Status badges - top right */}
                 <div className="absolute top-2 right-2 flex gap-1">
                     {newFilesCount > 0 && (
                         <span className="bg-purple-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm animate-pulse">

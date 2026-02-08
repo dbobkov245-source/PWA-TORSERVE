@@ -36,9 +36,13 @@ const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
 
 // Cache configuration
 const CACHE_PREFIX = 'tmdb_cache_v1_'
-const METADATA_CACHE_PREFIX = 'metadata_v1_' // Consolidated from Poster.jsx
-const METADATA_CACHE_LIMIT = 300
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for search
+// O4: LRU cache params - increase capacity and TTL for better hit rate
+const TMDB_CACHE_MAX_ENTRIES = 1000
+const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000  // 6 hours for general TMDB data
+// O5: Namespace versioning for metadata cache (allows safe migrations)
+const METADATA_CACHE_PREFIX = 'meta:v1:'
+const METADATA_CACHE_LIMIT = 1500
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes for search (keep short for freshness)
 const DISCOVERY_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for discovery
 
 // ─── ADR-004: Anti-DPI Infrastructure ──────────────────────────
@@ -375,7 +379,7 @@ export const saveMetadata = (name, data) => {
     try {
         localStorage.setItem(key, JSON.stringify(entry))
 
-        // LRU Eviction: check cache size periodically (10% chance on write)
+        // O4: LRU Eviction with 10% eviction batch
         if (Math.random() < 0.1) {
             const allKeys = Object.keys(localStorage).filter(k => k.startsWith(METADATA_CACHE_PREFIX))
             if (allKeys.length > METADATA_CACHE_LIMIT) {
@@ -388,10 +392,17 @@ export const saveMetadata = (name, data) => {
                 })
                 entries.sort((a, b) => a.timestamp - b.timestamp)
 
-                // Remove oldest 20%
-                const toRemove = Math.ceil(METADATA_CACHE_LIMIT * 0.2)
+                // O4: Remove oldest 10% to avoid thrashing
+                const toRemove = Math.ceil(METADATA_CACHE_LIMIT * 0.1)
                 entries.slice(0, toRemove).forEach(e => localStorage.removeItem(e.key))
-                console.log(`[Metadata] LRU eviction: removed ${toRemove} entries`)
+                console.log(`[Metadata] LRU eviction: removed ${toRemove}/${allKeys.length} entries`)
+            }
+
+            // O5: One-time cleanup of legacy metadata_ keys
+            const legacyKeys = Object.keys(localStorage).filter(k => k.startsWith('metadata_') && !k.startsWith('meta:'))
+            if (legacyKeys.length > 0) {
+                legacyKeys.forEach(k => localStorage.removeItem(k))
+                console.log(`[Metadata] O5: Cleaned up ${legacyKeys.length} legacy metadata_ keys`)
             }
         }
     } catch (e) {

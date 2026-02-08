@@ -13,6 +13,8 @@ import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
 import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
 import { parseRange } from './utils/range.js'
+import { registerInterval, clearAllIntervals } from './utils/intervals.js'
+import { getCacheStats } from './imageCache.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -41,11 +43,11 @@ const rateLimitMap = new Map()
 const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
 const RATE_LIMIT_MAX = 300 // 🔥 v2.4: increased from 60 to handle bulk poster loading
 
-// ✅ FIX: Сохраняем ID интервала для очистки при shutdown
+// O6: Use registerInterval for graceful shutdown
 let rateLimitCleanupId = null
 
 // Cleanup old entries every 5 minutes
-rateLimitCleanupId = setInterval(() => {
+rateLimitCleanupId = registerInterval('rateLimitCleanup', () => {
     const now = Date.now()
     for (const [ip, data] of rateLimitMap.entries()) {
         if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
@@ -182,6 +184,25 @@ app.get('/api/lag-stats', (req, res) => {
     })
 })
 
+// ────────────────────────────────────────────────────────
+// M1: Metrics endpoint for monitoring (ADR-001)
+// ────────────────────────────────────────────────────────
+let activeStreams = 0
+
+app.get('/api/metrics', async (req, res) => {
+    const memUsage = process.memoryUsage()
+    const imageCache = await getCacheStats()
+
+    res.json({
+        engines: getActiveTorrentsCount(),
+        frozen: getFrozenTorrentsCount(),
+        rssMB: Math.round(memUsage.rss / 1024 / 1024),
+        uptimeSec: Math.round(process.uptime()),
+        activeStreams,
+        imageCache
+    })
+})
+
 // API: Speed Mode (eco/balanced/turbo)
 app.post('/api/speed-mode', (req, res) => {
     const { mode } = req.body
@@ -276,6 +297,35 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 
 import { search as aggregatorSearch, getProvidersStatus } from './aggregator.js'
+import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
+
+/**
+ * POST /api/quality-badges — Batch discover available quality for movies
+ * ADR-001 Item 7: Quality Badges on home page (like Lampa)
+ * 
+ * Request: { titles: ["Movie 1", "Movie 2"] } (max 10)
+ * Response: { "Movie 1": ["4K", "HDR"], "Movie 2": ["1080p"] }
+ */
+app.post('/api/quality-badges', async (req, res) => {
+    const { titles } = req.body
+
+    if (!titles || !Array.isArray(titles) || titles.length === 0) {
+        return res.status(400).json({ error: 'titles array required' })
+    }
+
+    console.log(`[QualityBadges] Batch request: ${titles.length} titles`)
+    const startTime = Date.now()
+
+    try {
+        const result = await batchDiscoverQuality(titles)
+        const ms = Date.now() - startTime
+        console.log(`[QualityBadges] Complete in ${ms}ms`)
+        res.json(result)
+    } catch (err) {
+        console.error('[QualityBadges] Error:', err.message)
+        res.status(500).json({ error: err.message })
+    }
+})
 
 /**
  * API v2 Search with envelope response pattern
@@ -842,8 +892,9 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         res.writeHead(206, head)
 
-        // CRITICAL: Cleanup stream on client disconnect to prevent resource leaks
-        const stream = file.createReadStream({ start, end })
+        // O7: Configurable stream buffer for better 4K streaming on HDD (default 512KB)
+        const hwm = parseInt(process.env.STREAM_HIGHWATERMARK) || 1024 * 512
+        const stream = file.createReadStream({ start, end, highWaterMark: hwm })
 
         // ✅ FIX: Функция гарантированной очистки стрима
         const cleanup = () => {
@@ -861,9 +912,10 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             }
         })
 
-        // ✅ FIX: Очистка при закрытии соединения клиентом
-        res.on('close', cleanup)
-        res.on('error', cleanup)
+        // M1: Track active streams for /api/metrics
+        activeStreams++
+        res.on('close', () => { activeStreams--; cleanup() })
+        res.on('error', () => { activeStreams--; cleanup() })
 
         stream.pipe(res)
     }
@@ -909,11 +961,8 @@ const gracefulShutdown = async (signal) => {
 
     console.log(`\n[Shutdown] Received ${signal}, starting graceful shutdown...`)
 
-    // ✅ FIX: Очищаем интервал rate limit cleanup
-    if (rateLimitCleanupId) {
-        clearInterval(rateLimitCleanupId)
-        rateLimitCleanupId = null
-    }
+    // O6: Clear all registered intervals
+    clearAllIntervals()
 
     // 1. Stop accepting new connections
     server.close(() => {

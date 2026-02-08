@@ -1,12 +1,24 @@
-import React, { useRef, useState, forwardRef } from 'react'
+import React, { useRef, useState, forwardRef, useMemo } from 'react'
 import { getPosterUrl, getTitle } from '../utils/discover'
 import { reportBrokenImage } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { useQualityBadges, getBadgeStyle } from '../hooks/useQualityBadges'
 
-const MovieCard = ({ item, onItemClick, onFocus, imageErrors, setImageErrors }) => {
+// O3: MovieCard now has local isBroken state to prevent full row re-renders
+const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }) => {
     const spatialRef = useSpatialItem('main')
     const posterUrl = getPosterUrl(item)
     const title = getTitle(item)
+    const [isBroken, setIsBroken] = useState(() => imageErrorsRef.current.has(posterUrl))
+    const badges = qualityBadges?.[title] || []
+
+    const handleImageError = () => {
+        if (posterUrl) {
+            imageErrorsRef.current.add(posterUrl)
+            reportBrokenImage?.(posterUrl)
+            setIsBroken(true)
+        }
+    }
 
     return (
         // Using div instead of button to allow touch scroll on mobile
@@ -15,21 +27,18 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrors, setImageErrors }) 
             ref={spatialRef}
             role="button"
             tabIndex={0}
-            className="focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border border-transparent overflow-hidden"
+            className="focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border border-transparent overflow-hidden relative"
             onClick={() => onItemClick?.(item)}
             onKeyDown={(e) => { if (e.key === 'Enter') onItemClick?.(item) }}
             onFocus={onFocus}
         >
-            {posterUrl && !imageErrors.has(posterUrl) ? (
+            {posterUrl && !isBroken ? (
                 <img
                     src={posterUrl}
                     alt={title}
                     className="w-full h-full object-cover pointer-events-none"
                     loading="lazy"
-                    onError={() => {
-                        reportBrokenImage?.(posterUrl)
-                        setImageErrors(prev => new Set(prev).add(posterUrl))
-                    }}
+                    onError={handleImageError}
                 />
             ) : (
                 <div className="w-full h-full flex items-center justify-center p-2 text-center text-xs text-white">
@@ -37,7 +46,18 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrors, setImageErrors }) 
                 </div>
             )}
 
-            {/* Rating Badge */}
+            {/* Quality Badges - top left */}
+            {badges.length > 0 && (
+                <div className="absolute top-1 left-1 flex gap-0.5">
+                    {badges.slice(0, 2).map((badge, i) => (
+                        <span key={i} className={`${getBadgeStyle(badge)} text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm`}>
+                            {badge}
+                        </span>
+                    ))}
+                </div>
+            )}
+
+            {/* Rating Badge - top right */}
             {item.vote_average > 0 && (
                 <div className={`absolute top-1 right-1 text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${item.vote_average >= 7 ? 'bg-green-500' :
                     item.vote_average >= 5 ? 'bg-yellow-500 text-black' : 'bg-red-500'
@@ -58,9 +78,14 @@ const HomeRow = forwardRef(({
     onFocusChange,
     onMoreClick
 }, ref) => {
-    const [imageErrors, setImageErrors] = useState(new Set())
+    // O3: useRef instead of useState to prevent row re-renders on image errors
+    const imageErrorsRef = useRef(new Set())
     const moreRef = useSpatialItem('main')
     const scrollRef = useRef(null)
+
+    // Quality Discovery: collect titles for batch fetch
+    const titles = useMemo(() => items.map(item => getTitle(item)).filter(Boolean), [items])
+    const qualityBadges = useQualityBadges(titles)
 
     // Touch scroll handler for mobile
     const touchStartX = useRef(0)
@@ -103,8 +128,8 @@ const HomeRow = forwardRef(({
                         item={item}
                         onItemClick={onItemClick}
                         onFocus={() => onFocusChange?.(item)}
-                        imageErrors={imageErrors}
-                        setImageErrors={setImageErrors}
+                        imageErrorsRef={imageErrorsRef}
+                        qualityBadges={qualityBadges}
                     />
                 ))}
 
