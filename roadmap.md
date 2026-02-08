@@ -159,6 +159,7 @@
 
 Архитектурные решения вынесены в отдельные документы:
 
+*   [**ADR-001: Enhancements & Optimizations**](docs/adr/ADR-001-Enhancements.md) — (rev.3, 06.02.2026) Фазы 1-3 ✅. Оптимизации, кеш постеров, quality badges, метрики.
 *   [**ADR-002: Zone Management**](docs/adr/ADR-002-Zone-Management.md) — (Locked 01.02.2026) Почему `activeView` проверка критична для навигации.
 *   [**ADR-003: Sidebar / NUM Navigation Model**](docs/adr/ADR-003-Sidebar-Navigation.md) — (Locked 01.02.2026) Единый контроллер навигации и отказ от логики в Sidebar.
 
@@ -168,6 +169,7 @@
 
 История сессий разработки:
 
+*   [**2026-02-08**](docs/sessions/2026-02-08.md) — ADR-001 Реализация (Фазы 1-3): оптимизации (O1-O7), серверный кеш, метрики, quality badges, прогресс-бар.
 *   [**2026-02-05**](docs/sessions/2026-02-05.md) — ADR-004 Hotfix, 5 Bypass Optimizations (Dynamic Race Timeout, Parallel Phase 2, Image Warmup, Prefetch, UI Status). 6/6 слоёв работают без VPN.
 *   [**2026-02-04**](docs/sessions/2026-02-04.md) — ADR-004: Smart Timeout Race Strategy, Android log analysis.
 *   [**2026-02-02**](docs/sessions/2026-02-02.md) — Sidebar scroll fix (scrollIntoView for remote navigation).
