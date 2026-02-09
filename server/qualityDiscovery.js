@@ -13,10 +13,15 @@ const log = logger.child('QualityDiscovery')
 
 // Cache configuration
 const CACHE_TTL_MS = 60 * 60 * 1000  // 1 hour
+const FAIL_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes for failed lookups
 const MAX_CACHE_SIZE = 500
+const DISCOVERY_TIMEOUT_MS = 10000
+const DISCOVERY_CONCURRENCY = 2
 
 // In-memory cache: title -> { badges, expires }
 const qualityCache = new Map()
+// In-flight deduplication: normalized title -> Promise<string[]>
+const inFlight = new Map()
 
 /**
  * Clean cache of expired entries
@@ -105,24 +110,46 @@ export async function discoverQuality(title) {
         return cached.badges
     }
 
-    try {
-        // Search with limit to reduce load
-        const { results } = await search(title, { limit: 20 })
-        const badges = extractBestQuality(results)
-
-        // Cache result
-        qualityCache.set(key, {
-            badges,
-            expires: Date.now() + CACHE_TTL_MS
-        })
-
-        log.debug('Quality discovered', { title: key, badges })
-        return badges
-
-    } catch (err) {
-        log.warn('Quality discovery failed', { title: key, error: err.message })
-        return []
+    const running = inFlight.get(key)
+    if (running) {
+        return running
     }
+
+    const task = (async () => {
+        try {
+            // Keep quality discovery isolated from user-facing search cache.
+            const timeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Quality discovery timeout')), DISCOVERY_TIMEOUT_MS)
+            )
+            const { results } = await Promise.race([
+                search(title, { skipCache: true, skipCacheWrite: true }),
+                timeout
+            ])
+            const badges = extractBestQuality(results)
+
+            // Cache result
+            qualityCache.set(key, {
+                badges,
+                expires: Date.now() + CACHE_TTL_MS
+            })
+
+            log.debug('Quality discovered', { title: key, badges })
+            return badges
+        } catch (err) {
+            log.warn('Quality discovery failed', { title: key, error: err.message })
+            // Short fail cache to avoid hammering providers on repeated rows.
+            qualityCache.set(key, {
+                badges: [],
+                expires: Date.now() + FAIL_CACHE_TTL_MS
+            })
+            return []
+        } finally {
+            inFlight.delete(key)
+        }
+    })()
+
+    inFlight.set(key, task)
+    return task
 }
 
 /**
@@ -152,21 +179,22 @@ export async function batchDiscoverQuality(titles) {
         }
     }
 
-    // Fetch uncached in parallel (with concurrency limit)
+    // Fetch uncached with conservative concurrency (protect providers)
     if (uncached.length > 0) {
         log.info('Batch quality discovery', { cached: limited.length - uncached.length, fetching: uncached.length })
+        const queue = [...uncached]
+        const workersCount = Math.min(DISCOVERY_CONCURRENCY, queue.length)
 
-        const promises = uncached.map(title =>
-            discoverQuality(title).then(badges => ({ title, badges }))
-        )
-
-        const settled = await Promise.allSettled(promises)
-
-        for (const item of settled) {
-            if (item.status === 'fulfilled') {
-                result[item.value.title] = item.value.badges
+        const workers = Array.from({ length: workersCount }, async () => {
+            while (queue.length > 0) {
+                const title = queue.shift()
+                if (!title) continue
+                const badges = await discoverQuality(title)
+                result[title] = badges
             }
-        }
+        })
+
+        await Promise.allSettled(workers)
     }
 
     return result

@@ -77,6 +77,7 @@ const SearchSort = ({ opt, active, onClick }) => {
 const getProviderInfo = (status, count) => {
     if (count > 0) return { icon: '✅', style: 'bg-green-900/40 text-green-400 border-green-500/40', label: 'OK' }
     switch (status) {
+        case 'empty': return { icon: '⚪', style: 'bg-gray-800/40 text-gray-300 border-gray-500/30', label: 'Empty' }
         case 'ok': return { icon: '✅', style: 'bg-green-900/30 text-green-400 border-green-500/30', label: 'OK' }
         case 'timeout': return { icon: '⏱️', style: 'bg-yellow-900/40 text-yellow-400 border-yellow-500/40', label: 'Timeout' }
         case 'circuit_open': return { icon: '🔒', style: 'bg-gray-800/50 text-gray-500 border-gray-600/30', label: 'Disabled' }
@@ -91,11 +92,13 @@ const SearchPanel = ({
     searchQuery,
     onSearchQueryChange,
     onSearch,
+    onForceRefresh,
     onClose,
     onAddTorrent,
     searchResults,
     searchLoading,
-    providers = {}
+    providers = {},
+    searchMeta = null
 }) => {
     const [activeFilters, setActiveFilters] = useState([])
     const [sortBy, setSortBy] = useState('seeders')
@@ -157,8 +160,9 @@ const SearchPanel = ({
         if (!voiceAvailable) {
             const query = prompt('🎤 Введите запрос:')
             if (query?.trim()) {
-                onSearchQueryChange(query.trim())
-                setTimeout(() => onSearch(), 200)
+                const normalized = query.trim()
+                onSearchQueryChange(normalized)
+                setTimeout(() => onSearch(normalized), 200)
             }
             return
         }
@@ -175,7 +179,7 @@ const SearchPanel = ({
                 const transcript = result.matches[0].trim()
                 if (transcript) {
                     onSearchQueryChange(transcript)
-                    setTimeout(() => onSearch(), 300)
+                    setTimeout(() => onSearch(transcript), 300)
                 }
             }
         } catch { setIsListening(false) }
@@ -196,7 +200,7 @@ const SearchPanel = ({
                     onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                             e.preventDefault()
-                            onSearch()
+                            onSearch(searchQuery)
                         }
                     }}
                     placeholder="Поиск торрентов..."
@@ -217,12 +221,26 @@ const SearchPanel = ({
                     className="focusable bg-purple-600 px-6 py-3 rounded-lg font-bold disabled:opacity-50"
                 >{searchLoading ? '...' : '🔍'}</button>
                 <button
+                    onClick={() => onForceRefresh?.(searchQuery)}
+                    disabled={searchLoading || !searchQuery?.trim()}
+                    tabIndex="0"
+                    className="focusable bg-gray-700 px-4 py-3 rounded-lg font-bold disabled:opacity-50"
+                    title="Искать без кэша"
+                >↻</button>
+                <button
                     ref={closeRef}
                     onClick={onClose}
                     tabIndex="0"
                     className="focusable bg-gray-800 px-4 rounded-lg"
                 >✕</button>
             </div>
+
+            {searchMeta && (
+                <div className="mb-3 text-[11px] text-gray-400 font-mono">
+                    {searchMeta.cached ? 'CACHE' : 'LIVE'} · {searchMeta.ms} ms
+                    {searchMeta.fresh ? ' · fresh' : ''}
+                </div>
+            )}
 
             {/* Provider Status */}
             {providerEntries.length > 0 && (

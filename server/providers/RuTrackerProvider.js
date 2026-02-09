@@ -105,6 +105,9 @@ export class RuTrackerProvider extends BaseProvider {
             return []
         }
 
+        let hadSuccessfulResponse = false
+        let lastError = null
+
         // Try each mirror
         for (const mirror of RUTRACKER_MIRRORS) {
             log.info('Trying mirror', { mirror })
@@ -117,6 +120,8 @@ export class RuTrackerProvider extends BaseProvider {
 
                 log.debug('Searching...', { mirror, query })
                 const results = await this._searchOnMirror(mirror, query)
+                hadSuccessfulResponse = true
+
                 if (results.length > 0) {
                     this.currentMirror = mirror
                     log.info('Search successful', { mirror, count: results.length })
@@ -124,12 +129,18 @@ export class RuTrackerProvider extends BaseProvider {
                 }
                 log.warn('Empty results', { mirror })
             } catch (err) {
+                lastError = err
                 log.warn(`Mirror ${mirror} failed`, { error: err.message })
                 this.sessionCookie = null // Reset session for next mirror
             }
         }
 
-        log.error('All mirrors failed')
+        if (!hadSuccessfulResponse && lastError) {
+            log.error('All mirrors failed', { error: lastError.message })
+            throw new Error(`RuTracker unavailable: ${lastError.message}`)
+        }
+
+        log.warn('All mirrors returned empty results', { query })
         return []
     }
 

@@ -28,6 +28,51 @@ const FAILURE_THRESHOLD = 3        // Failures before opening circuit
 const RECOVERY_TIMEOUT = 5 * 60000 // 5 minutes before retry
 
 const circuitBreakers = new Map() // provider -> { failures, openedAt }
+const providerDiagnostics = new Map()
+
+function getDiagnosticsState(providerName) {
+    if (!providerDiagnostics.has(providerName)) {
+        providerDiagnostics.set(providerName, {
+            totalRequests: 0,
+            totalSuccess: 0,
+            totalEmpty: 0,
+            totalError: 0,
+            lastQuery: null,
+            lastStatus: 'never',
+            lastCount: 0,
+            lastDurationMs: null,
+            lastError: null,
+            lastRunAt: null,
+            lastSuccessAt: null,
+            lastErrorAt: null
+        })
+    }
+    return providerDiagnostics.get(providerName)
+}
+
+function recordProviderRun(providerName, data) {
+    const state = getDiagnosticsState(providerName)
+    const now = Date.now()
+
+    state.totalRequests++
+    state.lastQuery = data.query
+    state.lastStatus = data.status
+    state.lastCount = data.count || 0
+    state.lastDurationMs = data.durationMs ?? null
+    state.lastError = data.error || null
+    state.lastRunAt = now
+
+    if (data.status === 'ok') {
+        state.totalSuccess++
+        state.lastSuccessAt = now
+    } else if (data.status === 'empty') {
+        state.totalEmpty++
+        state.lastSuccessAt = now
+    } else {
+        state.totalError++
+        state.lastErrorAt = now
+    }
+}
 
 function getCircuitState(providerName) {
     if (!circuitBreakers.has(providerName)) {
@@ -87,6 +132,7 @@ setInterval(() => {
  * @param {string} query - Search query
  * @param {Object} options - Search options
  * @param {boolean} options.skipCache - Skip cache lookup
+ * @param {boolean} options.skipCacheWrite - Skip cache store
  * @returns {Promise<{results: Array, errors: Array, providers: Object, cached: boolean}>}
  */
 export async function search(query, options = {}) {
@@ -111,6 +157,7 @@ export async function search(query, options = {}) {
 
     // Create search promises with timeout
     const searchPromises = providers.map(async (provider) => {
+        const startedAt = Date.now()
         const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Timeout')), PROVIDER_TIMEOUT)
         )
@@ -121,10 +168,22 @@ export async function search(query, options = {}) {
                 timeoutPromise
             ])
             recordSuccess(provider.name)
-            return { provider: provider.name, results, success: true }
+            return {
+                provider: provider.name,
+                results,
+                success: true,
+                durationMs: Date.now() - startedAt
+            }
         } catch (error) {
             recordFailure(provider.name)
-            return { provider: provider.name, error: error.message, success: false }
+            const message = error?.message || 'Unknown error'
+            return {
+                provider: provider.name,
+                error: message,
+                success: false,
+                status: message === 'Timeout' ? 'timeout' : 'error',
+                durationMs: Date.now() - startedAt
+            }
         }
     })
 
@@ -138,15 +197,31 @@ export async function search(query, options = {}) {
 
     for (const outcome of outcomes) {
         if (outcome.status === 'fulfilled') {
-            const { provider, results, success, error } = outcome.value
+            const { provider, results, success, error, status, durationMs } = outcome.value
 
-            if (success && results) {
-                allResults.push(...results)
-                providerStats[provider] = { count: results.length, status: 'ok' }
-                log.info(`✅ ${provider}`, { count: results.length })
+            if (success) {
+                const list = Array.isArray(results) ? results : []
+                allResults.push(...list)
+
+                if (list.length > 0) {
+                    providerStats[provider] = { count: list.length, status: 'ok', durationMs }
+                    recordProviderRun(provider, { query, status: 'ok', count: list.length, durationMs })
+                    log.info(`✅ ${provider}`, { count: list.length })
+                } else {
+                    providerStats[provider] = { count: 0, status: 'empty', durationMs }
+                    recordProviderRun(provider, { query, status: 'empty', count: 0, durationMs })
+                    log.info(`⚪ ${provider} returned empty results`)
+                }
             } else {
                 errors.push({ provider, error })
-                providerStats[provider] = { count: 0, status: 'error', error }
+                providerStats[provider] = { count: 0, status: status || 'error', error, durationMs }
+                recordProviderRun(provider, {
+                    query,
+                    status: status || 'error',
+                    count: 0,
+                    error,
+                    durationMs
+                })
                 log.warn(`❌ ${provider}`, { error })
             }
         } else {
@@ -165,7 +240,7 @@ export async function search(query, options = {}) {
     const deduped = deduplicateByInfohash(allResults)
 
     // Store in cache if we got results
-    if (deduped.length > 0) {
+    if (deduped.length > 0 && !options.skipCacheWrite) {
         searchCache.set(query, deduped, providerStats)
     }
 
@@ -200,6 +275,32 @@ export function getProvidersStatus() {
         circuitOpen: isCircuitOpen(p.name),
         failures: getCircuitState(p.name).failures
     }))
+}
+
+/**
+ * Get detailed diagnostics for all providers
+ */
+export function getProvidersDiagnostics() {
+    return providerManager.getAll().map(p => {
+        const circuit = getCircuitState(p.name)
+        const diagnostics = getDiagnosticsState(p.name)
+        const circuitOpen = isCircuitOpen(p.name)
+        const circuitOpenedAt = circuit.openedAt
+        const recoveryEtaMs = circuitOpen && circuitOpenedAt
+            ? Math.max(0, RECOVERY_TIMEOUT - (Date.now() - circuitOpenedAt))
+            : 0
+
+        return {
+            name: p.name,
+            enabled: p.enabled,
+            healthy: p.isHealthy(),
+            circuitOpen,
+            failures: circuit.failures,
+            circuitOpenedAt,
+            recoveryEtaMs,
+            diagnostics: { ...diagnostics }
+        }
+    })
 }
 
 /**

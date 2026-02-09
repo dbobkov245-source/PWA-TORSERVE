@@ -60,6 +60,8 @@ const SettingsPanel = ({
     // Status State
     const [statusData, setStatusData] = useState(null)
     const [statusLoading, setStatusLoading] = useState(false)
+    const [providerDiagnostics, setProviderDiagnostics] = useState([])
+    const [diagnosticsError, setDiagnosticsError] = useState(null)
 
     // Poster Test State
     const [testResult, setTestResult] = useState(null)
@@ -99,12 +101,14 @@ const SettingsPanel = ({
     const fetchStatus = async () => {
         setStatusLoading(true)
         try {
-            const [sRes, lRes] = await Promise.all([
+            const [sRes, lRes, dRes] = await Promise.all([
                 fetch(`${serverUrl}/api/status`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false }))
+                fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false })),
+                fetch(`${serverUrl}/api/providers/diagnostics`).catch(e => ({ ok: false }))
             ])
             const sData = sRes.ok ? await sRes.json() : {}
             const lData = lRes.ok ? await lRes.json() : {}
+            const dData = dRes.ok ? await dRes.json() : null
             setStatusData({
                 server: sData.serverStatus || 'N/A',
                 ram: lData.server?.ram?.rss || 'N/A',
@@ -113,6 +117,8 @@ const SettingsPanel = ({
                 active: lData.server?.torrents?.active || 0,
                 frozen: lData.server?.torrents?.frozen || 0
             })
+            setProviderDiagnostics(Array.isArray(dData?.providers) ? dData.providers : [])
+            setDiagnosticsError(dRes.ok ? null : 'Endpoint недоступен')
         } catch (e) { console.error(e) }
         finally { setStatusLoading(false) }
     }
@@ -214,6 +220,31 @@ const SettingsPanel = ({
     const formatUptime = (s) => {
         const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
         return `${h}h ${m}m`
+    }
+
+    const formatLastSeen = (ts) => {
+        if (!ts) return 'never'
+        const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+        if (diffSec < 60) return `${diffSec}s`
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`
+        if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`
+        return `${Math.floor(diffSec / 86400)}d`
+    }
+
+    const formatMs = (ms) => {
+        if (ms === null || ms === undefined) return '-'
+        return `${Math.round(ms)} ms`
+    }
+
+    const providerStatusMeta = (status, circuitOpen) => {
+        if (circuitOpen) return { icon: '🔒', text: 'circuit', cls: 'text-gray-400' }
+        switch (status) {
+            case 'ok': return { icon: '✅', text: 'ok', cls: 'text-green-400' }
+            case 'empty': return { icon: '⚪', text: 'empty', cls: 'text-gray-300' }
+            case 'timeout': return { icon: '⏱️', text: 'timeout', cls: 'text-yellow-400' }
+            case 'error': return { icon: '❌', text: 'error', cls: 'text-red-400' }
+            default: return { icon: '○', text: status || 'never', cls: 'text-gray-500' }
+        }
     }
 
     const cacheCount = Object.keys(localStorage).filter(k => k.startsWith('tmdb_cache_') || k.startsWith('metadata_')).length
@@ -331,6 +362,43 @@ const SettingsPanel = ({
                                     Обновить статус
                                 </button>
                             </div>
+
+                            <section className="pt-4 border-t border-white/10">
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🧪 Диагностика источников</label>
+                                {providerDiagnostics.length === 0 ? (
+                                    <div className="text-xs text-gray-500 bg-white/5 rounded-xl border border-white/5 p-3">
+                                        {diagnosticsError || 'Нет данных по источникам. Выполните поиск и обновите статус.'}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {providerDiagnostics.map((provider) => {
+                                            const d = provider.diagnostics || {}
+                                            const meta = providerStatusMeta(d.lastStatus, provider.circuitOpen)
+                                            return (
+                                                <div key={provider.name} className="bg-white/5 rounded-xl border border-white/10 p-3 text-xs">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="font-mono text-white">{provider.name}</div>
+                                                        <div className={`font-mono ${meta.cls}`}>{meta.icon} {meta.text}</div>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2 mt-2 text-[11px] text-gray-300">
+                                                        <div>latency: <span className="font-mono">{formatMs(d.lastDurationMs)}</span></div>
+                                                        <div>last: <span className="font-mono">{formatLastSeen(d.lastRunAt)}</span></div>
+                                                        <div>ok: <span className="font-mono text-green-400">{d.totalSuccess || 0}</span></div>
+                                                        <div>empty: <span className="font-mono text-gray-300">{d.totalEmpty || 0}</span></div>
+                                                        <div>errors: <span className="font-mono text-red-400">{d.totalError || 0}</span></div>
+                                                        <div>fails: <span className="font-mono">{provider.failures || 0}</span></div>
+                                                    </div>
+                                                    {d.lastError && (
+                                                        <div className="mt-2 text-[10px] text-red-300 break-all">
+                                                            {d.lastError}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </section>
 
                             {/* ANTI-07: Bypass Layers Status */}
                             <section className="pt-4 border-t border-white/10">

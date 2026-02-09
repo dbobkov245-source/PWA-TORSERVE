@@ -108,7 +108,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searchProviders, setSearchProviders] = useState({})
+  const [searchMeta, setSearchMeta] = useState(null)
   const [searchLoading, setSearchLoading] = useState(false)
+  const lastSearchRef = useRef({ query: '' })
 
   // State: Auto-Download
   const [showAutoDownload, setShowAutoDownload] = useState(false)
@@ -308,16 +310,48 @@ function App() {
   }
 
   const searchRuTracker = async (query) => {
-    if (!query || !query.trim()) return;
+    let forceFresh = false
+    let effectiveQuery = query
+
+    if (typeof query === 'object' && query !== null) {
+      effectiveQuery = query.query
+      forceFresh = query.forceFresh === true
+    }
+
+    const normalizedQuery = (effectiveQuery || '').trim()
+    if (!normalizedQuery) return
+
+    // Repeat search for same query bypasses cache to fetch fresh torrents.
+    if (!forceFresh && lastSearchRef.current.query === normalizedQuery) {
+      forceFresh = true
+    }
+
     setSearchLoading(true)
     setSearchResults([])
     setSearchProviders({})
+    setSearchMeta(null)
+
+    const params = new URLSearchParams({
+      query: normalizedQuery,
+      limit: '100'
+    })
+    if (forceFresh) {
+      params.set('skipCache', '1')
+    }
+
     try {
-      const res = await fetch(`${serverUrl}/api/v2/search?query=${encodeURIComponent(query)}&limit=100`)
+      const res = await fetch(`${serverUrl}/api/v2/search?${params.toString()}`)
       if (res.ok) {
         const data = await res.json()
         setSearchResults(data.items || [])
         setSearchProviders(data.meta?.providers || {})
+        setSearchMeta({
+          cached: Boolean(data.meta?.cached),
+          ms: data.meta?.ms || 0,
+          query: normalizedQuery,
+          fresh: forceFresh
+        })
+        lastSearchRef.current.query = normalizedQuery
       }
     } catch (e) { console.error('Search error:', e) }
     finally { setSearchLoading(false) }
@@ -525,11 +559,13 @@ function App() {
                 searchQuery={searchQuery}
                 onSearchQueryChange={setSearchQuery}
                 onSearch={searchRuTracker}
-                onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }}
+                onForceRefresh={(q) => searchRuTracker({ query: q, forceFresh: true })}
+                onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}); setSearchMeta(null) }}
                 onAddTorrent={addFromSearch}
                 searchResults={searchResults}
                 searchLoading={searchLoading}
                 providers={searchProviders}
+                searchMeta={searchMeta}
               />
             )}
 

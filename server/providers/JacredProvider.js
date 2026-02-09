@@ -53,6 +53,8 @@ export class JacredProvider extends BaseProvider {
      */
     async search(query) {
         log.info('🔍 Starting search', { query, mirrorsCount: JACRED_MIRRORS.length })
+        let hadSuccessfulResponse = false
+        let lastError = null
 
         for (let i = 0; i < JACRED_MIRRORS.length; i++) {
             const mirror = JACRED_MIRRORS[i]
@@ -61,16 +63,19 @@ export class JacredProvider extends BaseProvider {
 
             try {
                 const data = await withRetry(() => this._doSearch(mirror, query), {
-                    maxRetries: 3,
-                    baseDelayMs: 5000,
+                    maxRetries: 2,
+                    baseDelayMs: 2500,
                     shouldRetry: (err) => {
-                        if (err.message.includes('Rate limited')) return true
+                        // Fail fast on 429 to avoid locking search flow for user queries.
+                        if (err.message.includes('Rate limited')) return false
                         return retryPredicates.transient(err)
                     },
                     onRetry: (err, attempt, delay) => {
                         log.warn('Mirror retry', { mirror: mirrorId, attempt, delay: Math.round(delay), error: err.message })
                     }
                 })
+
+                hadSuccessfulResponse = true
 
                 if (data && data.length > 0) {
                     this.currentMirror = mirror.host
@@ -80,6 +85,7 @@ export class JacredProvider extends BaseProvider {
                     log.warn('Mirror returned empty results', { mirror: mirrorId })
                 }
             } catch (err) {
+                lastError = err
                 log.warn('❌ Mirror failed', { mirror: mirrorId, error: err.message })
             }
 
@@ -88,7 +94,12 @@ export class JacredProvider extends BaseProvider {
             }
         }
 
-        log.error('❌ All mirrors failed', { query, triedMirrors: JACRED_MIRRORS.length })
+        if (!hadSuccessfulResponse && lastError) {
+            log.error('❌ All mirrors failed', { query, triedMirrors: JACRED_MIRRORS.length, error: lastError.message })
+            throw new Error(`Jacred unavailable: ${lastError.message}`)
+        }
+
+        log.warn('All mirrors returned empty results', { query, triedMirrors: JACRED_MIRRORS.length })
         return []
     }
 

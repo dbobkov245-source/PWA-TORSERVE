@@ -296,7 +296,7 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 // Stage 5: Client/PWA Improvements
 // ─────────────────────────────────────────────────────────────
 
-import { search as aggregatorSearch, getProvidersStatus } from './aggregator.js'
+import { search as aggregatorSearch, getProvidersStatus, getProvidersDiagnostics } from './aggregator.js'
 import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
 
 /**
@@ -336,16 +336,17 @@ app.post('/api/quality-badges', async (req, res) => {
  * }
  */
 app.get('/api/v2/search', async (req, res) => {
-    const { query, limit = 100 } = req.query
+    const { query, limit = 100, skipCache } = req.query
     if (!query) {
         return res.status(400).json({ error: 'Query required' })
     }
 
+    const skipCacheFlag = skipCache === '1' || skipCache === 'true'
     console.log(`[API v2] Search: ${query}`)
     const startTime = Date.now()
 
     try {
-        const { results, errors, providers, cached } = await aggregatorSearch(query)
+        const { results, errors, providers, cached } = await aggregatorSearch(query, { skipCache: skipCacheFlag })
 
         // Transform providers to StatusMap with enhanced info
         const providersMeta = {}
@@ -353,7 +354,8 @@ app.get('/api/v2/search', async (req, res) => {
             providersMeta[name] = {
                 status: data.status,
                 count: data.count || 0,
-                error: data.error || null
+                error: data.error || null,
+                durationMs: data.durationMs ?? null
             }
         }
 
@@ -388,6 +390,15 @@ app.get('/api/providers/status', (req, res) => {
     const status = getProvidersStatus()
     res.json({
         providers: status,
+        timestamp: Date.now()
+    })
+})
+
+// Detailed diagnostics: last status, latency, counters, and circuit info
+app.get('/api/providers/diagnostics', (req, res) => {
+    const providers = getProvidersDiagnostics()
+    res.json({
+        providers,
         timestamp: Date.now()
     })
 })

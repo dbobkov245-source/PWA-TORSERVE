@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 const CACHE_KEY = 'quality_badges_cache'
 const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
 const DEBOUNCE_MS = 500
+const DEBUG_ENABLED = import.meta.env.DEV
 
 /**
  * Get server URL
@@ -57,18 +58,34 @@ function saveCache(badges) {
 /**
  * Hook to fetch quality badges for a list of movie titles
  * @param {string[]} titles - Array of movie titles to fetch badges for
- * @returns {Object} - { title: badges[] }
+ * @returns {{ badges: Object, debug: { queueSize: number, fetchCount: number }|null }}
  */
 export function useQualityBadges(titles) {
     const [badges, setBadges] = useState(() => getCached())
+    const [debug, setDebug] = useState(() => ({ queueSize: 0, fetchCount: 0 }))
     const pendingRef = useRef(new Set())
     const timeoutRef = useRef(null)
+    const isProcessingRef = useRef(false)
+
+    const syncQueueDebug = useCallback(() => {
+        if (!DEBUG_ENABLED) return
+        const queueSize = pendingRef.current.size
+        setDebug(prev => (
+            prev.queueSize === queueSize
+                ? prev
+                : { ...prev, queueSize }
+        ))
+    }, [])
 
     const fetchBadges = useCallback(async (titlesToFetch) => {
-        if (titlesToFetch.length === 0) return
+        if (titlesToFetch.length === 0) return false
 
         const serverUrl = getServerUrl()
-        if (!serverUrl) return
+        if (!serverUrl) return false
+
+        if (DEBUG_ENABLED) {
+            setDebug(prev => ({ ...prev, fetchCount: prev.fetchCount + 1 }))
+        }
 
         try {
             const response = await fetch(`${serverUrl}/api/quality-badges`, {
@@ -84,11 +101,45 @@ export function useQualityBadges(titles) {
                     saveCache(updated)
                     return updated
                 })
+                return true
             }
+
+            return false
         } catch (err) {
             console.warn('[QualityBadges] Fetch failed:', err.message)
+            return false
         }
     }, [])
+
+    const processQueue = useCallback(async () => {
+        if (isProcessingRef.current) return
+        if (pendingRef.current.size === 0) return
+
+        isProcessingRef.current = true
+
+        try {
+            while (pendingRef.current.size > 0) {
+                const batch = Array.from(pendingRef.current).slice(0, 10)
+                const ok = await fetchBadges(batch)
+
+                if (!ok) break
+
+                batch.forEach(title => pendingRef.current.delete(title))
+                syncQueueDebug()
+            }
+        } finally {
+            isProcessingRef.current = false
+            syncQueueDebug()
+
+            // Retry later if we still have pending titles (e.g., temporary network issues)
+            if (pendingRef.current.size > 0) {
+                clearTimeout(timeoutRef.current)
+                timeoutRef.current = setTimeout(() => {
+                    processQueue()
+                }, DEBOUNCE_MS)
+            }
+        }
+    }, [fetchBadges, syncQueueDebug])
 
     useEffect(() => {
         if (!titles || titles.length === 0) return
@@ -103,20 +154,21 @@ export function useQualityBadges(titles) {
 
         // Mark as pending
         uncached.forEach(t => pendingRef.current.add(t))
+        syncQueueDebug()
 
-        // Debounce batch request
+        // Debounce queue processing
         clearTimeout(timeoutRef.current)
         timeoutRef.current = setTimeout(() => {
-            // Take first 10 from pending
-            const batch = Array.from(pendingRef.current).slice(0, 10)
-            pendingRef.current.clear()
-            fetchBadges(batch)
+            processQueue()
         }, DEBOUNCE_MS)
 
         return () => clearTimeout(timeoutRef.current)
-    }, [titles, fetchBadges])
+    }, [titles, processQueue, syncQueueDebug])
 
-    return badges
+    return {
+        badges,
+        debug: DEBUG_ENABLED ? debug : null
+    }
 }
 
 /**

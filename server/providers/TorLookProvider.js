@@ -34,7 +34,7 @@ export class TorLookProvider extends BaseProvider {
             return results
         } catch (err) {
             log.warn('Search failed', { error: err.message })
-            return []
+            throw new Error(`TorLook unavailable: ${err.message}`)
         }
     }
 

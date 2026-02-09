@@ -85,7 +85,7 @@ const HomeRow = forwardRef(({
 
     // Quality Discovery: collect titles for batch fetch
     const titles = useMemo(() => items.map(item => getTitle(item)).filter(Boolean), [items])
-    const qualityBadges = useQualityBadges(titles)
+    const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(titles)
 
     // Touch scroll handler for mobile
     const touchStartX = useRef(0)
@@ -112,6 +112,11 @@ const HomeRow = forwardRef(({
                     <span className="text-2xl">{icon}</span>
                     {title}
                     <span className="text-gray-500 text-sm font-normal">({items.length})</span>
+                    {import.meta.env.DEV && qualityDebug && (
+                        <span className="text-[11px] font-mono text-cyan-300/80">
+                            q:{qualityDebug.queueSize} f:{qualityDebug.fetchCount}
+                        </span>
+                    )}
                 </h2>
             </div>
 

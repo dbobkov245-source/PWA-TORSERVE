@@ -34,6 +34,8 @@ export class RutorProvider extends BaseProvider {
      */
     async search(query) {
         log.info('🔍 Starting search', { query, mirrorsCount: RUTOR_MIRRORS.length })
+        let hadSuccessfulResponse = false
+        let lastError = null
 
         for (const mirror of RUTOR_MIRRORS) {
             const mirrorId = `${mirror.protocol}://${mirror.host}`
@@ -41,6 +43,8 @@ export class RutorProvider extends BaseProvider {
 
             try {
                 const results = await this._doSearch(mirror, query)
+                hadSuccessfulResponse = true
+
                 if (results.length > 0) {
                     this.currentMirror = mirror
                     log.info('✅ Search successful', { mirror: mirrorId, count: results.length })
@@ -48,11 +52,17 @@ export class RutorProvider extends BaseProvider {
                 }
                 log.warn('Empty results', { mirror: mirrorId })
             } catch (err) {
+                lastError = err
                 log.warn(`Mirror failed`, { mirror: mirrorId, error: err.message })
             }
         }
 
-        log.error('All mirrors failed')
+        if (!hadSuccessfulResponse && lastError) {
+            log.error('All mirrors failed', { error: lastError.message })
+            throw new Error(`Rutor unavailable: ${lastError.message}`)
+        }
+
+        log.warn('All mirrors returned empty results', { query })
         return []
     }
 
