@@ -7,6 +7,7 @@
  */
 
 import { search } from './aggregator.js'
+import { providerManager } from './providers/index.js'
 import { logger } from './utils/logger.js'
 
 const log = logger.child('QualityDiscovery')
@@ -15,8 +16,10 @@ const log = logger.child('QualityDiscovery')
 const CACHE_TTL_MS = 60 * 60 * 1000  // 1 hour
 const FAIL_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes for failed lookups
 const MAX_CACHE_SIZE = 500
-const DISCOVERY_TIMEOUT_MS = 10000
+const DISCOVERY_TIMEOUT_MS = 6000
 const DISCOVERY_CONCURRENCY = 2
+const FAST_PROVIDER_NAME = 'jacred'
+const FAST_PROVIDER_TIMEOUT_MS = 4500
 
 // In-memory cache: title -> { badges, expires }
 const qualityCache = new Map()
@@ -51,6 +54,13 @@ function normalizeTitle(title) {
         .replace(/[^\w\s\u0400-\u04FF]/g, '')
         .replace(/\s+/g, ' ')
         .trim()
+}
+
+function withTimeout(promise, timeoutMs, message) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
+    ])
 }
 
 /**
@@ -117,14 +127,40 @@ export async function discoverQuality(title) {
 
     const task = (async () => {
         try {
-            // Keep quality discovery isolated from user-facing search cache.
-            const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Quality discovery timeout')), DISCOVERY_TIMEOUT_MS)
-            )
-            const { results } = await Promise.race([
-                search(title, { skipCache: true, skipCacheWrite: true }),
-                timeout
-            ])
+            let results = []
+            const fastProvider = providerManager.get(FAST_PROVIDER_NAME)
+            let fastProviderFailed = false
+
+            // Fast path: jacred is usually available and quick in this deployment.
+            if (fastProvider && fastProvider.enabled && fastProvider.isHealthy()) {
+                try {
+                    results = await withTimeout(
+                        fastProvider.search(title),
+                        FAST_PROVIDER_TIMEOUT_MS,
+                        `${FAST_PROVIDER_NAME} timeout`
+                    )
+                } catch (fastErr) {
+                    fastProviderFailed = true
+                    log.debug('Fast provider failed, fallback to aggregator', {
+                        provider: FAST_PROVIDER_NAME,
+                        title: key,
+                        error: fastErr.message
+                    })
+                }
+            } else {
+                fastProviderFailed = true
+            }
+
+            if (fastProviderFailed) {
+                // Keep quality discovery isolated from user-facing search cache.
+                const aggregated = await withTimeout(
+                    search(title, { skipCache: true, skipCacheWrite: true }),
+                    DISCOVERY_TIMEOUT_MS,
+                    'Quality discovery timeout'
+                )
+                results = aggregated?.results || []
+            }
+
             const badges = extractBestQuality(results)
 
             // Cache result

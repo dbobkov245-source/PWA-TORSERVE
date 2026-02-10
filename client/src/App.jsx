@@ -1,8 +1,7 @@
 // NavigationProvider removed as per V3.7 architecture (using useTVNavigation)
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { registerPlugin } from '@capacitor/core'
+import { registerPlugin, Capacitor, CapacitorHttp } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
-import { Capacitor } from '@capacitor/core'
 
 // Components
 import Poster from './components/Poster'
@@ -309,6 +308,36 @@ function App() {
     navigator.clipboard.writeText(url).then(() => alert('URL copied'))
   }
 
+  const fetchSearchJson = useCallback(async (url) => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return await res.json()
+    } catch (fetchError) {
+      if (!Capacitor.isNativePlatform()) throw fetchError
+
+      const nativeRes = await CapacitorHttp.request({
+        method: 'GET',
+        url,
+        headers: { Accept: 'application/json' }
+      })
+
+      if (nativeRes.status < 200 || nativeRes.status >= 300) {
+        throw new Error(`Native HTTP ${nativeRes.status}`)
+      }
+
+      if (typeof nativeRes.data === 'string') {
+        try {
+          return JSON.parse(nativeRes.data)
+        } catch {
+          throw new Error('Native HTTP returned non-JSON payload')
+        }
+      }
+
+      return nativeRes.data || {}
+    }
+  }, [])
+
   const searchRuTracker = async (query) => {
     let forceFresh = false
     let effectiveQuery = query
@@ -340,19 +369,16 @@ function App() {
     }
 
     try {
-      const res = await fetch(`${serverUrl}/api/v2/search?${params.toString()}`)
-      if (res.ok) {
-        const data = await res.json()
-        setSearchResults(data.items || [])
-        setSearchProviders(data.meta?.providers || {})
-        setSearchMeta({
-          cached: Boolean(data.meta?.cached),
-          ms: data.meta?.ms || 0,
-          query: normalizedQuery,
-          fresh: forceFresh
-        })
-        lastSearchRef.current.query = normalizedQuery
-      }
+      const data = await fetchSearchJson(`${serverUrl}/api/v2/search?${params.toString()}`)
+      setSearchResults(data.items || [])
+      setSearchProviders(data.meta?.providers || {})
+      setSearchMeta({
+        cached: Boolean(data.meta?.cached),
+        ms: data.meta?.ms || 0,
+        query: normalizedQuery,
+        fresh: forceFresh
+      })
+      lastSearchRef.current.query = normalizedQuery
     } catch (e) { console.error('Search error:', e) }
     finally { setSearchLoading(false) }
   }

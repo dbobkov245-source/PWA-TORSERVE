@@ -116,6 +116,7 @@ const SearchPanel = ({
     const inputRef = useSpatialItem('search')
     const micRef = useSpatialItem('search')
     const searchRef = useSpatialItem('search')
+    const refreshRef = useSpatialItem('search')
     const closeRef = useSpatialItem('search')
 
     const debouncedFilters = useDebounce(activeFilters, 150)
@@ -221,6 +222,7 @@ const SearchPanel = ({
                     className="focusable bg-purple-600 px-6 py-3 rounded-lg font-bold disabled:opacity-50"
                 >{searchLoading ? '...' : '🔍'}</button>
                 <button
+                    ref={refreshRef}
                     onClick={() => onForceRefresh?.(searchQuery)}
                     disabled={searchLoading || !searchQuery?.trim()}
                     tabIndex="0"

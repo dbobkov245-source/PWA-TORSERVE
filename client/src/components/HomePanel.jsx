@@ -8,7 +8,7 @@
  * - No double event processing
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import HomeRow from './HomeRow'
 import CategoryPage from './CategoryPage'
@@ -19,6 +19,7 @@ import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
 import tmdbClient, { getDiscoverByGenre, searchMulti, filterDiscoveryResults } from '../utils/tmdbClient'
 import { getFavorites, getHistory, toTmdbItem } from '../utils/serverApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { useQualityBadges } from '../hooks/useQualityBadges'
 
 const HomeHeaderButtons = ({ onMenuClick, onVoiceClick, isListening }) => {
     const menuRef = useSpatialItem('main')
@@ -46,6 +47,7 @@ const HomePanel = ({
     showSidebar, setShowSidebar,
     onSearch, onClose
 }) => {
+    const MAX_HOME_QUALITY_TITLES = 60
     const [categories, setCategories] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -60,6 +62,36 @@ const HomePanel = ({
 
     // VOICE-01: Voice search on Home
     const [isListening, setIsListening] = useState(false)
+
+    // Share one quality queue for all rows to avoid request storms and duplicated fetches.
+    const homeQualityTitles = useMemo(() => {
+        const titles = []
+        const seen = new Set()
+        const push = (value) => {
+            if (!value || seen.has(value)) return
+            seen.add(value)
+            titles.push(value)
+        }
+
+        // Highest priority: focused poster and its original title.
+        push(focusedItem?.title || focusedItem?.name)
+        push(focusedItem?.original_title || focusedItem?.original_name)
+
+        // Then fill from top rows, cap total to keep discovery responsive.
+        for (const row of visibleRows) {
+            for (const item of (row?.items || [])) {
+                push(item?.title || item?.name)
+                push(item?.original_title || item?.original_name)
+                if (titles.length >= MAX_HOME_QUALITY_TITLES) {
+                    return titles
+                }
+            }
+        }
+
+        return titles
+    }, [visibleRows, focusedItem])
+
+    const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
 
     const handleVoiceSearch = useCallback(async () => {
         let query = null
@@ -401,6 +433,8 @@ const HomePanel = ({
                             onItemClick={handleItemClick}
                             onFocusChange={setFocusedItem}
                             onMoreClick={handleMoreClick}
+                            qualityBadges={qualityBadges}
+                            qualityDebug={qualityDebug}
                         />
                     ))}
                 </div>

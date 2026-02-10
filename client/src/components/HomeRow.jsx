@@ -1,8 +1,8 @@
-import React, { useRef, useState, forwardRef, useMemo } from 'react'
+import React, { useRef, useState, forwardRef } from 'react'
 import { getPosterUrl, getTitle } from '../utils/discover'
 import { reportBrokenImage } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
-import { useQualityBadges, getBadgeStyle } from '../hooks/useQualityBadges'
+import { getBadgeStyle } from '../hooks/useQualityBadges'
 
 // O3: MovieCard now has local isBroken state to prevent full row re-renders
 const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }) => {
@@ -10,7 +10,8 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }
     const posterUrl = getPosterUrl(item)
     const title = getTitle(item)
     const [isBroken, setIsBroken] = useState(() => imageErrorsRef.current.has(posterUrl))
-    const badges = qualityBadges?.[title] || []
+    const originalTitle = item?.original_title || item?.original_name
+    const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
 
     const handleImageError = () => {
         if (posterUrl) {
@@ -76,16 +77,14 @@ const HomeRow = forwardRef(({
     categoryId,
     onItemClick,
     onFocusChange,
-    onMoreClick
+    onMoreClick,
+    qualityBadges,
+    qualityDebug
 }, ref) => {
     // O3: useRef instead of useState to prevent row re-renders on image errors
     const imageErrorsRef = useRef(new Set())
     const moreRef = useSpatialItem('main')
     const scrollRef = useRef(null)
-
-    // Quality Discovery: collect titles for batch fetch
-    const titles = useMemo(() => items.map(item => getTitle(item)).filter(Boolean), [items])
-    const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(titles)
 
     // Touch scroll handler for mobile
     const touchStartX = useRef(0)

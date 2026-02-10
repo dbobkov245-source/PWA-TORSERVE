@@ -7,10 +7,13 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
 const CACHE_KEY = 'quality_badges_cache'
 const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
 const DEBOUNCE_MS = 500
+const BATCH_SIZE = 3
+const REQUEST_TIMEOUT_MS = 25000
 const DEBUG_ENABLED = import.meta.env.DEV
 
 /**
@@ -20,7 +23,82 @@ function getServerUrl() {
     if (typeof window === 'undefined') return ''
     const stored = localStorage.getItem('serverUrl')
     if (stored && stored.includes('://')) return stored.replace(/\/$/, '')
+    if (Capacitor.isNativePlatform()) return ''
     return window.location.origin
+}
+
+async function parseNativeJson(data) {
+    if (typeof data === 'string') {
+        return JSON.parse(data)
+    }
+    return data || {}
+}
+
+async function requestQualityBadges(serverUrl, titles) {
+    const endpoint = `${serverUrl}/api/quality-badges`
+    const payload = { titles }
+    const preferNativeHttp = Capacitor.isNativePlatform() && endpoint.startsWith('http://')
+    const withTimeout = async (promise, ms = REQUEST_TIMEOUT_MS) => {
+        let timeoutId
+        try {
+            return await Promise.race([
+                promise,
+                new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms)
+                })
+            ])
+        } finally {
+            clearTimeout(timeoutId)
+        }
+    }
+
+    const viaFetch = async () => {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            })
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`)
+            }
+            return response.json()
+        } finally {
+            clearTimeout(timer)
+        }
+    }
+
+    const viaNative = async () => {
+        const response = await withTimeout(CapacitorHttp.request({
+            method: 'POST',
+            url: endpoint,
+            headers: { 'Content-Type': 'application/json' },
+            data: payload
+        }))
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(`Native HTTP ${response.status}`)
+        }
+        return parseNativeJson(response.data)
+    }
+
+    // On Android TV + http://LAN server we avoid mixed-content blocks in WebView.
+    if (preferNativeHttp) {
+        try {
+            return await viaNative()
+        } catch (nativeErr) {
+            return viaFetch().catch(() => { throw nativeErr })
+        }
+    }
+
+    try {
+        return await viaFetch()
+    } catch (fetchErr) {
+        if (!Capacitor.isNativePlatform()) throw fetchErr
+        return viaNative()
+    }
 }
 
 /**
@@ -35,7 +113,12 @@ function getCached() {
             localStorage.removeItem(CACHE_KEY)
             return {}
         }
-        return data || {}
+        if (!data || typeof data !== 'object') return {}
+        // Do not treat empty badges as long-lived cache entries.
+        const sanitized = Object.fromEntries(
+            Object.entries(data).filter(([, badges]) => Array.isArray(badges) && badges.length > 0)
+        )
+        return sanitized
     } catch {
         return {}
     }
@@ -46,8 +129,11 @@ function getCached() {
  */
 function saveCache(badges) {
     try {
+        const filtered = Object.fromEntries(
+            Object.entries(badges || {}).filter(([, list]) => Array.isArray(list) && list.length > 0)
+        )
         localStorage.setItem(CACHE_KEY, JSON.stringify({
-            data: badges,
+            data: filtered,
             expires: Date.now() + CACHE_TTL_MS
         }))
     } catch (e) {
@@ -88,23 +174,16 @@ export function useQualityBadges(titles) {
         }
 
         try {
-            const response = await fetch(`${serverUrl}/api/quality-badges`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ titles: titlesToFetch })
+            const result = await requestQualityBadges(serverUrl, titlesToFetch)
+            setBadges(prev => {
+                const nonEmpty = Object.fromEntries(
+                    Object.entries(result || {}).filter(([, list]) => Array.isArray(list) && list.length > 0)
+                )
+                const updated = { ...prev, ...nonEmpty }
+                saveCache(updated)
+                return updated
             })
-
-            if (response.ok) {
-                const result = await response.json()
-                setBadges(prev => {
-                    const updated = { ...prev, ...result }
-                    saveCache(updated)
-                    return updated
-                })
-                return true
-            }
-
-            return false
+            return true
         } catch (err) {
             console.warn('[QualityBadges] Fetch failed:', err.message)
             return false
@@ -119,10 +198,22 @@ export function useQualityBadges(titles) {
 
         try {
             while (pendingRef.current.size > 0) {
-                const batch = Array.from(pendingRef.current).slice(0, 10)
+                const batch = Array.from(pendingRef.current).slice(0, BATCH_SIZE)
                 const ok = await fetchBadges(batch)
 
-                if (!ok) break
+                if (!ok) {
+                    // Fallback to single-title requests when a small batch still fails.
+                    if (batch.length > 1) {
+                        const single = batch[0]
+                        const singleOk = await fetchBadges([single])
+                        if (singleOk) {
+                            pendingRef.current.delete(single)
+                            syncQueueDebug()
+                            continue
+                        }
+                    }
+                    break
+                }
 
                 batch.forEach(title => pendingRef.current.delete(title))
                 syncQueueDebug()
