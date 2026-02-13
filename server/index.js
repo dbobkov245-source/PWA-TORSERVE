@@ -850,7 +850,21 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const ext = path.extname(file.name).toLowerCase()
     const contentType = mimeMap[ext] || 'application/octet-stream'
 
-    // Note: Download path check moved to startup (cached)
+    // ────────────────────────────────────────────────────────
+    // 🔥 FILESYSTEM FALLBACK: Serve from disk if file is fully downloaded
+    // Fixes: after restart with verify:false, torrent-stream engine doesn't
+    // know about local files → createReadStream hangs with 0 peers
+    // ────────────────────────────────────────────────────────
+    const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
+    const diskPath = path.join(downloadPath, file.path)
+    let servingFromDisk = false
+    try {
+        const stat = fs.statSync(diskPath)
+        if (stat.size >= file.length) {
+            servingFromDisk = true
+            console.log(`[Stream] 📁 Serving from disk: ${file.name} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`)
+        }
+    } catch (e) { /* file doesn't exist on disk, use torrent-stream */ }
 
     const parsedRange = rangeHeader ? parseRange(rangeHeader, file.length) : null
 
@@ -865,14 +879,21 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             'Content-Type': contentType,
         }
         res.writeHead(200, head)
-        file.createReadStream().pipe(res)
+
+        // Use disk or torrent-stream
+        const stream = servingFromDisk
+            ? fs.createReadStream(diskPath)
+            : file.createReadStream()
+        stream.pipe(res)
     } else {
         const { start, end } = parsedRange
         const chunksize = (end - start) + 1
 
         // 🔥 READAHEAD: Prioritize chunks starting from seek position
         // This ensures smooth playback after seeking
-        readahead(infoHash, parseInt(fileIndex, 10), start)
+        if (!servingFromDisk) {
+            readahead(infoHash, parseInt(fileIndex, 10), start)
+        }
 
         // Smart Progress Tracking
         const duration = parseFloat(req.query.duration) || 0
@@ -905,7 +926,11 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // O7: Configurable stream buffer for better 4K streaming on HDD (default 512KB)
         const hwm = parseInt(process.env.STREAM_HIGHWATERMARK) || 1024 * 512
-        const stream = file.createReadStream({ start, end, highWaterMark: hwm })
+
+        // Use disk or torrent-stream
+        const stream = servingFromDisk
+            ? fs.createReadStream(diskPath, { start, end, highWaterMark: hwm })
+            : file.createReadStream({ start, end, highWaterMark: hwm })
 
         // ✅ FIX: Функция гарантированной очистки стрима
         const cleanup = () => {

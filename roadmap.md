@@ -169,6 +169,8 @@
 
 История сессий разработки:
 
+*   [**2026-02-13**](docs/sessions/2026-02-13.md) — BUG-STREAM-01: Filesystem fallback в `/stream` — скачанные торренты не играли после рестарта (verify:false + 0 peers). Прямой стрим с диска через `fs.createReadStream()`.
+*   [**2026-02-11**](docs/sessions/2026-02-11.md) — FIX-6: dns-only `lookup` injection в `doh.js` — обход DNS poisoning ISP для трекеров. Маскирование API key в `proxy.js` логах. Обновление Акта 19 в POSTER_BATTLE_HISTORY.
 *   [**2026-02-10**](docs/sessions/2026-02-10.md) — Стабилизация quality-бейджей на Home (общая очередь + fallback), fast-path через jacred в qualityDiscovery, Android TV search fallback и фиксация кнопки `↻`.
 *   [**2026-02-08**](docs/sessions/2026-02-08.md) — ADR-001 Реализация (Фазы 1-3): оптимизации (O1-O7), серверный кеш, метрики, quality badges, прогресс-бар.
 *   [**2026-02-05**](docs/sessions/2026-02-05.md) — ADR-004 Hotfix, 5 Bypass Optimizations (Dynamic Race Timeout, Parallel Phase 2, Image Warmup, Prefetch, UI Status). 6/6 слоёв работают без VPN.
@@ -190,5 +192,6 @@
 | **BUG-MOBILE-02** | **Кнопка настроек на ErrorScreen** | ✅ DONE | Добавлена кнопка ⚙️ для смены IP сервера при ошибке. Trailing slash автоочистка. |
 | **BUG-TV-SEARCH-01** | **Торрент-поиск на Android TV: нестабильные запросы + недоступная кнопка ↻** | ✅ DONE | Логи (`concole_log.md`, `bug_log.md`) показали Mixed Content предупреждения на `/api/v2/search` и 4 focus-элемента вместо 5 в зоне `search`. Исправлено: fallback поиска через `CapacitorHttp` при сбое `fetch` + регистрация кнопки `↻` через `useSpatialItem('search')`. |
 | **BUG-HOME-QUALITY-01** | **На Home quality-бейджи подтягивались частично** | ✅ DONE | Исправлено: единая очередь quality на уровне HomePanel, fallback по `original_title`, уменьшенные batch/таймауты и fast-path `jacred` в `qualityDiscovery`. |
+| **BUG-STREAM-01** | **Скачанные торренты не играли после рестарта сервера** | ✅ DONE | Root cause: `verify: false` + 0 peers → `createReadStream()` зависал. Fix: filesystem fallback в `/stream` — если файл на диске, стрим через `fs.createReadStream()`. |
 
 ---
