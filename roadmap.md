@@ -125,7 +125,7 @@
 | ID | Task | Описание | Риск |
 |----|------|----------|------|
 | **DISC-01** | **Расширенный Discover-фильтр** | Новая панель `DiscoverFilterPanel` (зона `'discover-filter'`). Жанры (мульти), рейтинг, год (от-до), язык, сортировка. Результаты → CategoryPage. Паттерн App-level modal. | 🟡 средн. |
-| **VOICE-01** | **Голосовой поиск на Home** | Кнопка 🎤 в header HomePanel. SpeechRecognition API / Capacitor plugin → TMDB search → MovieDetail. | 🟢 низк. |
+| **VOICE-01** | **Голосовой поиск — fix prompt() fallback** | ✅ DONE | ✅ | Убран `prompt()` fallback, хук `useVoiceSearch.jsx`, toast вместо IME. v3.7.2. |
 
 ### 📋 Технические заметки
 
@@ -169,6 +169,7 @@
 
 История сессий разработки:
 
+*   [**2026-02-14**](docs/VOICE_SEARCH_ANDROID10_SONY_ANALYSIS.md) — VOICE-01: Voice Search Fix — убран `prompt()` fallback (IME popup на Sony Android 10). Новый хук `useVoiceSearch.jsx`, toast при ошибке, 7 unit-тестов. Релиз v3.7.2.
 *   [**2026-02-13**](docs/sessions/2026-02-13.md) — BUG-STREAM-01: Filesystem fallback в `/stream` — скачанные торренты не играли после рестарта (verify:false + 0 peers). Прямой стрим с диска через `fs.createReadStream()`.
 *   [**2026-02-11**](docs/sessions/2026-02-11.md) — FIX-6: dns-only `lookup` injection в `doh.js` — обход DNS poisoning ISP для трекеров. Маскирование API key в `proxy.js` логах. Обновление Акта 19 в POSTER_BATTLE_HISTORY.
 *   [**2026-02-10**](docs/sessions/2026-02-10.md) — Стабилизация quality-бейджей на Home (общая очередь + fallback), fast-path через jacred в qualityDiscovery, Android TV search fallback и фиксация кнопки `↻`.
@@ -193,5 +194,6 @@
 | **BUG-TV-SEARCH-01** | **Торрент-поиск на Android TV: нестабильные запросы + недоступная кнопка ↻** | ✅ DONE | Логи (`concole_log.md`, `bug_log.md`) показали Mixed Content предупреждения на `/api/v2/search` и 4 focus-элемента вместо 5 в зоне `search`. Исправлено: fallback поиска через `CapacitorHttp` при сбое `fetch` + регистрация кнопки `↻` через `useSpatialItem('search')`. |
 | **BUG-HOME-QUALITY-01** | **На Home quality-бейджи подтягивались частично** | ✅ DONE | Исправлено: единая очередь quality на уровне HomePanel, fallback по `original_title`, уменьшенные batch/таймауты и fast-path `jacred` в `qualityDiscovery`. |
 | **BUG-STREAM-01** | **Скачанные торренты не играли после рестарта сервера** | ✅ DONE | Root cause: `verify: false` + 0 peers → `createReadStream()` зависал. Fix: filesystem fallback в `/stream` — если файл на диске, стрим через `fs.createReadStream()`. |
+| **BUG-VOICE-01** | **Голосовой поиск: IME popup вместо ошибки на Sony Android 10** | ✅ DONE | Root cause: `prompt()` fallback в `App.jsx` и `SearchPanel.jsx`. Fix: хук `useVoiceSearch.jsx`, toast-уведомления. v3.7.2. |
 
 ---
