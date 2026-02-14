@@ -1,49 +1,34 @@
 /**
  * UpdateModal — Модальное окно обновления приложения
- * TV-совместимый компонент с D-pad навигацией
+ * TV-совместимый компонент с D-pad навигацией (Spatial Engine)
  */
-import { useState, useRef, useCallback } from 'react';
-import { useTVNavigation } from '../hooks/useTVNavigation';
+import { useState, useCallback } from 'react';
+import { useSpatialItem } from '../hooks/useSpatialNavigation';
 import { downloadAndInstall } from '../utils/appUpdater';
 
 export default function UpdateModal({ updateInfo, onDismiss }) {
     const [status, setStatus] = useState('idle'); // idle | downloading | error
     const [progress, setProgress] = useState(0);
     const [errorMsg, setErrorMsg] = useState('');
-    const btnRefs = useRef([]);
+
+    // Spatial refs — same area as other modals
+    const updateBtnRef = useSpatialItem('modal');
+    const laterBtnRef = useSpatialItem('modal');
 
     const handleUpdate = useCallback(async () => {
         setStatus('downloading');
         setProgress(0);
         try {
             await downloadAndInstall(updateInfo.url, (pct) => setProgress(pct));
-            // If we get here, the install intent was launched
-            // The app will be replaced, so no further action needed
         } catch (e) {
             setStatus('error');
             setErrorMsg(e.message || 'Ошибка загрузки');
         }
     }, [updateInfo.url]);
 
-    const handleSelect = useCallback((index) => {
-        if (index === 0) handleUpdate();
-        else onDismiss();
-    }, [handleUpdate, onDismiss]);
-
-    const { containerProps } = useTVNavigation({
-        itemCount: updateInfo.forceUpdate ? 1 : 2,
-        columns: 1,
-        itemRefs: btnRefs,
-        onSelect: handleSelect,
-        onBack: updateInfo.forceUpdate ? undefined : onDismiss,
-        trapFocus: true,
-        isActive: status !== 'downloading'
-    });
-
     return (
         <div className="details-overlay" style={{ zIndex: 9999 }}>
             <div
-                {...containerProps}
                 style={{
                     background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',
                     borderRadius: '24px',
@@ -135,7 +120,8 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
                         marginTop: '2rem'
                     }}>
                         <button
-                            ref={el => btnRefs.current[0] = el}
+                            ref={updateBtnRef}
+                            tabIndex="0"
                             className="focusable"
                             onClick={handleUpdate}
                             style={{
@@ -154,7 +140,8 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
 
                         {!updateInfo.forceUpdate && (
                             <button
-                                ref={el => btnRefs.current[1] = el}
+                                ref={laterBtnRef}
+                                tabIndex="0"
                                 className="focusable"
                                 onClick={onDismiss}
                                 style={{

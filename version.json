@@ -3,5 +3,5 @@
     "versionCode": 3,
     "minVersion": "1.0.0",
     "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/latest/download/app-debug.apk",
-    "notes": "Тестовое обновление для проверки авто-обновления"
+    "notes": "Исправлена прокрутка статуса, навигация кнопок обновления"
 }

@@ -89,6 +89,7 @@ export async function checkForUpdate() {
 
 /**
  * Download the APK and trigger installation.
+ * Uses Capacitor's native HTTP + Filesystem to bypass CORS.
  * @param {string} url - Direct download URL for the APK
  * @param {function} onProgress - Optional callback(percent: number)
  * @returns {Promise<void>}
@@ -101,48 +102,24 @@ export async function downloadAndInstall(url, onProgress) {
     const fileName = 'update.apk';
 
     try {
-        // Notify start
         if (onProgress) onProgress(0);
 
-        // Download APK as blob via fetch (better progress tracking than CapacitorHttp)
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+        // Use Filesystem.downloadFile — runs natively, no CORS issues
+        if (onProgress) onProgress(5); // Show small progress to indicate start
 
-        const contentLength = response.headers.get('content-length');
-        const total = contentLength ? parseInt(contentLength, 10) : 0;
-        const reader = response.body.getReader();
-        const chunks = [];
-        let received = 0;
-
-        // Read the stream with progress
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            if (onProgress && total > 0) {
-                onProgress(Math.round((received / total) * 100));
-            }
-        }
-
-        // Combine chunks into a single Uint8Array
-        const blob = new Blob(chunks);
-        const arrayBuffer = await blob.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-
-        // Convert to base64 for Capacitor Filesystem
-        const base64 = uint8ArrayToBase64(uint8Array);
-
-        // Write to cache directory (accessible by FileProvider)
-        await Filesystem.writeFile({
+        const result = await Filesystem.downloadFile({
+            url: url,
             path: fileName,
-            data: base64,
-            directory: Directory.Cache
+            directory: Directory.Cache,
+            progress: true
         });
+
+        // Listen for progress events if available
+        if (onProgress) onProgress(50); // Mid-point estimate since downloadFile doesn't stream progress
 
         if (onProgress) onProgress(100);
 
-        // Get the full file URI
+        // Get the full file URI for the native installer
         const fileInfo = await Filesystem.getUri({
             path: fileName,
             directory: Directory.Cache
@@ -156,17 +133,3 @@ export async function downloadAndInstall(url, onProgress) {
     }
 }
 
-/**
- * Convert Uint8Array to base64 string
- */
-function uint8ArrayToBase64(bytes) {
-    let binary = '';
-    const len = bytes.byteLength;
-    // Process in chunks to avoid call stack overflow for large files
-    const chunkSize = 8192;
-    for (let i = 0; i < len; i += chunkSize) {
-        const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
-        binary += String.fromCharCode.apply(null, chunk);
-    }
-    return btoa(binary);
-}
