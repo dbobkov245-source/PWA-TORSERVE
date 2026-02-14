@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
@@ -88,6 +88,17 @@ const SettingsPanel = ({
     const statusTabRef = useSpatialItem('settings')
     const postersTabRef = useSpatialItem('settings')
     const refreshStatusRef = useSpatialItem('settings')
+    const diagnosticsSectionRef = useSpatialItem('settings')
+    const bypassSectionRef = useSpatialItem('settings')
+
+    // Scroll container — auto-scroll focused child into view (TV D-pad fix)
+    const scrollContainerRef = useRef(null)
+    const handleContentFocus = useCallback((e) => {
+        const el = e.target
+        const container = scrollContainerRef.current
+        if (!el || !container) return
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, [])
 
     // --- Actions ---
 
@@ -264,7 +275,7 @@ const SettingsPanel = ({
                 </div>
 
                 {/* Content Area */}
-                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar pb-10">
+                <div ref={scrollContainerRef} onFocus={handleContentFocus} className="flex-1 overflow-y-auto p-6 custom-scrollbar pb-10">
                     {/* --- GENERAL TAB --- */}
                     {activeTab === 'general' && (
                         <div className="space-y-6 animate-fade-in">
@@ -363,7 +374,7 @@ const SettingsPanel = ({
                                 </button>
                             </div>
 
-                            <section className="pt-4 border-t border-white/10">
+                            <section ref={diagnosticsSectionRef} tabIndex="0" className="focusable pt-4 border-t border-white/10 outline-none focus:ring-1 focus:ring-blue-500/30 rounded-xl">
                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🧪 Диагностика источников</label>
                                 {providerDiagnostics.length === 0 ? (
                                     <div className="text-xs text-gray-500 bg-white/5 rounded-xl border border-white/5 p-3">
@@ -401,7 +412,7 @@ const SettingsPanel = ({
                             </section>
 
                             {/* ANTI-07: Bypass Layers Status */}
-                            <section className="pt-4 border-t border-white/10">
+                            <section ref={bypassSectionRef} tabIndex="0" className="focusable pt-4 border-t border-white/10 outline-none focus:ring-1 focus:ring-blue-500/30 rounded-xl">
                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🛡️ TMDB Bypass слои</label>
                                 <div className="flex flex-wrap gap-2">
                                     {getLayerStatus().map(layer => (
