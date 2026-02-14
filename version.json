@@ -1,7 +1,7 @@
 {
-    "version": "1.2.0",
-    "versionCode": 3,
+    "version": "3.7.1",
+    "versionCode": 4,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/latest/download/app-debug.apk",
-    "notes": "Исправлена прокрутка статуса, навигация кнопок обновления"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.7.1-voice-fix/app-debug.apk",
+    "notes": "Voice Search Fix & Sidebar Update"
 }
