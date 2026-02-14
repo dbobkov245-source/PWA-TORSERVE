@@ -11,3 +11,4 @@ generate_code_doc.py
 # Private folders (not for public GitHub)
 deploy/
 *FULL_PROJECT_CODE.md
+*.apk
