@@ -54,7 +54,7 @@ const Sidebar = ({
     return (
         <div
             className={`
-                fixed left-0 top-0 bottom-0 z-40 bg-black/95 border-r border-white/10
+                fixed left-0 top-0 bottom-0 z-40 bg-gradient-to-b from-[#1a1a2e] to-[#0f0f1a] border-r border-white/10
                 transition-all duration-300 ease-out flex flex-col py-6
                 ${isOpen ? 'w-64 translate-x-0 shadow-2xl' : 'w-0 -translate-x-full overflow-hidden'}
             `}
@@ -97,8 +97,8 @@ const SidebarItem = React.forwardRef(({ item, isFocused, onClick }, ref) => {
                 flex items-center rounded-lg mb-2 p-3 w-full text-left 
                 transition-all duration-200
                 ${isFocused
-                    ? 'bg-white text-black scale-105'
-                    : 'text-gray-400 hover:text-white'
+                    ? 'bg-white/10 text-white border-l-4 border-blue-500 pl-2'
+                    : 'text-gray-400 hover:text-white border-l-4 border-transparent pl-2'
                 }
             `}
             onClick={onClick}

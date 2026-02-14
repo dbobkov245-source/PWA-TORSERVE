@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { registerPlugin, Capacitor, CapacitorHttp } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
+import { SpeechRecognition } from '@capacitor-community/speech-recognition'
+import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
 
 // Components
 import Poster from './components/Poster'
@@ -133,6 +135,9 @@ function App() {
   // State: App Update
   const [updateInfo, setUpdateInfo] = useState(null)
 
+  // VOICE-01: Voice search state
+  const [isListening, setIsListening] = useState(false)
+
   // ─── Spatial Registry ───
   const handleBack = useCallback(() => {
     if (updateInfo?.available) { /* handled by UpdateModal dismiss */ }
@@ -143,6 +148,11 @@ function App() {
     else if (activeMovie) setActiveMovie(null)
     else if (activePerson) setActivePerson(null)
     else if (activeCategory) setActiveCategory(null)
+    else if (activeView === 'home' && !showSidebar) {
+      // If on home and no overlay, prompting/listening should cancel?
+      // keeping simple for now
+      setActiveView('list')
+    }
     else if (activeView === 'home') setActiveView('list')
     else CapacitorApp.exitApp()
   }, [updateInfo, selectedTorrent, showSettings, showSearch, showSidebar, activeMovie, activePerson, activeCategory, activeView])
@@ -158,6 +168,7 @@ function App() {
   const settingsBtnRef = useSpatialItem('main')
   // Diagnostics Button Ref -> Now opens Settings (Status Tab)
   const diagnosticsRef = useSpatialItem('main')
+  const voiceRef = useSpatialItem('main')
 
   // My List View Refs
   const continuePlayRef = useSpatialItem('main')
@@ -238,16 +249,58 @@ function App() {
       }
     }
 
-    // Listen for runtime intents
-    const listener = CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
+    const listenerPromise = CapacitorApp.addListener('appUrlOpen', handleAppUrlOpen)
 
     // Check if app was cold-started with an intent
     CapacitorApp.getLaunchUrl().then(result => {
       if (result?.url) handleAppUrlOpen(result)
     })
 
-    return () => { listener.remove() }
+    return () => {
+      listenerPromise.then(handle => handle.remove())
+    }
   }, [serverUrl, fetchStatus])
+
+  const handleVoiceSearch = useCallback(async () => {
+    let query = null
+    try {
+      const { available } = await SpeechRecognition.available()
+      if (available) {
+        await SpeechRecognition.requestPermissions()
+        setIsListening(true)
+        const result = await SpeechRecognition.start({
+          language: 'ru-RU', maxResults: 1,
+          prompt: 'Что хотите посмотреть?', partialResults: false, popup: true
+        })
+        setIsListening(false)
+        query = result?.matches?.[0]?.trim()
+      } else {
+        query = prompt('Что хотите посмотреть?')?.trim()
+      }
+    } catch {
+      setIsListening(false)
+      query = prompt('Что хотите посмотреть?')?.trim()
+    }
+
+    if (!query) return
+
+    try {
+      // Force view to home to show results in ActiveMovie overlay or List?
+      // User requested behavior: "Action: Verify that speaking a movie name correctly switches the view to the movie detail (sets activeMovie), just like before."
+      // So we must set activeView to 'home' and then set activeMovie.
+
+      const data = await searchMulti(query)
+      const filtered = filterDiscoveryResults(data.results || [])
+      if (filtered.length > 0) {
+        setActiveView('home')
+        setActiveMovie(filtered[0])
+      } else {
+        alert('Ничего не найдено')
+      }
+    } catch (err) {
+      console.warn('[VoiceSearch] TMDB search failed:', err)
+    }
+  }, [setActiveMovie, setActiveView])
 
   const addTorrent = async (e) => {
     e.preventDefault()
@@ -509,7 +562,7 @@ function App() {
       )}
 
       {/* Navbar */}
-      <div className={`flex-shrink-0 bg-[#141414]/90 backdrop-blur-md px-6 py-4 flex justify-between items-center shadow-lg border-b border-gray-800 transition-all duration-300 ${activeView === 'home' && !activeMovie && !activePerson && !activeCategory ? 'ml-20' : ''}`}>
+      <div className={`flex-shrink-0 bg-[#141414]/90 backdrop-blur-md px-6 py-4 flex justify-between items-center shadow-lg border-b border-gray-800 transition-all duration-300`}>
         <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-500">PWA-TorServe</h1>
         <div className="flex gap-3 items-center">
           <div className="flex bg-gray-800 rounded-full p-1">
@@ -518,6 +571,12 @@ function App() {
           </div>
           <ServerStatusBar ref={diagnosticsRef} status={serverStatus} onDiagnosticsClick={() => { setSettingsTab('status'); setShowSettings(true); }} />
           <button ref={autoDownloadRef} tabIndex="0" onClick={() => setShowAutoDownload(true)} className="focusable p-2 hover:bg-gray-800 rounded-full transition-colors" title="Авто-загрузка">📺</button>
+          <button
+            ref={voiceRef}
+            onClick={handleVoiceSearch}
+            className={`focusable p-2 rounded-full text-white transition-all ${isListening ? 'bg-red-600 animate-pulse' : 'hover:bg-gray-800'}`}
+            title="Голосовой поиск"
+          >🎤</button>
         </div>
       </div>
 

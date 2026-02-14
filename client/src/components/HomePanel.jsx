@@ -9,36 +9,16 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import HomeRow from './HomeRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
 import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
-import tmdbClient, { getDiscoverByGenre, searchMulti, filterDiscoveryResults } from '../utils/tmdbClient'
+import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { getFavorites, getHistory, toTmdbItem } from '../utils/serverApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { useQualityBadges } from '../hooks/useQualityBadges'
-
-const HomeHeaderButtons = ({ onMenuClick, onVoiceClick, isListening }) => {
-    const menuRef = useSpatialItem('main')
-    const voiceRef = useSpatialItem('main')
-    return (
-        <div className="fixed top-4 left-4 z-50 flex gap-2">
-            <button
-                ref={menuRef}
-                onClick={onMenuClick}
-                className="focusable p-3 bg-gray-800 focus:bg-blue-600 rounded-full text-white shadow-xl transition-all"
-            >☰</button>
-            <button
-                ref={voiceRef}
-                onClick={onVoiceClick}
-                className={`focusable p-3 rounded-full text-white shadow-xl transition-all ${isListening ? 'bg-red-600 animate-pulse' : 'bg-gray-800 focus:bg-blue-600'}`}
-            >🎤</button>
-        </div>
-    )
-}
 
 const HomePanel = ({
     activeMovie, setActiveMovie,
@@ -59,9 +39,6 @@ const HomePanel = ({
     const [activeArea, setActiveArea] = useState('content') // 'content' | 'sidebar'
     const [sidebarIndex, setSidebarIndex] = useState(0)
     const sidebarItemsCount = Sidebar.getItemsCount()
-
-    // VOICE-01: Voice search on Home
-    const [isListening, setIsListening] = useState(false)
 
     // Share one quality queue for all rows to avoid request storms and duplicated fetches.
     const homeQualityTitles = useMemo(() => {
@@ -92,40 +69,6 @@ const HomePanel = ({
     }, [visibleRows, focusedItem])
 
     const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
-
-    const handleVoiceSearch = useCallback(async () => {
-        let query = null
-        try {
-            const { available } = await SpeechRecognition.available()
-            if (available) {
-                await SpeechRecognition.requestPermissions()
-                setIsListening(true)
-                const result = await SpeechRecognition.start({
-                    language: 'ru-RU', maxResults: 1,
-                    prompt: 'Что хотите посмотреть?', partialResults: false, popup: true
-                })
-                setIsListening(false)
-                query = result?.matches?.[0]?.trim()
-            } else {
-                query = prompt('Что хотите посмотреть?')?.trim()
-            }
-        } catch {
-            setIsListening(false)
-            query = prompt('Что хотите посмотреть?')?.trim()
-        }
-
-        if (!query) return
-
-        try {
-            const data = await searchMulti(query)
-            const filtered = filterDiscoveryResults(data.results || [])
-            if (filtered.length > 0) {
-                setActiveMovie(filtered[0])
-            }
-        } catch (err) {
-            console.warn('[VoiceSearch] TMDB search failed:', err)
-        }
-    }, [setActiveMovie])
 
     // Data Loading
     useEffect(() => {
@@ -419,7 +362,7 @@ const HomePanel = ({
                 onClose={() => setShowSidebar(false)}
             />
 
-            <div className={`flex-1 relative transition-all duration-300 ${showSidebar ? 'opacity-50 blur-sm pointer-events-none' : ''}`}>
+            <div className={`flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 scale-[0.95] pointer-events-none' : 'translate-x-0 scale-100'}`}>
                 <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
@@ -439,14 +382,7 @@ const HomePanel = ({
                     ))}
                 </div>
 
-                {/* Menu / Sidebar Trigger + Voice Search */}
-                {!showSidebar && (
-                    <HomeHeaderButtons
-                        onMenuClick={() => setShowSidebar(true)}
-                        onVoiceClick={handleVoiceSearch}
-                        isListening={isListening}
-                    />
-                )}
+                {/* Menu / Sidebar Trigger via ArrowLeft (invisible) */}
             </div>
         </div>
     )
