@@ -1,15 +1,19 @@
 package com.torserve.pwa;
 
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import androidx.activity.result.ActivityResult;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.JSObject;
+import java.io.File;
 import java.util.ArrayList;
 import org.json.JSONArray;
 
@@ -208,5 +212,69 @@ public class TVPlayer extends Plugin {
         }
 
         call.resolve(ret);
+    }
+
+    /**
+     * Get the current app version (versionName + versionCode)
+     * Used by the auto-updater to compare with remote version.json
+     */
+    @PluginMethod
+    public void getAppVersion(PluginCall call) {
+        try {
+            PackageInfo pInfo = getContext().getPackageManager()
+                    .getPackageInfo(getContext().getPackageName(), 0);
+            JSObject result = new JSObject();
+            result.put("versionName", pInfo.versionName);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                result.put("versionCode", pInfo.getLongVersionCode());
+            } else {
+                result.put("versionCode", pInfo.versionCode);
+            }
+            call.resolve(result);
+        } catch (PackageManager.NameNotFoundException e) {
+            call.reject("Cannot read package info: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Install an APK file from the given path.
+     * Uses FileProvider to expose the file safely (Android 7+).
+     * The OS will prompt the user to confirm installation.
+     */
+    @PluginMethod
+    public void installApk(PluginCall call) {
+        String path = call.getString("path");
+        if (path == null || path.isEmpty()) {
+            call.reject("Path is required");
+            return;
+        }
+
+        // Strip file:// prefix if present
+        if (path.startsWith("file://")) {
+            path = path.substring(7);
+        }
+
+        File file = new File(path);
+        if (!file.exists()) {
+            call.reject("APK file not found: " + path);
+            return;
+        }
+
+        try {
+            Uri contentUri = FileProvider.getUriForFile(
+                    getContext(),
+                    getContext().getPackageName() + ".fileprovider",
+                    file);
+
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Error installing APK: " + e.getMessage());
+        }
     }
 }

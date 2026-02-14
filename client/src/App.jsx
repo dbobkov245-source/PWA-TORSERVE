@@ -11,6 +11,10 @@ import SearchPanel from './components/SearchPanel'
 import TorrentModal from './components/TorrentModal'
 import AutoDownloadPanel from './components/AutoDownloadPanel'
 import HomePanel from './components/HomePanel'
+import UpdateModal from './components/UpdateModal'
+
+// Utilities
+import { checkForUpdate } from './utils/appUpdater'
 
 // Hooks
 import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
@@ -126,6 +130,9 @@ function App() {
   const [activeCategory, setActiveCategory] = useState(null)
   const [showSidebar, setShowSidebar] = useState(false)
 
+  // State: App Update
+  const [updateInfo, setUpdateInfo] = useState(null)
+
   // ─── Spatial Registry ───
   const handleBack = useCallback(() => {
     if (selectedTorrent) setSelectedTorrent(null)
@@ -193,6 +200,13 @@ function App() {
     const timer = setInterval(fetchStatus, 5000)
     return () => clearInterval(timer)
   }, [fetchStatus])
+
+  // Check for app updates on launch
+  useEffect(() => {
+    checkForUpdate().then(info => {
+      if (info.available) setUpdateInfo(info)
+    })
+  }, [])
 
   // Handle external magnet links (Android intent-filter) - BUG-2 fix
   useEffect(() => {
@@ -484,7 +498,13 @@ function App() {
   return (
     <div className="h-screen w-screen bg-[#141414] text-white font-sans selection:bg-red-500 selection:text-white flex flex-col overflow-hidden">
 
-
+      {/* App Update Modal */}
+      {updateInfo?.available && (
+        <UpdateModal
+          updateInfo={updateInfo}
+          onDismiss={() => setUpdateInfo(null)}
+        />
+      )}
 
       {/* Navbar */}
       <div className={`flex-shrink-0 bg-[#141414]/90 backdrop-blur-md px-6 py-4 flex justify-between items-center shadow-lg border-b border-gray-800 transition-all duration-300 ${activeView === 'home' && !activeMovie && !activePerson && !activeCategory ? 'ml-20' : ''}`}>

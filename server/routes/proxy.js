@@ -58,7 +58,7 @@ router.get('/', async (req, res) => {
             }
         }
 
-        console.log(`[Proxy] 🔄 Fetching: ${url}`);
+        console.log(`[Proxy] 🔄 Fetching: ${url.replace(/api_key=[^&]+/, 'api_key=***')}`);
 
         // Get DoH resolved config
         const config = await getSmartConfig(url);

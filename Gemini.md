@@ -22,5 +22,16 @@
 - Сетевой слой: `client/src/utils/tmdbClient.js`.
 - Нативный мост: `client/android/app/src/main/java/com/torserve/pwa/TVPlayer.java`.
 
+## 🧠 Skills (Detailed Rules & Examples)
+Детальные правила, справочные реализации и примеры кода находятся в `skills/`:
+- `skills/capacitor-bridge/` — Android Intents, Java-JS мост, поддержка плееров (Vimu, MX, VLC)
+- `skills/resilience-core/` — Multi-Level Resilience Cascade, DoH, зеркала изображений
+- `skills/tv-navigator/` — D-Pad навигация, `useTVNavigation` хук, focus management
+- `skills/perf-virtual-lists/` — Виртуализация списков (`react-window`), overscan, оптимизация памяти
+- `skills/app-updater/` — Self-hosted обновление APK, `FileProvider`
+- `skills/debug-remote/` — Удаленная отладка и экранный логгер
+
+⚡ **При работе с этими областями обязательно загрузи соответствующий `SKILL.md`.**
+
 ## 🚨 Critical Known Issues (To Be Fixed)
 - **SEC-01:** `VITE_TMDB_API_KEY` is exposed in client bundle. Needs migration to server-side injection via `/api/proxy`.

@@ -26,9 +26,9 @@ const DEBUG = true;
 
 // --- DoH PROVIDERS ---
 const DOH_PROVIDERS = [
-    { name: 'Google', url: 'https://dns.google/resolve' },
+    { name: 'Google',     url: 'https://dns.google/resolve' },
     { name: 'Cloudflare', url: 'https://cloudflare-dns.com/dns-query' },
-    { name: 'Quad9', url: 'https://dns.quad9.net:5053/dns-query' }
+    { name: 'Quad9',      url: 'https://dns.quad9.net:5053/dns-query' }
 ];
 
 // --- CIRCUIT BREAKER STATE ---
@@ -269,37 +269,15 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
             requestOptions.port = targetUrl.port || 443; // FIX-4: Always set port
         }
 
-        // FIX-6: dns-only mode — inject DoH-resolved IP via custom lookup
-        // This bypasses ISP DNS poisoning while keeping hostname for TLS SNI
-        // (Cloudflare shared hosting routes correctly when request uses hostname)
-        if (config.resolvedForDNS) {
-            const dnsIP = config.resolvedForDNS;
-            const family = dnsIP.includes(':') ? 6 : 4;
-            requestOptions.lookup = (hostname, opts, cb) => {
-                if (typeof opts === 'function') { cb = opts; }
-                cb(null, dnsIP, family);
-            };
-        }
-
         if (DEBUG) {
             const mode = config.dohMode || 'unknown';
-            const connectTo = config.resolvedIP || config.resolvedForDNS || targetUrl.hostname;
+            const connectTo = config.resolvedIP || targetUrl.hostname;
             console.log(`[SmartFetch] ${options.method || 'GET'} ${targetUrl.hostname} -> ${connectTo} (doh: ${mode}, redirect: ${_redirectCount})`);
         }
 
-        // FIX: Use correct Node.js http.request() signatures:
-        // - IP mode:  request(options, callback)       — options already has hostname/path/headers
-        // - URL mode: request(url, options, callback)  — pass URL + options for headers
-        const useOptionsOnly = config.resolvedIP && isHttps;
-        const req = useOptionsOnly
-            ? transport.request(requestOptions, (res) => {
-                handleResponse(res);
-            })
-            : transport.request(config.url, requestOptions, (res) => {
-                handleResponse(res);
-            });
-
-        function handleResponse(res) {
+        const reqArg = (config.resolvedIP && isHttps) ? requestOptions : config.url;
+        // FIX: When not using resolved IP but using HTTPS, still pass requestOptions for headers
+        const req = transport.request(reqArg, requestOptions, (res) => {
             // FIX-2: Handle redirects
             if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
                 const redirectUrl = new URL(res.headers.location, urlStr).href;
@@ -355,7 +333,7 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
                     });
                 }
             });
-        }
+        });
 
         req.on('error', (err) => {
             reject(err);

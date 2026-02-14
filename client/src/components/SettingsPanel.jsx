@@ -128,13 +128,13 @@ const SettingsPanel = ({
         setTestResult(null)
 
         const query = encodeURIComponent(testName)
-        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "c3bec60e67fabf42dd2202281dcbc9a7"
+        const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || ""
         const CUSTOM_PROXY = tmdbProxyUrl || import.meta.env.VITE_TMDB_PROXY_URL || ''
         const LAMPA_PROXY = 'https://apn-latest.onrender.com'
         const KP_PROXY = 'https://cors.kp556.workers.dev:8443'
         const CORS_PROXY = 'https://corsproxy.io/?'
         const CDN_MIRROR = 'https://imagetmdb.com'
-        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY || '2a4a0808-81a3-40ae-b0d3-e11335ede616'
+        const KP_API_KEY = import.meta.env.VITE_KP_API_KEY || ''
         const WSRV_PROXY = 'https://wsrv.nl/?url='
 
         let results = []
@@ -408,8 +408,8 @@ const SettingsPanel = ({
                                         <span
                                             key={layer.name}
                                             className={`px-2 py-1 rounded text-xs font-mono ${layer.available
-                                                    ? 'bg-green-900/30 text-green-400 border border-green-700/50'
-                                                    : 'bg-red-900/30 text-red-400 border border-red-700/50'
+                                                ? 'bg-green-900/30 text-green-400 border border-green-700/50'
+                                                : 'bg-red-900/30 text-red-400 border border-red-700/50'
                                                 }`}
                                         >
                                             {layer.available ? '🟢' : '🔴'} {layer.name}
