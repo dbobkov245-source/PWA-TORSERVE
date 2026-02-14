@@ -88,6 +88,9 @@ To get the full experience (Voice Search, Deep Player Integration), install the 
    ```
 2. **Install**: Copy `app-debug.apk` to your TV and install.
 
+### 🔄 Release Process
+For developers maintaining the project, please refer to the [Release Process Guide](docs/RELEASE_PROCESS.md) for detailed instructions on versioning and publishing updates.
+
 ---
 
 ## 🎮 Usage Guide

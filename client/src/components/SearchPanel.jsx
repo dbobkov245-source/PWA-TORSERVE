@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { SpeechRecognition } from '@capacitor-community/speech-recognition'
+import { useVoiceSearch } from '../hooks/useVoiceSearch.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 
@@ -102,9 +102,10 @@ const SearchPanel = ({
 }) => {
     const [activeFilters, setActiveFilters] = useState([])
     const [sortBy, setSortBy] = useState('seeders')
-    const [isListening, setIsListening] = useState(false)
-    const [voiceAvailable, setVoiceAvailable] = useState(false)
     const [providerTooltip, setProviderTooltip] = useState(null)
+
+    // Centralized voice search (no more prompt() fallback)
+    const { startListening, isListening } = useVoiceSearch()
 
     // Activate 'search' zone on mount
     // NOTE: Zone cleanup is handled by App.jsx's zone management useEffect
@@ -146,44 +147,12 @@ const SearchPanel = ({
 
     const providerEntries = Object.entries(providers)
 
-    useEffect(() => {
-        const checkVoice = async () => {
-            try {
-                const { available } = await SpeechRecognition.available()
-                setVoiceAvailable(available)
-                if (available) await SpeechRecognition.requestPermissions()
-            } catch { setVoiceAvailable(false) }
-        }
-        checkVoice()
-    }, [])
-
     const startVoiceSearch = async () => {
-        if (!voiceAvailable) {
-            const query = prompt('🎤 Введите запрос:')
-            if (query?.trim()) {
-                const normalized = query.trim()
-                onSearchQueryChange(normalized)
-                setTimeout(() => onSearch(normalized), 200)
-            }
-            return
+        const transcript = await startListening()
+        if (transcript) {
+            onSearchQueryChange(transcript)
+            setTimeout(() => onSearch(transcript), 200)
         }
-
-        try {
-            setIsListening(true)
-            const result = await SpeechRecognition.start({
-                language: 'ru-RU', maxResults: 1,
-                prompt: 'Произнесите название', partialResults: false, popup: true
-            })
-            setIsListening(false)
-
-            if (result.matches?.[0]) {
-                const transcript = result.matches[0].trim()
-                if (transcript) {
-                    onSearchQueryChange(transcript)
-                    setTimeout(() => onSearch(transcript), 300)
-                }
-            }
-        } catch { setIsListening(false) }
     }
 
     const toggleFilter = (filter) => {

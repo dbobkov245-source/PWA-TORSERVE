@@ -1,7 +1,7 @@
 {
-    "version": "3.7.1",
-    "versionCode": 4,
+    "version": "3.7.2",
+    "versionCode": 5,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.7.1-voice-fix/app-debug.apk",
-    "notes": "Voice Search Fix & Sidebar Update"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.7.2/app-debug.apk",
+    "notes": "Voice Search Fix: убран prompt() fallback, добавлен toast"
 }

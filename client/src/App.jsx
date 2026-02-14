@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { registerPlugin, Capacitor, CapacitorHttp } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
-import { SpeechRecognition } from '@capacitor-community/speech-recognition'
+import { useVoiceSearch } from './hooks/useVoiceSearch.jsx'
 import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
 
 // Components
@@ -135,8 +135,8 @@ function App() {
   // State: App Update
   const [updateInfo, setUpdateInfo] = useState(null)
 
-  // VOICE-01: Voice search state
-  const [isListening, setIsListening] = useState(false)
+  // VOICE-01: Centralized voice search (no more prompt() fallback)
+  const { startListening, isListening, ToastPortal } = useVoiceSearch()
 
   // ─── Spatial Registry ───
   const handleBack = useCallback(() => {
@@ -262,33 +262,10 @@ function App() {
   }, [serverUrl, fetchStatus])
 
   const handleVoiceSearch = useCallback(async () => {
-    let query = null
-    try {
-      const { available } = await SpeechRecognition.available()
-      if (available) {
-        await SpeechRecognition.requestPermissions()
-        setIsListening(true)
-        const result = await SpeechRecognition.start({
-          language: 'ru-RU', maxResults: 1,
-          prompt: 'Что хотите посмотреть?', partialResults: false, popup: true
-        })
-        setIsListening(false)
-        query = result?.matches?.[0]?.trim()
-      } else {
-        query = prompt('Что хотите посмотреть?')?.trim()
-      }
-    } catch {
-      setIsListening(false)
-      query = prompt('Что хотите посмотреть?')?.trim()
-    }
-
+    const query = await startListening()
     if (!query) return
 
     try {
-      // Force view to home to show results in ActiveMovie overlay or List?
-      // User requested behavior: "Action: Verify that speaking a movie name correctly switches the view to the movie detail (sets activeMovie), just like before."
-      // So we must set activeView to 'home' and then set activeMovie.
-
       const data = await searchMulti(query)
       const filtered = filterDiscoveryResults(data.results || [])
       if (filtered.length > 0) {
@@ -300,7 +277,7 @@ function App() {
     } catch (err) {
       console.warn('[VoiceSearch] TMDB search failed:', err)
     }
-  }, [setActiveMovie, setActiveView])
+  }, [startListening, setActiveMovie, setActiveView])
 
   const addTorrent = async (e) => {
     e.preventDefault()
@@ -552,6 +529,9 @@ function App() {
 
   return (
     <div className="h-screen w-screen bg-[#141414] text-white font-sans selection:bg-red-500 selection:text-white flex flex-col overflow-hidden">
+
+      {/* Voice Search Toast */}
+      <ToastPortal />
 
       {/* App Update Modal */}
       {updateInfo?.available && (
