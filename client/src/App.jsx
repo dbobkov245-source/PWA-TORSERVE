@@ -135,7 +135,8 @@ function App() {
 
   // ─── Spatial Registry ───
   const handleBack = useCallback(() => {
-    if (selectedTorrent) setSelectedTorrent(null)
+    if (updateInfo?.available) { /* handled by UpdateModal dismiss */ }
+    else if (selectedTorrent) setSelectedTorrent(null)
     else if (showSettings) setShowSettings(false)
     else if (showSearch) { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }
     else if (showSidebar) setShowSidebar(false)
@@ -144,7 +145,7 @@ function App() {
     else if (activeCategory) setActiveCategory(null)
     else if (activeView === 'home') setActiveView('list')
     else CapacitorApp.exitApp()
-  }, [selectedTorrent, showSettings, showSearch, showSidebar, activeMovie, activePerson, activeCategory, activeView])
+  }, [updateInfo, selectedTorrent, showSettings, showSearch, showSidebar, activeMovie, activePerson, activeCategory, activeView])
 
   const { setActiveZone } = useSpatialArbiter(handleBack)
 
@@ -170,7 +171,8 @@ function App() {
   // ─── Effects ───
   // 1. Zone Management (Passive)
   useEffect(() => {
-    if (showSettings) setActiveZone('settings')
+    if (updateInfo?.available) setActiveZone('modal')
+    else if (showSettings) setActiveZone('settings')
     else if (selectedTorrent) setActiveZone('modal')
     else if (showSearch) setActiveZone('search')
     else if (showAutoDownload) setActiveZone('auto-download')
@@ -180,7 +182,7 @@ function App() {
     else if (activeView === 'home' && activePerson) setActiveZone('person')
     else if (activeView === 'home' && activeCategory) setActiveZone('category')
     else setActiveZone('main')
-  }, [showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
+  }, [updateInfo, showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
 
   const fetchStatus = useCallback(async () => {
     const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')

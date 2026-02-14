@@ -7,6 +7,7 @@
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { CapacitorHttp } from '@capacitor/core';
 
 const TVPlayer = registerPlugin('TVPlayer');
 
@@ -55,17 +56,21 @@ export async function checkForUpdate() {
     }
 
     try {
-        const [remoteRes, local] = await Promise.all([
-            fetch(VERSION_URL, { cache: 'no-store' }),
-            getCurrentVersion()
-        ]);
+        // Use CapacitorHttp for the version check too (bypasses CORS)
+        const remoteRes = await CapacitorHttp.get({
+            url: VERSION_URL,
+            headers: { 'Cache-Control': 'no-cache' }
+        });
+        const local = await getCurrentVersion();
 
-        if (!remoteRes.ok) {
+        if (remoteRes.status !== 200) {
             console.warn('[Updater] Failed to fetch version.json:', remoteRes.status);
             return { available: false };
         }
 
-        const remote = await remoteRes.json();
+        const remote = typeof remoteRes.data === 'string'
+            ? JSON.parse(remoteRes.data)
+            : remoteRes.data;
         const available = isNewerVersion(remote.version, local.versionName);
 
         // Check if force update is needed (current version is below minVersion)
@@ -89,7 +94,7 @@ export async function checkForUpdate() {
 
 /**
  * Download the APK and trigger installation.
- * Uses Capacitor's native HTTP + Filesystem to bypass CORS.
+ * Uses CapacitorHttp (native HTTP, no CORS) + Filesystem for writing.
  * @param {string} url - Direct download URL for the APK
  * @param {function} onProgress - Optional callback(percent: number)
  * @returns {Promise<void>}
@@ -102,28 +107,39 @@ export async function downloadAndInstall(url, onProgress) {
     const fileName = 'update.apk';
 
     try {
-        if (onProgress) onProgress(0);
+        if (onProgress) onProgress(5);
 
-        // Use Filesystem.downloadFile — runs natively, no CORS issues
-        if (onProgress) onProgress(5); // Show small progress to indicate start
-
-        const result = await Filesystem.downloadFile({
+        // Use CapacitorHttp.get with responseType blob
+        // This runs natively and handles redirects (GitHub → objects.githubusercontent.com)
+        const response = await CapacitorHttp.get({
             url: url,
-            path: fileName,
-            directory: Directory.Cache,
-            progress: true
+            responseType: 'blob',  // Get as base64 data
+            readTimeout: 120000,   // 2 minutes for large APK
+            connectTimeout: 30000
         });
 
-        // Listen for progress events if available
-        if (onProgress) onProgress(50); // Mid-point estimate since downloadFile doesn't stream progress
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(`Download failed: HTTP ${response.status}`);
+        }
 
-        if (onProgress) onProgress(100);
+        if (onProgress) onProgress(60);
+
+        // response.data is base64-encoded when responseType is 'blob'
+        await Filesystem.writeFile({
+            path: fileName,
+            data: response.data,
+            directory: Directory.Cache
+        });
+
+        if (onProgress) onProgress(90);
 
         // Get the full file URI for the native installer
         const fileInfo = await Filesystem.getUri({
             path: fileName,
             directory: Directory.Cache
         });
+
+        if (onProgress) onProgress(100);
 
         // Trigger native APK installation
         await TVPlayer.installApk({ path: fileInfo.uri });
@@ -132,4 +148,3 @@ export async function downloadAndInstall(url, onProgress) {
         throw e;
     }
 }
-
