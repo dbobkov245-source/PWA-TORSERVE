@@ -80,6 +80,27 @@ describe('useVoiceSearch (Hybrid)', () => {
     expect(promptSpy).not.toHaveBeenCalled()
   })
 
+  it('does not hang when stop() never resolves', async () => {
+    vi.useFakeTimers()
+    mockStart
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ matches: ['Дюна'] })
+    mockStop.mockImplementationOnce(() => new Promise(() => {}))
+
+    const { result } = renderHook(() => useVoiceSearch())
+
+    let transcript
+    await act(async () => {
+      const promise = result.current.startListening()
+      await vi.advanceTimersByTimeAsync(4200)
+      transcript = await promise
+    })
+
+    expect(transcript).toBe('Дюна')
+    expect(mockStart).toHaveBeenCalledTimes(2)
+    expect(mockStop).toHaveBeenCalledTimes(1)
+  })
+
   it('does NOT fallback on cancel error "0"', async () => {
     mockStart.mockRejectedValueOnce(new Error('0'))
 

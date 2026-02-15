@@ -217,6 +217,7 @@ startListening(options?): Promise<string | null>
 
 - Убран временный hotfix-режим с принудительным `popup:true`.
 - Внедрен hybrid voice flow в `client/src/hooks/useVoiceSearch.jsx`.
+- Добавлен guard для `SpeechRecognition.stop()`: на части Android-сборок плагин `stop()` может не завершать Promise, что вызывало зависание кнопки поиска; теперь stop ограничен коротким таймаутом и не блокирует fallback.
 - Восстановлены и расширены тесты `client/src/hooks/useVoiceSearch.test.js` (8 тестов).
 - Локальная валидация:
   - `npx vitest run src/hooks/useVoiceSearch.test.js` -> passed

@@ -51,11 +51,21 @@ const VoiceToast = ({ message, onDismiss }) => {
 }
 
 const PRIMARY_TIMEOUT_MS = 4000
+const STOP_GUARD_MS = 200
 
 /** User cancellation (Back / cancel). */
 function isCancelError(message) {
   const m = String(message ?? '').toLowerCase()
   return m === '0' || m === 'cancelled' || m === 'canceled'
+}
+
+async function stopListeningWithGuard() {
+  try {
+    await Promise.race([
+      SpeechRecognition.stop(),
+      new Promise((resolve) => setTimeout(resolve, STOP_GUARD_MS)),
+    ])
+  } catch {}
 }
 
 // ─── Hook ──────────────────────────────────────────────────────
@@ -146,10 +156,8 @@ export function useVoiceSearch() {
         clearTimeout(timeoutId)
       }
 
-      // Ensure non-popup recognizer is stopped before fallback
-      try {
-        await SpeechRecognition.stop()
-      } catch {}
+      // Plugin stop() may never resolve on some Android builds; guard it.
+      await stopListeningWithGuard()
 
       // Fallback: popup true
       console.log('[Voice:fallback] start')
