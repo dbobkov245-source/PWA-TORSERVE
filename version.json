@@ -1,7 +1,7 @@
 {
-    "version": "3.8.4",
-    "versionCode": 10,
+    "version": "3.9.0",
+    "versionCode": 11,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.8.4/app-debug.apk",
-    "notes": "v3.8.4 (Hotfix):\n- 🎤 Voice Search: fixed \"double press\" issue by hardening hybrid flow (in-flight dedupe + busy retry)\n- 🎤 Voice Search: improved fallback stability after primary timeout (guarded stop + retry delay)\n- 🔄 Auto-Update: improved install handoff (install permission check + ACTION_INSTALL_PACKAGE)\n- 🔄 Auto-Update: prevent repeated re-downloads by reusing cached APK on relaunch\n\nv3.8.3:\n- 🛠 Fixed voice-search button freeze (guarded stop() before fallback)\n- 🎤 Hybrid Voice Search stabilized on Android TV (primary popup:false, fallback popup:true)\n- ✅ useVoiceSearch tests updated and passing (9/9)\n\nv3.8.2:\n- 🎤 Re-enabled Hybrid Voice Search (primary popup:false, fallback popup:true)\n- ✅ Restored and expanded useVoiceSearch tests\n\nv3.8.1 (Hotfix):\n- 🔧 Disable Hybrid Voice Search (return to reliable popup mode)"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.9.0/app-debug.apk",
+    "notes": "v3.9.0:\n- 🎤 Voice Search Rollback: Reverted to simple reliable flow (v3.7.2 style). Fixed \"double press\" bug on Android TV.\n- 🔄 Auto-Update Fix: Installation now retries from cache on restart if first attempt failed.\n- 🛠️ Fixed \"double press\" bug on Android TV.\n\nv3.8.4 (Hotfix):\n- 🎤 Voice Search: attempted fix for \"double press\" (failed)\n- 🎤 Voice Search: improved fallback stability\n- 🔄 Auto-Update: improved install handoff\n- 🔄 Auto-Update: prevent repeated re-downloads\n\nv3.8.3:\n- 🛠 Fixed voice-search button freeze\n- 🎤 Hybrid Voice Search stabilized\n\nv3.8.2:\n- 🎤 Re-enabled Hybrid Voice Search\n\nv3.8.1 (Hotfix):\n- 🔧 Disable Hybrid Voice Search"
 }

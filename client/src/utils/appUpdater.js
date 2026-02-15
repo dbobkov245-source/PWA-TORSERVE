@@ -30,13 +30,13 @@ function readPendingInstall() {
 function writePendingInstall(payload) {
     try {
         localStorage.setItem(PENDING_INSTALL_KEY, JSON.stringify(payload));
-    } catch {}
+    } catch { }
 }
 
 function clearPendingInstall() {
     try {
         localStorage.removeItem(PENDING_INSTALL_KEY);
-    } catch {}
+    } catch { }
 }
 
 async function installCachedApk(fileName, onProgress) {
@@ -197,5 +197,35 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
     } catch (e) {
         console.error('[Updater] Download/install failed:', e);
         throw e;
+    }
+}
+
+/**
+ * Try to install a pending update from cache if available.
+ * Call this on app launch before checking for new updates.
+ * @returns {Promise<boolean>} true if installation started, false otherwise
+ */
+export async function tryInstallPending() {
+    if (!Capacitor.isNativePlatform()) return false;
+
+    const pending = readPendingInstall();
+    if (!pending || !pending.fileName) return false;
+
+    try {
+        // Check if file exists in cache
+        await Filesystem.stat({
+            path: pending.fileName,
+            directory: Directory.Cache
+        });
+
+        console.log('[Updater] Found pending install:', pending.fileName);
+
+        // Trigger install
+        await installCachedApk(pending.fileName);
+        return true;
+    } catch (e) {
+        console.warn('[Updater] Pending install file not found or invalid:', e);
+        clearPendingInstall();
+        return false;
     }
 }

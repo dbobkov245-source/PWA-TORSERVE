@@ -16,7 +16,7 @@ import HomePanel from './components/HomePanel'
 import UpdateModal from './components/UpdateModal'
 
 // Utilities
-import { checkForUpdate } from './utils/appUpdater'
+import { checkForUpdate, tryInstallPending } from './utils/appUpdater'
 
 // Hooks
 import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
@@ -216,8 +216,11 @@ function App() {
 
   // Check for app updates on launch
   useEffect(() => {
-    checkForUpdate().then(info => {
-      if (info.available) setUpdateInfo(info)
+    tryInstallPending().then(installed => {
+      if (installed) return; // If installing from cache, skip network check
+      checkForUpdate().then(info => {
+        if (info.available) setUpdateInfo(info)
+      })
     })
   }, [])
 
