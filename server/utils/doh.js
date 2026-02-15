@@ -1,5 +1,6 @@
 import https from 'https';
 import http from 'http';
+import net from 'net';
 
 /**
  * DoH (DNS-over-HTTPS) Module with Provider Rotation + Circuit Breaker
@@ -274,11 +275,31 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
         // (Cloudflare shared hosting routes correctly when request uses hostname)
         if (config.resolvedForDNS) {
             const dnsIP = config.resolvedForDNS;
-            const family = dnsIP.includes(':') ? 6 : 4;
+            const family = net.isIP(dnsIP);
+            if (!family) {
+                throw new Error(`Invalid DoH IP: ${dnsIP}`);
+            }
+
             requestOptions.lookup = (hostname, opts, cb) => {
-                if (typeof opts === 'function') { cb = opts; }
-                cb(null, dnsIP, family);
+                if (typeof opts === 'function') {
+                    cb = opts;
+                    opts = {};
+                }
+
+                const wantsAll = opts?.all === true;
+
+                // Node expects lookup callback asynchronously and with shape depending on opts.all.
+                process.nextTick(() => {
+                    if (wantsAll) {
+                        cb(null, [{ address: dnsIP, family }]);
+                    } else {
+                        cb(null, dnsIP, family);
+                    }
+                });
             };
+
+            // Avoid socket reuse path that may bypass per-request lookup.
+            requestOptions.agent = false;
         }
 
         if (DEBUG) {
