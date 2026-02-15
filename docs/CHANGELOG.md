@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.8.1] - 2026-02-15 (Hotfix)
+
+### Fixed
+- **Voice Search:** Временно отключен Hybrid Mode (popup:false) из-за зависаний. Возврат к `popup:true`.
+- **Freeze:** Исправлено зависание кнопки микрофона (добавлены таймауты).
+
 ## [3.8.0] - 2026-02-15
 
 ### Added

@@ -52,158 +52,114 @@ const VoiceToast = ({ message, onDismiss }) => {
 
 /** Пользовательская отмена (Back / cancel) */
 function isCancelError(err) {
-  // Устойчивость к структуре ошибки
   const message = err?.message ?? err
   const m = String(message).toLowerCase()
-
   return (
-    m === '0' ||           // Android popup: RESULT_CANCELED
-    m === 'cancelled' ||   // iOS / legacy
-    m === 'canceled'       // Typo variant
+    m === '0' ||
+    m === 'cancelled' ||
+    m === 'canceled'
   )
 }
+
+// ─── Utils ─────────────────────────────────────────────────────
+
+// Simple timeout wrapper for promises
+const withTimeout = (promise, ms, label) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timeout`)), ms))
+  ])
 
 // ─── Hook ──────────────────────────────────────────────────────
 
 export function useVoiceSearch() {
   const [isListening, setIsListening] = useState(false)
   const [toastMessage, setToastMessage] = useState(null)
-  const availableRef = useRef(null) // null = unchecked, true/false = result
+  const availableRef = useRef(null)
 
-  // Check availability once on mount
+  // Initial check (non-blocking)
   useEffect(() => {
     SpeechRecognition.available()
-      .then(({ available }) => {
-        availableRef.current = available
-        if (available) {
-          SpeechRecognition.requestPermissions().catch(() => { })
-        }
-      })
-      .catch(() => {
-        availableRef.current = false
-      })
+      .then(({ available }) => { availableRef.current = available })
+      .catch(() => { availableRef.current = false })
   }, [])
 
-  const showToast = useCallback((msg) => {
-    setToastMessage(msg)
-  }, [])
+  const showToast = useCallback((msg) => setToastMessage(msg), [])
+  const dismissToast = useCallback(() => setToastMessage(null), [])
 
-  const dismissToast = useCallback(() => {
-    setToastMessage(null)
-  }, [])
-
-  /**
-   * Start voice listening.
-   * @returns {Promise<string|null>} transcript or null (cancel/unavailable/error)
-   */
   const startListening = useCallback(async () => {
-    // 1. Check availability
+    console.log('[Voice] Start listening initiated')
+
+    // 1. Check availability with timeout
     if (availableRef.current === null) {
-      // Still loading — try inline check
       try {
-        const { available } = await SpeechRecognition.available()
+        console.log('[Voice] Checking availability...')
+        const { available } = await withTimeout(SpeechRecognition.available(), 1000, 'Availability')
         availableRef.current = available
-      } catch {
+      } catch (err) {
+        console.warn('[Voice] Availability check failed:', err)
         availableRef.current = false
       }
     }
 
     if (!availableRef.current) {
-      showToast('🎤 Голосовой поиск недоступен на этом устройстве')
+      console.warn('[Voice] Not available')
+      showToast('🎤 Голосовой поиск недоступен')
       return null
     }
 
-    // 2. Request permissions (idempotent)
+    // 2. Request permissions with timeout
     try {
-      await SpeechRecognition.requestPermissions()
-    } catch {
+      console.log('[Voice] Requesting permissions...')
+      await withTimeout(SpeechRecognition.requestPermissions(), 2000, 'Permissions')
+    } catch (err) {
+      console.warn('[Voice] Permissions check failed:', err)
       showToast('🎤 Нет разрешения на микрофон')
       return null
     }
 
-    // 3. Start recognition (Hybrid Flow)
-    const TIMEOUT_MS = 4000
+    // 3. Start recognition (Direct Popup Mode - HOTFIX)
     setIsListening(true)
-
     try {
-      // ── Primary: popup:false ──
-      let timeoutId
-      console.log('[Voice:primary] start')
+      console.log('[Voice] Starting recognition (popup: true)...')
 
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('VOICE_TIMEOUT')), TIMEOUT_MS)
+      // HOTFIX: Disable Hybrid Flow due to freezes on some devices/emulators.
+      // Reverting to direct popup:true usage.
+
+      const result = await SpeechRecognition.start({
+        language: 'ru-RU',
+        maxResults: 1,
+        prompt: 'Что хотите посмотреть?',
+        partialResults: false,
+        popup: true,
       })
 
-      try {
-        const result = await Promise.race([
-          SpeechRecognition.start({
-            language: 'ru-RU',
-            maxResults: 1,
-            partialResults: false,
-            popup: false,
-          }),
-          timeoutPromise,
-        ])
-        clearTimeout(timeoutId)
-
-        const transcript = result?.matches?.[0]?.trim()
-        if (transcript) {
-          console.log('[Voice:primary] result:', transcript)
-          return transcript
-        }
-        console.log('[Voice:primary] empty → fallback')
-      } catch (primaryErr) {
-        clearTimeout(timeoutId)
-
-        if (isCancelError(primaryErr)) {
-          console.log('[Voice:primary] cancelled')
-          return null
-        }
-        console.log('[Voice:primary] timeout/error:', primaryErr?.message)
+      const transcript = result?.matches?.[0]?.trim()
+      if (transcript) {
+        console.log('[Voice] Result:', transcript)
+        return transcript
       }
+      return null
 
-      // Гарантированный stop перед fallback (RecognitionService busy fix)
-      try { await SpeechRecognition.stop() } catch { }
+    } catch (err) {
+      setIsListening(false) // Ensure state reset
 
-      // ── Fallback: popup:true ──
-      console.log('[Voice:fallback] start')
-      try {
-        const fallbackResult = await SpeechRecognition.start({
-          language: 'ru-RU',
-          maxResults: 1,
-          prompt: 'Что хотите посмотреть?',
-          partialResults: false,
-          popup: true,
-        })
-
-        const transcript = fallbackResult?.matches?.[0]?.trim()
-        if (transcript) {
-          console.log('[Voice:fallback] result:', transcript)
-          return transcript
-        }
-        return null
-      } catch (fallbackErr) {
-        if (isCancelError(fallbackErr)) {
-          console.log('[Voice:fallback] cancelled')
-          return null
-        }
-        console.warn('[Voice:fallback] error:', fallbackErr)
-        showToast('🎤 Голос не распознан, попробуйте снова')
+      if (isCancelError(err)) {
+        console.log('[Voice] Cancelled')
         return null
       }
+
+      console.warn('[Voice] Recognition error:', err)
+      showToast('🎤 Ошибка распознавания')
+      return null
     } finally {
       setIsListening(false)
     }
   }, [showToast])
 
-  // Toast portal element
   const ToastPortal = toastMessage
     ? () => <VoiceToast message={toastMessage} onDismiss={dismissToast} />
     : () => null
 
-  return {
-    startListening,
-    isListening,
-    ToastPortal,
-  }
+  return { startListening, isListening, ToastPortal }
 }
