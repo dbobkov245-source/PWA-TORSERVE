@@ -1,7 +1,7 @@
 # Voice Search: Sony Android 10 vs TCL Android 12
 
 Дата: 15 февраля 2026  
-Статус: Актуализировано после фикса prompt-fallback; открыт UX-дефект popup-flow на Sony Android 10
+Статус: Этап 1 Hybrid Voice Search реализован в коде; требуется финальная проверка на реальных TV-устройствах
 
 ## 1) Контекст и цель
 
@@ -53,16 +53,15 @@
 ### Текущая конфигурация распознавания
 
 - Плагин: `@capacitor-community/speech-recognition` (`^6.0.1`)
-- Вызов `SpeechRecognition.start(...)` сейчас использует:
-  - `language: 'ru-RU'`
-  - `partialResults: false`
-  - `popup: true`
+- В `startListening()` реализован двухэтапный flow:
+  - `primary`: `popup: false`, `partialResults: false`, timeout `4000ms`
+  - `fallback`: `popup: true`, `partialResults: false`, `prompt: 'Что хотите посмотреть?'`
 
 ### Нативная механика, критичная для UX
 
-- При `popup:true` Android-плагин идет через `startActivityForResult(...)`.
-- Финальный результат/ошибка в приложение возвращаются через Activity result callback.
-- Пока системная speech Activity не закрыта, Promise на стороне приложения может не завершаться.
+- При `popup:false` результат первичной попытки возвращается напрямую из `SpeechRecognizer` (без обязательного выхода в системный popup UI).
+- При fallback `popup:true` Android-плагин идет через `startActivityForResult(...)`, и результат зависит от Activity result callback.
+- Перед fallback вызывается `SpeechRecognition.stop()` для снижения риска `RecognitionService busy`.
 
 ### Целевой интерфейс (документируемый контракт, planned)
 
@@ -103,16 +102,18 @@ startListening(options?): Promise<string | null>
 
 ### Вывод D (архитектурный статус)
 
-Раздвоение логики между `App.jsx` и `SearchPanel.jsx` закрыто (оба используют один хук), но внутри хука все еще один режим (`popup:true`), который недостаточно стабилен для Sony Android 10.
+Раздвоение логики между `App.jsx` и `SearchPanel.jsx` закрыто (оба используют один хук), внутри хука внедрен hybrid-flow, что снижает зависимость UX от системного popup-цикла на Sony Android 10.
 
 ## 6) Подтверждающие факты из кода (актуальные)
 
-- `client/src/hooks/useVoiceSearch.jsx`: `SpeechRecognition.start(...)` вызывается с `popup: true`.
-- `client/src/hooks/useVoiceSearch.jsx`: ошибки `"0"`/`Cancelled` обрабатываются как silent cancel (`null`).
-- `client/src/App.jsx`: `handleVoiceSearch` ожидает `await startListening()` и продолжает поиск только после завершения Promise.
+- `client/src/hooks/useVoiceSearch.jsx`: реализован primary `popup:false` с timeout `4000ms`.
+- `client/src/hooks/useVoiceSearch.jsx`: при timeout/error первичной попытки выполняется `SpeechRecognition.stop()` и запускается fallback `popup:true`.
+- `client/src/hooks/useVoiceSearch.jsx`: cancel-сценарии (`0`, `cancelled`, `canceled`) обрабатываются как silent cancel (`null`).
+- `client/src/hooks/useVoiceSearch.jsx`: `isListening` гарантированно сбрасывается через `finally`.
+- `client/src/App.jsx`: `handleVoiceSearch` ожидает `await startListening()` и продолжает поиск после завершения Promise.
 - `client/src/components/SearchPanel.jsx`: `startVoiceSearch` также работает через `await startListening()`.
 
-Следствие: при popup-flow весь UX зависит от момента закрытия системной speech Activity.
+Следствие: в нормальном кейсе приложение пытается завершить распознавание без обязательного закрытия системного popup-окна.
 
 ## 7) Подтверждение из логов (прогон 14.02.2026)
 
@@ -153,9 +154,9 @@ startListening(options?): Promise<string | null>
 - Централизация voice-логики уже выполнена (`useVoiceSearch`).
 - Документация до этого апдейта оставалась в состоянии «до фикса prompt». Этот документ обновляет источник истины.
 
-## 9) План исправления (Hybrid Plan v2)
+## 9) Статус Плана (Hybrid Plan v2)
 
-### Этап 1: Non-popup primary (`popup:false`) + timeout 4000ms
+### Этап 1: Non-popup primary (`popup:false`) + timeout 4000ms — Выполнено
 
 - Первичный запуск распознавания выполнять без popup (`popup:false`).
 - Ждать финальный результат до `4000ms`.
@@ -163,18 +164,18 @@ startListening(options?): Promise<string | null>
 
 Критерий готовности:
 
-- На Sony успешный голосовой кейс чаще закрывается без ручного `Back`.
+- Реализовано в `client/src/hooks/useVoiceSearch.jsx`.
 
-### Этап 2: Fallback popup (`popup:true`) только для timeout/empty/no-match
+### Этап 2: Fallback popup (`popup:true`) только для timeout/empty/no-match — Выполнено
 
 - `popup:true` не использовать как первичный режим.
 - Включать popup только если primary завершился как timeout/empty/no-match.
 
 Критерий готовности:
 
-- Popup используется как резервный путь, а не основной UX.
+- Реализовано в `client/src/hooks/useVoiceSearch.jsx`.
 
-### Этап 3: Нормализация ошибок без агрессивного UX
+### Этап 3: Нормализация ошибок без агрессивного UX — Частично выполнено
 
 - Нормализовать ветки: `cancel`, `no speech`, `no match`, `service error`.
 - `cancel/no speech/no match` возвращать как управляемый `null`-результат без побочных экранов.
@@ -182,11 +183,11 @@ startListening(options?): Promise<string | null>
 
 Критерий готовности:
 
-- Ошибки не переводят пользователя в неочевидный поток действий.
+- Реализована cancel/error обработка; требуется финальный прогон на устройствах по `no speech/no match` сценариям.
 
-### Этап 4: Единая телеметрия voice-flow
+### Этап 4: Единая телеметрия voice-flow — Выполнено (console-level)
 
-- Добавить структурированные этапы:
+- Добавлены структурированные этапы:
   - `primary_start`
   - `primary_timeout`
   - `fallback_start`
@@ -197,9 +198,9 @@ startListening(options?): Promise<string | null>
 
 Критерий готовности:
 
-- По логам можно однозначно определить причину каждого неуспешного запуска.
+- Реализовано через логи `[Voice:primary]` и `[Voice:fallback]`.
 
-### Этап 5: QA-матрица Sony/TCL
+### Этап 5: QA-матрица Sony/TCL — Открыто
 
 - Sony Android 10 и TCL Android 12 прогоняются одной матрицей кейсов.
 - Обязательные проверки:
@@ -210,7 +211,18 @@ startListening(options?): Promise<string | null>
 
 Критерий готовности:
 
-- Оба устройства проходят единый сценарий с предсказуемым UX.
+- Требуется подтверждение на реальных устройствах (Sony Android 10, TCL Android 12).
+
+## 9.1) Что сделано в этом релизе (15.02.2026)
+
+- Убран временный hotfix-режим с принудительным `popup:true`.
+- Внедрен hybrid voice flow в `client/src/hooks/useVoiceSearch.jsx`.
+- Восстановлены и расширены тесты `client/src/hooks/useVoiceSearch.test.js` (8 тестов).
+- Локальная валидация:
+  - `npx vitest run src/hooks/useVoiceSearch.test.js` -> passed
+  - `npx vitest run` -> passed
+  - `npm run build` -> passed
+  - `./gradlew assembleDebug` -> passed
 
 ## 10) План верификации после фиксов
 
@@ -250,8 +262,9 @@ startListening(options?): Promise<string | null>
 ## 12) Резюме
 
 - Дефект с IME через `prompt(...)` закрыт в текущем коде.
-- Актуальный дефект: delayed completion в popup-flow на Sony Android 10 из-за возврата результата через `ACTIVITY_RESULT`.
-- Утвержден целевой default:
+- Hybrid Этап 1 реализован: primary `popup:false` с timeout `4000ms` + fallback `popup:true`.
+- Оставшийся риск: device-specific поведение на Sony/TCL должно быть подтверждено ручным QA.
+- Зафиксированный default:
   - `mode='hybrid'`
   - `fallbackTimeoutMs=4000`
   - primary `popup:false`, fallback `popup:true`.

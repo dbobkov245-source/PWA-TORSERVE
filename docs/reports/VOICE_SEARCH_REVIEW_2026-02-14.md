@@ -9,6 +9,7 @@
 - Пункты про активный `prompt(...)` более не актуальны: этот дефект уже закрыт в коде.
 - Новый фокус ревью: поведение `popup:true` на Sony Android 10 и delayed completion до `ACTIVITY_RESULT`.
 - Актуальный документ анализа и плана: `/Volumes/SSD Storage/PWA-TorServe/docs/VOICE_SEARCH_ANDROID10_SONY_ANALYSIS.md`.
+- Обновление по реализации: Hybrid Voice Search Этап 1 внедрен в код (`primary popup:false + timeout 4000ms -> fallback popup:true`).
 
 ## 1. Резюме
 
@@ -36,7 +37,17 @@
 
 1. `Stage prompt removal`: **Completed**
 2. `Stage unified hook`: **Completed**
-3. `Stage hybrid popup/non-popup`: **Planned**
+3. `Stage hybrid popup/non-popup`: **Completed (code + tests)**
+
+## 3.1 Проверка реализации
+
+- Изменен `client/src/hooks/useVoiceSearch.jsx`: внедрен hybrid-flow и нормализована обработка cancel/error.
+- Восстановлен и расширен `client/src/hooks/useVoiceSearch.test.js` (8 тестов, без `skip`).
+- Локальные проверки:
+  - `npx vitest run src/hooks/useVoiceSearch.test.js` -> passed
+  - `npx vitest run` -> passed
+  - `npm run build` -> passed
+  - `./gradlew assembleDebug` -> passed
 
 ## 4. Актуальный рабочий план (кратко)
 

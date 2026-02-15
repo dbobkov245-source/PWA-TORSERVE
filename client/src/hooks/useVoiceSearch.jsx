@@ -50,25 +50,13 @@ const VoiceToast = ({ message, onDismiss }) => {
   )
 }
 
-/** Пользовательская отмена (Back / cancel) */
-function isCancelError(err) {
-  const message = err?.message ?? err
-  const m = String(message).toLowerCase()
-  return (
-    m === '0' ||
-    m === 'cancelled' ||
-    m === 'canceled'
-  )
+const PRIMARY_TIMEOUT_MS = 4000
+
+/** User cancellation (Back / cancel). */
+function isCancelError(message) {
+  const m = String(message ?? '').toLowerCase()
+  return m === '0' || m === 'cancelled' || m === 'canceled'
 }
-
-// ─── Utils ─────────────────────────────────────────────────────
-
-// Simple timeout wrapper for promises
-const withTimeout = (promise, ms, label) =>
-  Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timeout`)), ms))
-  ])
 
 // ─── Hook ──────────────────────────────────────────────────────
 
@@ -80,78 +68,116 @@ export function useVoiceSearch() {
   // Initial check (non-blocking)
   useEffect(() => {
     SpeechRecognition.available()
-      .then(({ available }) => { availableRef.current = available })
-      .catch(() => { availableRef.current = false })
+      .then(({ available }) => {
+        availableRef.current = available
+        if (available) {
+          SpeechRecognition.requestPermissions().catch(() => {})
+        }
+      })
+      .catch(() => {
+        availableRef.current = false
+      })
   }, [])
 
   const showToast = useCallback((msg) => setToastMessage(msg), [])
   const dismissToast = useCallback(() => setToastMessage(null), [])
 
   const startListening = useCallback(async () => {
-    console.log('[Voice] Start listening initiated')
-
-    // 1. Check availability with timeout
+    // 1. Check availability
     if (availableRef.current === null) {
       try {
-        console.log('[Voice] Checking availability...')
-        const { available } = await withTimeout(SpeechRecognition.available(), 1000, 'Availability')
+        const { available } = await SpeechRecognition.available()
         availableRef.current = available
-      } catch (err) {
-        console.warn('[Voice] Availability check failed:', err)
+      } catch {
         availableRef.current = false
       }
     }
 
     if (!availableRef.current) {
-      console.warn('[Voice] Not available')
-      showToast('🎤 Голосовой поиск недоступен')
+      showToast('🎤 Голосовой поиск недоступен на этом устройстве')
       return null
     }
 
-    // 2. Request permissions with timeout
+    // 2. Request permissions (idempotent)
     try {
-      console.log('[Voice] Requesting permissions...')
-      await withTimeout(SpeechRecognition.requestPermissions(), 2000, 'Permissions')
-    } catch (err) {
-      console.warn('[Voice] Permissions check failed:', err)
+      await SpeechRecognition.requestPermissions()
+    } catch {
       showToast('🎤 Нет разрешения на микрофон')
       return null
     }
 
-    // 3. Start recognition (Direct Popup Mode - HOTFIX)
+    // 3. Start recognition (hybrid flow)
     setIsListening(true)
     try {
-      console.log('[Voice] Starting recognition (popup: true)...')
-
-      // HOTFIX: Disable Hybrid Flow due to freezes on some devices/emulators.
-      // Reverting to direct popup:true usage.
-
-      const result = await SpeechRecognition.start({
-        language: 'ru-RU',
-        maxResults: 1,
-        prompt: 'Что хотите посмотреть?',
-        partialResults: false,
-        popup: true,
+      // Primary: popup false with timeout
+      let timeoutId
+      console.log('[Voice:primary] start')
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('VOICE_TIMEOUT')),
+          PRIMARY_TIMEOUT_MS
+        )
       })
 
-      const transcript = result?.matches?.[0]?.trim()
-      if (transcript) {
-        console.log('[Voice] Result:', transcript)
-        return transcript
+      try {
+        const result = await Promise.race([
+          SpeechRecognition.start({
+            language: 'ru-RU',
+            maxResults: 1,
+            partialResults: false,
+            popup: false,
+          }),
+          timeoutPromise,
+        ])
+
+        const transcript = result?.matches?.[0]?.trim()
+        if (transcript) {
+          console.log('[Voice:primary] result:', transcript)
+          return transcript
+        }
+        console.log('[Voice:primary] empty -> fallback')
+      } catch (primaryErr) {
+        if (isCancelError(primaryErr?.message ?? primaryErr)) {
+          console.log('[Voice:primary] cancelled')
+          return null
+        }
+        console.log('[Voice:primary] timeout/error:', primaryErr?.message ?? primaryErr)
+      } finally {
+        clearTimeout(timeoutId)
       }
-      return null
 
-    } catch (err) {
-      setIsListening(false) // Ensure state reset
+      // Ensure non-popup recognizer is stopped before fallback
+      try {
+        await SpeechRecognition.stop()
+      } catch {}
 
-      if (isCancelError(err)) {
-        console.log('[Voice] Cancelled')
+      // Fallback: popup true
+      console.log('[Voice:fallback] start')
+      try {
+        const fallbackResult = await SpeechRecognition.start({
+          language: 'ru-RU',
+          maxResults: 1,
+          prompt: 'Что хотите посмотреть?',
+          partialResults: false,
+          popup: true,
+        })
+
+        const transcript = fallbackResult?.matches?.[0]?.trim()
+        if (transcript) {
+          console.log('[Voice:fallback] result:', transcript)
+          return transcript
+        }
+        return null
+      } catch (fallbackErr) {
+        if (isCancelError(fallbackErr?.message ?? fallbackErr)) {
+          console.log('[Voice:fallback] cancelled')
+          return null
+        }
+
+        console.warn('[Voice:fallback] error:', fallbackErr)
+        showToast('🎤 Голос не распознан, попробуйте снова')
         return null
       }
-
-      console.warn('[Voice] Recognition error:', err)
-      showToast('🎤 Ошибка распознавания')
-      return null
     } finally {
       setIsListening(false)
     }
