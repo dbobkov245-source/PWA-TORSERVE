@@ -1,7 +1,7 @@
 {
-    "version": "3.8.2",
-    "versionCode": 8,
+    "version": "3.8.3",
+    "versionCode": 9,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.8.2/app-debug.apk",
-    "notes": "v3.8.2:\n- 🎤 Re-enabled Hybrid Voice Search (primary popup:false, fallback popup:true)\n- 🐛 Fixed voice button freeze by removing temporary popup-only hotfix\n- ✅ Restored and expanded useVoiceSearch tests (8/8 passing)\n\nv3.8.1 (Hotfix):\n- 🔧 Disable Hybrid Voice Search (return to reliable popup mode)\n- 🐛 Fix permissions check freeze"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.8.3/app-debug.apk",
+    "notes": "v3.8.3:\n- 🛠 Fixed voice-search button freeze (guarded stop() before fallback)\n- 🎤 Hybrid Voice Search stabilized on Android TV (primary popup:false, fallback popup:true)\n- ✅ useVoiceSearch tests updated and passing (9/9)\n\nv3.8.2:\n- 🎤 Re-enabled Hybrid Voice Search (primary popup:false, fallback popup:true)\n- ✅ Restored and expanded useVoiceSearch tests\n\nv3.8.1 (Hotfix):\n- 🔧 Disable Hybrid Voice Search (return to reliable popup mode)"
 }
