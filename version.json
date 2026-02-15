@@ -1,7 +1,7 @@
 {
-    "version": "3.7.2",
-    "versionCode": 5,
+    "version": "3.8.0",
+    "versionCode": 6,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.7.2/app-debug.apk",
-    "notes": "Voice Search Fix: убран prompt() fallback, добавлен toast"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.8.0/app-debug.apk",
+    "notes": "v3.8.0:\n- 🎤 Hybrid Voice Search: ускорен поиск, исправлена совместимость с Sony (Android 10) и TCL.\n- 🎨 Обновлён дизайн боковой панели (убрана тень, улучшены градиенты).\n- 🚀 Оптимизация производительности."
 }

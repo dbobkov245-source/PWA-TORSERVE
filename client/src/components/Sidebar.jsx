@@ -54,15 +54,12 @@ const Sidebar = ({
     return (
         <div
             className={`
-                fixed left-0 top-0 bottom-0 z-40 bg-gradient-to-b from-[#1a1a2e] to-[#0f0f1a] border-r border-white/10
-                transition-all duration-300 ease-out flex flex-col py-6
-                ${isOpen ? 'w-64 translate-x-0 shadow-2xl' : 'w-0 -translate-x-full overflow-hidden'}
+                fixed left-0 top-0 bottom-0 z-40 bg-[#141414]
+                transition-all duration-300 ease-out flex flex-col pt-4 pb-6
+                ${isOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full overflow-hidden'}
             `}
         >
-            {/* Logo */}
-            <div className="mb-6 px-0 flex justify-center sticky top-0 bg-black z-10 w-full">
-                <span className="text-2xl">🌀</span>
-            </div>
+
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-hide px-2">
                 {allItems.map((item, index) => (

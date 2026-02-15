@@ -362,8 +362,8 @@ const HomePanel = ({
                 onClose={() => setShowSidebar(false)}
             />
 
-            <div className={`flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 scale-[0.95] pointer-events-none' : 'translate-x-0 scale-100'}`}>
-                <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-[#141414] to-[#141414]" />
+            <div className={`flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
+                <div className="absolute inset-0 bg-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
                 <div className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">

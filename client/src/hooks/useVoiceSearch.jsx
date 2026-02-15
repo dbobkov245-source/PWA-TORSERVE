@@ -50,6 +50,19 @@ const VoiceToast = ({ message, onDismiss }) => {
   )
 }
 
+/** Пользовательская отмена (Back / cancel) */
+function isCancelError(err) {
+  // Устойчивость к структуре ошибки
+  const message = err?.message ?? err
+  const m = String(message).toLowerCase()
+
+  return (
+    m === '0' ||           // Android popup: RESULT_CANCELED
+    m === 'cancelled' ||   // iOS / legacy
+    m === 'canceled'       // Typo variant
+  )
+}
+
 // ─── Hook ──────────────────────────────────────────────────────
 
 export function useVoiceSearch() {
@@ -63,7 +76,7 @@ export function useVoiceSearch() {
       .then(({ available }) => {
         availableRef.current = available
         if (available) {
-          SpeechRecognition.requestPermissions().catch(() => {})
+          SpeechRecognition.requestPermissions().catch(() => { })
         }
       })
       .catch(() => {
@@ -108,37 +121,78 @@ export function useVoiceSearch() {
       return null
     }
 
-    // 3. Start recognition
-    try {
-      setIsListening(true)
-      const result = await SpeechRecognition.start({
-        language: 'ru-RU',
-        maxResults: 1,
-        prompt: 'Что хотите посмотреть?',
-        partialResults: false,
-        popup: true,
-      })
-      setIsListening(false)
+    // 3. Start recognition (Hybrid Flow)
+    const TIMEOUT_MS = 4000
+    setIsListening(true)
 
-      const transcript = result?.matches?.[0]?.trim()
-      if (transcript) {
-        return transcript
+    try {
+      // ── Primary: popup:false ──
+      let timeoutId
+      console.log('[Voice:primary] start')
+
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('VOICE_TIMEOUT')), TIMEOUT_MS)
+      })
+
+      try {
+        const result = await Promise.race([
+          SpeechRecognition.start({
+            language: 'ru-RU',
+            maxResults: 1,
+            partialResults: false,
+            popup: false,
+          }),
+          timeoutPromise,
+        ])
+        clearTimeout(timeoutId)
+
+        const transcript = result?.matches?.[0]?.trim()
+        if (transcript) {
+          console.log('[Voice:primary] result:', transcript)
+          return transcript
+        }
+        console.log('[Voice:primary] empty → fallback')
+      } catch (primaryErr) {
+        clearTimeout(timeoutId)
+
+        if (isCancelError(primaryErr)) {
+          console.log('[Voice:primary] cancelled')
+          return null
+        }
+        console.log('[Voice:primary] timeout/error:', primaryErr?.message)
       }
 
-      // Empty result = no speech detected, silent return (no toast)
-      return null
-    } catch (err) {
-      setIsListening(false)
+      // Гарантированный stop перед fallback (RecognitionService busy fix)
+      try { await SpeechRecognition.stop() } catch { }
 
-      // error.message === "0" means cancel/back pressed — silent return
-      if (err?.message === '0' || err?.message === 'Cancelled') {
+      // ── Fallback: popup:true ──
+      console.log('[Voice:fallback] start')
+      try {
+        const fallbackResult = await SpeechRecognition.start({
+          language: 'ru-RU',
+          maxResults: 1,
+          prompt: 'Что хотите посмотреть?',
+          partialResults: false,
+          popup: true,
+        })
+
+        const transcript = fallbackResult?.matches?.[0]?.trim()
+        if (transcript) {
+          console.log('[Voice:fallback] result:', transcript)
+          return transcript
+        }
+        return null
+      } catch (fallbackErr) {
+        if (isCancelError(fallbackErr)) {
+          console.log('[Voice:fallback] cancelled')
+          return null
+        }
+        console.warn('[Voice:fallback] error:', fallbackErr)
+        showToast('🎤 Голос не распознан, попробуйте снова')
         return null
       }
-
-      // Any other error — show toast, NOT prompt()
-      console.warn('[VoiceSearch] Recognition error:', err)
-      showToast('🎤 Голос не распознан, попробуйте снова')
-      return null
+    } finally {
+      setIsListening(false)
     }
   }, [showToast])
 
