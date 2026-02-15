@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.8.4] - 2026-02-15 (Hotfix)
+
+### Fixed
+- **Voice Search:** Исправлен кейс, когда требовалось дважды нажимать кнопку микрофона (добавлены дедупликация in-flight вызовов и retry fallback при `RecognitionService busy`).
+- **Voice Search:** Стабилизирован переход `primary -> fallback` после timeout (защитный `stop()` + небольшая задержка перед popup-режимом).
+- **Auto-Update:** Исправлен переход в установщик APK (добавлена проверка и явная обработка разрешения `Install unknown apps`, запуск через `ACTION_INSTALL_PACKAGE`).
+- **Auto-Update:** Устранена повторная загрузка APK после принудительного перезапуска приложения (переиспользование кэшированного APK через pending-install state).
+
 ## [3.8.1] - 2026-02-15 (Hotfix)
 
 ### Fixed

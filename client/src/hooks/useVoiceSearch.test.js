@@ -62,7 +62,7 @@ describe('useVoiceSearch (Hybrid)', () => {
     let transcript
     await act(async () => {
       const promise = result.current.startListening()
-      await vi.advanceTimersByTimeAsync(4000)
+      await vi.advanceTimersByTimeAsync(5000)
       transcript = await promise
     })
 
@@ -92,7 +92,7 @@ describe('useVoiceSearch (Hybrid)', () => {
     let transcript
     await act(async () => {
       const promise = result.current.startListening()
-      await vi.advanceTimersByTimeAsync(4200)
+      await vi.advanceTimersByTimeAsync(5600)
       transcript = await promise
     })
 
@@ -172,7 +172,7 @@ describe('useVoiceSearch (Hybrid)', () => {
       let transcript
       await act(async () => {
         const promise = result.current.startListening()
-        await vi.advanceTimersByTimeAsync(4000)
+        await vi.advanceTimersByTimeAsync(5000)
         transcript = await promise
       })
 
@@ -198,7 +198,7 @@ describe('useVoiceSearch (Hybrid)', () => {
       let transcript
       await act(async () => {
         const promise = result.current.startListening()
-        await vi.advanceTimersByTimeAsync(4000)
+        await vi.advanceTimersByTimeAsync(5000)
         transcript = await promise
       })
 
@@ -212,6 +212,49 @@ describe('useVoiceSearch (Hybrid)', () => {
     } finally {
       warnSpy.mockRestore()
     }
+  })
+
+  it('retries fallback once on "RecognitionService busy"', async () => {
+    vi.useFakeTimers()
+    mockStart
+      .mockImplementationOnce(() => new Promise(() => {})) // primary hangs -> timeout
+      .mockRejectedValueOnce(new Error('RecognitionService busy')) // fallback attempt 1
+      .mockResolvedValueOnce({ matches: ['Терминатор'] }) // fallback attempt 2
+
+    const { result } = renderHook(() => useVoiceSearch())
+
+    let transcript
+    await act(async () => {
+      const promise = result.current.startListening()
+      await vi.advanceTimersByTimeAsync(7000)
+      transcript = await promise
+    })
+
+    expect(transcript).toBe('Терминатор')
+    expect(mockStart).toHaveBeenCalledTimes(3)
+    expect(mockStop).toHaveBeenCalledTimes(2)
+  })
+
+  it('deduplicates concurrent startListening calls', async () => {
+    vi.useFakeTimers()
+    mockStart
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ matches: ['Начало'] })
+
+    const { result } = renderHook(() => useVoiceSearch())
+
+    let transcript1
+    let transcript2
+    await act(async () => {
+      const p1 = result.current.startListening()
+      const p2 = result.current.startListening()
+      await vi.advanceTimersByTimeAsync(5000)
+      ;[transcript1, transcript2] = await Promise.all([p1, p2])
+    })
+
+    expect(transcript1).toBe('Начало')
+    expect(transcript2).toBe('Начало')
+    expect(mockStart).toHaveBeenCalledTimes(2)
   })
 
   it('resets isListening to false after completion', async () => {

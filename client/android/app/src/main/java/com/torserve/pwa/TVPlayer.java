@@ -5,6 +5,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.Plugin;
@@ -261,17 +262,41 @@ public class TVPlayer extends Plugin {
         }
 
         try {
+            // Android 8+: app-level "install unknown apps" gate can block installer launch.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !getContext().getPackageManager().canRequestPackageInstalls()) {
+                Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                settingsIntent.setData(Uri.parse("package:" + getContext().getPackageName()));
+                settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(settingsIntent);
+                call.reject("Install permission not granted. Enable 'Install unknown apps' for this app.");
+                return;
+            }
+
             Uri contentUri = FileProvider.getUriForFile(
                     getContext(),
                     getContext().getPackageName() + ".fileprovider",
                     file);
 
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+            installIntent.setData(contentUri);
+            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+            installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
 
-            getContext().startActivity(intent);
+            if (installIntent.resolveActivity(getContext().getPackageManager()) != null) {
+                getContext().startActivity(installIntent);
+                call.resolve();
+                return;
+            }
+
+            // Fallback for OEMs that don't expose ACTION_INSTALL_PACKAGE
+            Intent viewIntent = new Intent(Intent.ACTION_VIEW);
+            viewIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+            viewIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContext().startActivity(viewIntent);
             call.resolve();
         } catch (Exception e) {
             call.reject("Error installing APK: " + e.getMessage());

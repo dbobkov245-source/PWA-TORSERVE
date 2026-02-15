@@ -19,12 +19,16 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
         setStatus('downloading');
         setProgress(0);
         try {
-            await downloadAndInstall(updateInfo.url, (pct) => setProgress(pct));
+            await downloadAndInstall(
+                updateInfo.url,
+                (pct) => setProgress(pct),
+                { version: updateInfo.version }
+            );
         } catch (e) {
             setStatus('error');
             setErrorMsg(e.message || 'Ошибка загрузки');
         }
-    }, [updateInfo.url]);
+    }, [updateInfo.url, updateInfo.version]);
 
     return (
         <div className="details-overlay" style={{ zIndex: 9999 }}>
