@@ -20,10 +20,10 @@ import { withRetry, retryPredicates } from '../utils/retry.js'
 
 const log = logger.child('JacredProvider')
 
-// Jacred mirrors (only working ones)
+// Jacred mirrors — HTTP first (HTTPS often blocked by ISP on port 443)
 const JACRED_MIRRORS = [
-    { host: 'jacred.xyz', port: 443, protocol: 'https' },
     { host: 'jacred.xyz', port: 80, protocol: 'http' },
+    { host: 'jacred.xyz', port: 443, protocol: 'https' },
 ]
 
 // User-Agent rotation to avoid rate limiting
