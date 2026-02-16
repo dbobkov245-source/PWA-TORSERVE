@@ -36,6 +36,9 @@ const TRACKER_FETCH_OPTS = {
 export class RuTrackerProvider extends BaseProvider {
     name = 'rutracker'
 
+    /** @type {'disabled'|'not_configured'|null} */
+    disableReason = null
+
     constructor() {
         super()
         this.sessionCookie = null
@@ -44,7 +47,10 @@ export class RuTrackerProvider extends BaseProvider {
         this.password = process.env.RUTRACKER_PASSWORD || ''
 
         if (!this.login || !this.password) {
-            log.warn('RuTracker: RUTRACKER_LOGIN/PASSWORD not set. Search may fail or return empty results.')
+            // STAB-B2: Skip provider entirely when credentials are missing
+            this.enabled = false
+            this.disableReason = 'not_configured'
+            log.info('RuTracker disabled: RUTRACKER_LOGIN/PASSWORD not set')
         } else {
             this._loadSession()
         }
@@ -206,7 +212,7 @@ export class RuTrackerProvider extends BaseProvider {
         // FIX-RT-2: Verify login actually succeeded
         // RuTracker returns cookies even on failed login, so check the body
         const body = typeof response.data === 'string' ? response.data : ''
-        
+
         // Check for known error patterns in response
         if (body.includes('login-form-full') || body.includes('Введённый пароль неверен')) {
             log.error('Login failed: credentials rejected', { mirror })

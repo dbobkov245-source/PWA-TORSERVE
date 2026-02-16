@@ -14,6 +14,7 @@
 
 import { providerManager } from './providers/index.js'
 import { searchCache } from './searchCache.js'
+import { preflightResults, getPreflightStats } from './magnetPreflight.js'
 import { logger } from './utils/logger.js'
 
 const log = logger.child('Aggregator')
@@ -236,21 +237,35 @@ export async function search(query, options = {}) {
         providerStats[p.name] = { count: 0, status: 'circuit_open' }
     }
 
+    // STAB-B3: Add disabled/not_configured providers to stats
+    const allProviders = providerManager.getAll()
+    for (const p of allProviders) {
+        if (!p.enabled && !providerStats[p.name]) {
+            providerStats[p.name] = {
+                count: 0,
+                status: p.disableReason || 'disabled'
+            }
+        }
+    }
+
     // Deduplicate by infohash
     const deduped = deduplicateByInfohash(allResults)
 
+    // STAB-F: Preflight probe + playability sorting
+    const enriched = await preflightResults(deduped)
+
     // Store in cache if we got results
-    if (deduped.length > 0 && !options.skipCacheWrite) {
-        searchCache.set(query, deduped, providerStats)
+    if (enriched.length > 0 && !options.skipCacheWrite) {
+        searchCache.set(query, enriched, providerStats)
     }
 
     log.info('✅ Aggregation complete', {
-        totalResults: deduped.length,
+        totalResults: enriched.length,
         fromProviders: Object.keys(providerStats).length,
         errors: errors.length
     })
 
-    return { results: deduped, errors, providers: providerStats, cached: false }
+    return { results: enriched, errors, providers: providerStats, cached: false }
 }
 
 /**
@@ -272,6 +287,7 @@ export function getProvidersStatus() {
         name: p.name,
         enabled: p.enabled,
         healthy: p.isHealthy(),
+        disableReason: p.disableReason || null,
         circuitOpen: isCircuitOpen(p.name),
         failures: getCircuitState(p.name).failures
     }))
@@ -294,6 +310,7 @@ export function getProvidersDiagnostics() {
             name: p.name,
             enabled: p.enabled,
             healthy: p.isHealthy(),
+            disableReason: p.disableReason || null,
             circuitOpen,
             failures: circuit.failures,
             circuitOpenedAt,
@@ -309,6 +326,11 @@ export function getProvidersDiagnostics() {
 export function getCacheStats() {
     return searchCache.getStats()
 }
+
+/**
+ * STAB-F: Get preflight diagnostics
+ */
+export { getPreflightStats }
 
 /**
  * Reset circuit breaker for a provider

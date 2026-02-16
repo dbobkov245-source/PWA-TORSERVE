@@ -25,6 +25,19 @@ const TRACKER_FETCH_OPTS = {
 export class TorLookProvider extends BaseProvider {
     name = 'torlook'
 
+    /** @type {'disabled'|'not_configured'|null} */
+    disableReason = null
+
+    constructor() {
+        super()
+        // STAB-B1: Disabled by default, enable via TORLOOK_ENABLED=1
+        if (process.env.TORLOOK_ENABLED !== '1') {
+            this.enabled = false
+            this.disableReason = 'disabled'
+            log.info('TorLook disabled (set TORLOOK_ENABLED=1 to enable)')
+        }
+    }
+
     /**
      * Search torrents on TorLook
      */

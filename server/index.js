@@ -296,7 +296,7 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 // Stage 5: Client/PWA Improvements
 // ─────────────────────────────────────────────────────────────
 
-import { search as aggregatorSearch, getProvidersStatus, getProvidersDiagnostics } from './aggregator.js'
+import { search as aggregatorSearch, getProvidersStatus, getProvidersDiagnostics, getPreflightStats } from './aggregator.js'
 import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
 
 /**
@@ -399,6 +399,7 @@ app.get('/api/providers/diagnostics', (req, res) => {
     const providers = getProvidersDiagnostics()
     res.json({
         providers,
+        preflight: getPreflightStats(),
         timestamp: Date.now()
     })
 })
