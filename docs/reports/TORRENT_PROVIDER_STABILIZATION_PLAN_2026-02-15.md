@@ -2,16 +2,16 @@
 
 Дата: 15 февраля 2026
 Последнее обновление: 16 февраля 2026
-Статус: Updated after Android runtime + E2E torrent monitoring (AVD)
+Статус: Этапы 0–D реализованы и задеплоены на NAS. Остаётся Этап E (cutover).
 
 ## Статус этапов
 
 - Этап 0 (Android test harness): ✅ Выполнено
 - Этап A (DoH lookup fix): ✅ Выполнено
-- Этап B (TorLook flag + RuTracker config state): ✅ Выполнено
-- Этап C (диагностические скрипты): ✅ Выполнено
-- Этап F (preflight "живости" magnet + playable ranking): ✅ Выполнено
-- Этап D (TorznabProvider): ✅ Выполнено
+- Этап B (TorLook flag + RuTracker config state): ✅ Выполнено — deployed 16.02.2026
+- Этап C (диагностические скрипты): ✅ Выполнено — deployed 16.02.2026
+- Этап F (preflight "живости" magnet + playable ranking): ✅ Выполнено — deployed 16.02.2026
+- Этап D (TorznabProvider): ✅ Выполнено — deployed 16.02.2026
 - Этап E (cutover): 📝 Запланировано
 
 ## 1. Ситуация сейчас (актуализация на 16 февраля 2026)
@@ -311,3 +311,75 @@ Runtime:
 4. Диагностика провайдеров показывает причину каждого неуспеха без ручного дебага кода.
 5. Для типовых запросов preflight снижает долю "мертвых" magnet в верхней части выдачи.
 6. Тест range-stream по top результатам показывает воспроизводимый старт без ручного перебора большого числа ссылок.
+
+## 8. Итоги реализации (16 февраля 2026)
+
+### Этап B — Управляемое отключение провайдеров
+
+Изменённые файлы:
+- `server/providers/TorLookProvider.js` — добавлен env-flag `TORLOOK_ENABLED=1`, выключен по умолчанию, `disableReason='disabled'`
+- `server/providers/RuTrackerProvider.js` — при отсутствии `RUTRACKER_LOGIN`/`PASSWORD` провайдер ставится в `enabled=false`, `disableReason='not_configured'`, без попыток логина
+- `server/aggregator.js` — `disableReason` отображается в `getProvidersStatus()` и `getProvidersDiagnostics()`, disabled-провайдеры видны в stats поиска
+
+### Этап C — Диагностические скрипты
+
+Новые файлы:
+- `server/debug_doh.js` — резолвит 7 хостов через DoH (jacred, rutracker mirrors, rutor mirrors, torlook, tmdb), отчёт по провайдерам
+- `server/test_providers.js` — smoke-тест всех провайдеров с query (default: "dune"), показывает SKIPPED с причиной для disabled, enable hints
+
+### Этап F — Preflight "живости" magnet
+
+Новые файлы:
+- `server/magnetPreflight.js` — lightweight magnet probe через `torrent-stream`:
+  - `probeMagnet()`: 10 connections, timeout 8s, peer check через swarm.wires
+  - `preflightResults()`: обогащает top-N результатов полями `playabilityStatus`, `playabilityScore`, `preflight`
+  - Статусы: `playable` (peers > 0 при metadata), `risky` (metadata без peers), `dead` (timeout без peers), `unchecked`, `unknown`
+  - Cache по infoHash (TTL 5 min, max 200 entries, LRU eviction)
+  - Concurrency: 3 параллельных probe, top-N: 8
+
+Изменённые файлы:
+- `server/aggregator.js` — вызов `preflightResults()` после дедупликации, экспорт `getPreflightStats`
+- `server/index.js` — preflight stats в `/api/providers/diagnostics`
+
+Env-переменные:
+- `MAGNET_PREFLIGHT_ENABLED` — включён по умолчанию, `=0` для отключения
+- `PREFLIGHT_TIMEOUT_MS` — timeout probe (default: 8000)
+- `PREFLIGHT_CONCURRENCY` — параллелизм (default: 3)
+- `PREFLIGHT_TOP_N` — сколько top результатов проверять (default: 8)
+
+### Этап D — TorznabProvider
+
+Новые файлы:
+- `server/providers/TorznabProvider.js` — Torznab-совместимый провайдер (Jackett/Prowlarr):
+  - Парсинг XML (RSS 2.0 + `<torznab:attr>`) через regex, без внешних зависимостей
+  - Только результаты с magnet (не ломает `POST /api/add`)
+  - Native `fetch()` с `AbortController` timeout
+  - Извлекает `jackettindexer`/`prowlarrindexer` как имя трекера
+
+Изменённые файлы:
+- `server/providers/index.js` — импорт, экспорт и регистрация TorznabProvider
+- `server/test_providers.js` — enable hint для torznab
+
+Env-переменные:
+- `TORZNAB_ENABLED=1` — включить провайдер (выключен по умолчанию)
+- `TORZNAB_URL` — URL Torznab API
+- `TORZNAB_API_KEY` — API ключ
+- `TORZNAB_TIMEOUT` — timeout запроса (default: 15000)
+- `TORZNAB_LIMIT` — max результатов (default: 50)
+
+### Верификация на NAS (192.168.1.70)
+
+Контейнер: `pwa-torserve1` — `healthy`
+
+Провайдеры (по `/api/providers/diagnostics`):
+| Provider | Enabled | disableReason |
+|----------|---------|---------------|
+| jacred | true | — |
+| rutracker | true | — (креды заданы в Docker env) |
+| rutor | true | — |
+| torlook | false | disabled |
+| torznab | false | disabled |
+
+Preflight: enabled, timeout=8s, concurrency=3, topN=8
+
+Коммит: `75dc102` (feat: stabilize torrent providers (stages B+C+F+D))
