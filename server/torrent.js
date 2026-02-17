@@ -238,8 +238,8 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         // Check active engines by infoHash
         for (const engine of engines.values()) {
             if (engine.infoHash?.toLowerCase() === infoHash) {
-                 console.log(`[Torrent] Dedup: Engine already exists for hash ${infoHash}`)
-                 return resolve(formatEngine(engine))
+                console.log(`[Torrent] Dedup: Engine already exists for hash ${infoHash}`)
+                return resolve(formatEngine(engine))
             }
         }
 
@@ -290,6 +290,10 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearTimeout(engine._timeoutId)
                 delete engine._timeoutId
             }
+            if (engine._logInterval) {
+                clearInterval(engine._logInterval)
+                delete engine._logInterval
+            }
 
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
@@ -298,7 +302,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             // ────────────────────────────────────────────────────────
             if (engine.files && engine.files.length > 0) {
                 // 1. Filter video extensions
-                const videoFiles = engine.files.filter(f => 
+                const videoFiles = engine.files.filter(f =>
                     /\.(mp4|mkv|avi|webm|mov|mpg|mpeg)$/i.test(f.name)
                 )
 
@@ -310,12 +314,12 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                     const largestVideo = videoFiles[0]
                     console.log(`[Torrent] Kickstart: Prioritizing largest video: ${largestVideo.name} (${(largestVideo.length / 1024 / 1024).toFixed(1)} MB)`)
                     largestVideo.select()
-                    
+
                     // Also enable priority strategy
                     const idx = engine.files.indexOf(largestVideo)
                     if (idx !== -1) prioritizeFileInternal(engine, idx)
                 } else {
-                     console.log('[Torrent] IsKickstart: No video files found, nothing selected automatically.')
+                    console.log('[Torrent] IsKickstart: No video files found, nothing selected automatically.')
                 }
             }
 
@@ -339,6 +343,10 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearTimeout(engine._timeoutId)
                 delete engine._timeoutId
             }
+            if (engine._logInterval) {
+                clearInterval(engine._logInterval)
+                delete engine._logInterval
+            }
 
             console.error('[Torrent] Engine error:', err.message)
             engine.destroy()
@@ -347,7 +355,17 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
         // 🔥 STRATEGY 3: Increased Timeout (90s)
         // ✅ FIX: Сохраняем ID таймаута для очистки при успешном подключении
+        // 📊 DIAGNOSTICS: Log connection progress every 5s
+        const startTime = Date.now()
+        const logInterval = setInterval(() => {
+            const peers = engine.swarm?.wires?.length || 0
+            const candidates = engine.swarm?.queued || 0
+            console.log(`[Torrent] ${infoHash.slice(0, 8)} waiting... ${Math.round((Date.now() - startTime) / 1000)}s, peers: ${peers}, queued: ${candidates}`)
+        }, 5000)
+
+        // ✅ FIX: Сохраняем ID таймаута для очистки при успешном подключении
         const timeoutId = setTimeout(() => {
+            clearInterval(logInterval) // Stop logging
             if (!engines.has(magnetURI)) {
                 console.warn('[Torrent] Timeout: no peers found')
                 engine.destroy()
@@ -357,6 +375,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
         // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
         engine._timeoutId = timeoutId
+        engine._logInterval = logInterval // Store to clear on ready/error
     })
 }
 
@@ -419,7 +438,25 @@ export const getTorrent = (infoHash) => {
 
 // Get raw engine for streaming (with createReadStream)
 export const getRawTorrent = (infoHash) => {
-    return engines.get(infoHash) || null
+    // 1. Check active engines
+    let engine = engines.get(infoHash)
+    if (engine) return engine
+
+    // 2. Check frozen torrents (Auto-Restore)
+    if (frozenTorrents.has(infoHash)) {
+        console.log(`[Keep-Alive] 🧊 Auto-restoring frozen torrent for stream: ${infoHash}`)
+        const frozen = frozenTorrents.get(infoHash)
+        engine = frozen.engine
+
+        // Restore to active map
+        engines.set(infoHash, engine)
+        if (frozen.magnetURI) engines.set(frozen.magnetURI, engine)
+
+        frozenTorrents.delete(infoHash)
+        return engine
+    }
+
+    return null
 }
 
 // ────────────────────────────────────────────────────────

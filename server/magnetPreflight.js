@@ -128,6 +128,7 @@ function probeMagnet(magnet) {
         engine.on('ready', () => {
             clearTimeout(timeoutId)
             const peers = engine.swarm?.wires?.length || 0
+            log.debug('Probe ready', { magnet: magnet.slice(0, 40), peers }) // Log ready state
             if (peers > 0) {
                 finish('playable', peers)
             } else {
