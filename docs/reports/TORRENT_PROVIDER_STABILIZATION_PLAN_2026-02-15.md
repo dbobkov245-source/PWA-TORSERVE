@@ -383,3 +383,87 @@ Env-переменные:
 Preflight: enabled, timeout=8s, concurrency=3, topN=8
 
 Коммит: `75dc102` (feat: stabilize torrent providers (stages B+C+F+D))
+
+---
+
+## 9. Итоги реализации — Часть 2 (17 февраля 2026)
+
+### Проблема: ISP блокирует торрент-сайты на уровне TCP/IP
+
+**Диагностика:**
+- После деплоя на NAS все 3 провайдера (rutor, rutracker, jacred) показывали circuit breakers
+- Только jacred HTTP (port 80) работал, HTTPS (port 443) — timeout
+- rutor.info, rutracker.org полностью недоступны с NAS (ISP блокирует по IP)
+- Исторические логи показали, что блокировка началась 16 января (не связана с нашими изменениями)
+- Попытка использовать Cloudflare WARP провалилась — ISP блокирует `api.cloudflareclient.com`
+
+### Решение: Cloudflare Worker proxy с Promise.any race
+
+**Архитектура:**
+1. **CF Worker proxy** (`server/cf-worker-proxy.js`):
+   - Generic HTTP proxy для whitelist торрент-сайтов
+   - Буферизирует весь ответ (предотвращает ISP stream interruption)
+   - Передаёт cookies через `X-Set-Cookie-Json` header (CF Workers не могут форвардить multiple set-cookie)
+   - Форвардит headers через `X-Forward-*` prefix
+   - Deployed: `https://torrent-proxy.wakiseliguluseli17713.workers.dev`
+
+2. **SmartFetch race strategy** (`server/utils/doh.js`):
+   - `Promise.any([directPromise, workerPromise])` — запускаются одновременно
+   - Первый успешный ответ побеждает (без penalty за 10s direct timeout)
+   - `workerProxyFetch()` с header forwarding и cookie parsing из `X-Set-Cookie-Json`
+   - Fallback на direct error если оба failed
+
+3. **Provider timeouts** (`RutorProvider.js`, `RuTrackerProvider.js`):
+   - Уменьшены с 30-45s до 10s
+   - Оставляют 20s бюджет для Worker proxy в рамках агрегатора (30s PROVIDER_TIMEOUT)
+
+**Новые файлы:**
+- `server/cf-worker-proxy.js` — CF Worker proxy код (требует deploy на CF Dashboard)
+
+**Изменённые файлы:**
+- `server/utils/doh.js` — добавлен `WORKER_PROXY_URL` env, `workerProxyFetch()`, `Promise.any` race
+- `server/providers/RutorProvider.js` — timeout: 10000
+- `server/providers/RuTrackerProvider.js` — timeout: 10000
+- `server/providers/JacredProvider.js` — HTTP mirror first (commit c44b533)
+
+**Удалённые файлы:**
+- `patches/*` — stale copies (cleanup)
+
+**Env-переменные:**
+- `WORKER_PROXY_URL` — URL CF Worker proxy (set на NAS: `https://torrent-proxy.wakiseliguluseli17713.workers.dev`)
+
+### Результаты тестирования (17 февраля 2026, NAS 192.168.1.70)
+
+**До Worker proxy:**
+- jacred: 2 результата (HTTP only)
+- rutor: 0 (ISP block)
+- rutracker: 0 (ISP block)
+- **Итого: 2 результата**
+
+**После Worker proxy (query: "dune"):**
+- jacred: 50 результатов, 334ms ✅
+- rutor: **30 результатов, 1517ms** ✅ (через Worker)
+- rutracker: 0 (timeout — нужен обновлённый Worker для cookies)
+- **Итого: 80 результатов** (+3900% улучшение)
+
+**Worker proxy latency:**
+- Mac → Worker → rutor.info: **2.7s** (96KB response)
+- NAS → Worker → rutor.info: **~600ms** (Worker побеждает direct timeout в race)
+
+### Оставшиеся задачи для RuTracker
+
+**Требуется:** Обновить CF Worker на Cloudflare Dashboard:
+1. Открыть: Cloudflare Dashboard → Workers & Pages → `torrent-proxy`
+2. Edit Code → заменить содержимое на `server/cf-worker-proxy.js`
+3. Deploy
+
+**Обновлённый Worker включает:**
+- Буферизацию ответа (фикс для ISP stream interruption)
+- `X-Set-Cookie-Json` header (передача cookies для login flow)
+- Форвардинг Accept/Accept-Language/Referer headers
+
+**После обновления Worker:** RuTracker login flow (POST login.php → cookies → GET tracker.php) заработает через Worker proxy.
+
+**Коммиты:**
+- `c44b533` — fix: prioritize HTTP mirror for Jacred (ISP blocks port 443)
+- `23bb87e` — feat: add CF Worker proxy bypass for ISP-blocked torrent sites
