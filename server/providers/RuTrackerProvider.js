@@ -28,9 +28,10 @@ const RUTRACKER_MIRRORS = [
 const SESSION_FILE = path.join(process.cwd(), 'data', 'rutracker-session.json')
 
 // FIX-RT-1: smartFetch options for tracker connections
+// Timeout 10s: leaves room for Worker proxy fallback within aggregator's 30s limit
 const TRACKER_FETCH_OPTS = {
     doh: 'dns-only',  // Bypass DNS blocking, but DON'T substitute IP in TLS
-    timeout: 30000,
+    timeout: 10000,
 }
 
 export class RuTrackerProvider extends BaseProvider {

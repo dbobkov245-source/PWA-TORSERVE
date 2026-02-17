@@ -25,6 +25,9 @@ const CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 1000;
 const MAX_REDIRECTS = 5;
 const DEBUG = true;
 
+// CF Worker proxy for ISP-blocked sites (set via WORKER_PROXY_URL env)
+const WORKER_PROXY_URL = process.env.WORKER_PROXY_URL || '';
+
 // --- DoH PROVIDERS ---
 const DOH_PROVIDERS = [
     { name: 'Google', url: 'https://dns.google/resolve' },
@@ -242,6 +245,80 @@ export async function getSmartConfig(urlStr, baseOptions = {}) {
     }
 }
 
+// --- WORKER PROXY FETCH ---
+// Sends request through CF Worker when direct connection is ISP-blocked
+async function workerProxyFetch(urlStr, options = {}) {
+    if (!WORKER_PROXY_URL) return null;
+
+    const proxyUrl = `${WORKER_PROXY_URL}?url=${encodeURIComponent(urlStr)}`;
+    if (DEBUG) console.log(`[WorkerProxy] Trying ${urlStr} via ${WORKER_PROXY_URL}`);
+
+    const fetchOptions = {
+        method: options.method || 'GET',
+        headers: {},
+        signal: AbortSignal.timeout(options.timeout || 30000),
+    };
+
+    // Forward relevant headers via X-Forward-* prefix (Worker maps them back)
+    if (options.headers) {
+        const forwardHeaders = ['cookie', 'content-type', 'accept', 'accept-language', 'referer'];
+        for (const [key, value] of Object.entries(options.headers)) {
+            if (forwardHeaders.includes(key.toLowerCase())) {
+                fetchOptions.headers[`X-Forward-${key}`] = value;
+            }
+        }
+    }
+
+    if (options.body) {
+        fetchOptions.body = typeof options.body === 'object' ? JSON.stringify(options.body) : options.body;
+        if (!fetchOptions.headers['X-Forward-Content-Type'] && options.headers?.['Content-Type']) {
+            fetchOptions.headers['X-Forward-Content-Type'] = options.headers['Content-Type'];
+        }
+    }
+
+    const response = await fetch(proxyUrl, fetchOptions);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+
+    let data;
+    if (options.responseType === 'arraybuffer') {
+        data = buffer;
+    } else if (isJson && buffer.length > 0) {
+        try { data = JSON.parse(buffer.toString()); } catch { data = buffer.toString(); }
+    } else {
+        data = buffer.toString();
+    }
+
+    // Collect headers
+    const headers = {};
+    for (const [key, value] of response.headers.entries()) {
+        headers[key.toLowerCase()] = value;
+    }
+    // Restore set-cookie as array from CF Worker's custom header
+    // (Workers can't forward multiple set-cookie headers reliably)
+    const cookieJson = response.headers.get('x-set-cookie-json');
+    if (cookieJson) {
+        try {
+            headers['set-cookie'] = JSON.parse(cookieJson);
+        } catch { /* ignore parse errors */ }
+    }
+    // Fallback: also try Node fetch's getSetCookie()
+    if (!headers['set-cookie'] && response.headers.getSetCookie?.().length > 0) {
+        headers['set-cookie'] = response.headers.getSetCookie();
+    }
+
+    if (DEBUG) console.log(`[WorkerProxy] ✅ ${urlStr} -> HTTP ${response.status} (${buffer.length} bytes)`);
+
+    return {
+        data,
+        status: response.status,
+        headers,
+        resolvedIP: null,
+        dohMode: 'worker-proxy',
+    };
+}
+
 // --- SMART FETCH ---
 // FIX-1: doh option, FIX-2: redirect following, FIX-4: port, FIX-5: rejectUnauthorized
 export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
@@ -254,7 +331,7 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
     const isHttps = targetUrl.protocol === 'https:';
     const transport = isHttps ? https : http;
 
-    return new Promise((resolve, reject) => {
+    const directPromise = new Promise((resolve, reject) => {
         const requestOptions = {
             method: options.method || 'GET',
             headers: { ...config.headers },
@@ -397,6 +474,25 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
 
         req.end();
     });
+
+    // Race direct vs Worker proxy when WORKER_PROXY_URL is configured
+    // This eliminates the 10s direct timeout penalty before Worker fallback
+    if (WORKER_PROXY_URL && options.workerFallback !== false) {
+        const workerPromise = workerProxyFetch(urlStr, options);
+
+        // Attach no-op catch to both to prevent unhandled rejection from the loser
+        directPromise.catch(() => {});
+        workerPromise.catch(() => {});
+
+        // Promise.any: resolves with first fulfilled promise, rejects only if ALL fail
+        return Promise.any([directPromise, workerPromise]).catch(aggErr => {
+            // Both failed — throw the first (direct) error for clearer diagnostics
+            const directErr = aggErr.errors?.[0];
+            throw directErr || aggErr;
+        });
+    }
+
+    return directPromise;
 }
 
 // --- DIAGNOSTIC EXPORT ---

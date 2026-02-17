@@ -21,8 +21,10 @@ const RUTOR_MIRRORS = [
 ]
 
 // FIX-RU-1: smartFetch options for tracker connections
+// Timeout 10s: leaves room for Worker proxy fallback within aggregator's 30s limit
 const TRACKER_FETCH_OPTS = {
     doh: 'dns-only',  // Bypass DNS blocking, but DON'T substitute IP in TLS
+    timeout: 10000,
 }
 
 export class RutorProvider extends BaseProvider {
@@ -97,7 +99,6 @@ export class RutorProvider extends BaseProvider {
                 'Cache-Control': 'no-cache',
                 'Pragma': 'no-cache'
             },
-            timeout: 45000
         })
 
         // FIX-RU-2: Check HTTP status
