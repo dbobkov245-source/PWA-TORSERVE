@@ -28,8 +28,19 @@ const getHealthIcon = (health) => {
     }
 }
 
+const getPlayabilityMeta = (status, preflightPeers) => {
+    switch (status) {
+        case 'playable': return { icon: '🟢', label: preflightPeers > 0 ? `live ${preflightPeers}` : 'live' }
+        case 'risky': return { icon: '🟡', label: preflightPeers > 0 ? `risky ${preflightPeers}` : 'risky' }
+        case 'dead': return { icon: '🔴', label: 'dead' }
+        case 'unchecked': return { icon: '⚪', label: 'unchecked' }
+        default: return { icon: '⚪', label: 'unknown' }
+    }
+}
+
 const SearchResultItem = ({ item, index, onAdd }) => {
     const rowRef = useSpatialItem('search')
+    const playability = getPlayabilityMeta(item.playabilityStatus, item.preflight?.peers || 0)
 
     return (
         <div
@@ -41,6 +52,7 @@ const SearchResultItem = ({ item, index, onAdd }) => {
                 <div className="text-sm font-medium text-white truncate">{item.title}</div>
                 <div className="text-xs text-gray-400 flex flex-wrap gap-x-3 mt-1">
                     <span>📦 {item.size}</span>
+                    <span className="text-cyan-300">{playability.icon} {playability.label}</span>
                     <span className="text-green-400">{getHealthIcon(item.health)} {item.seeders}</span>
                     {item.tracker && <span className="text-purple-400">{item.tracker}</span>}
                     {item.dateTs && <span className="text-gray-500">{formatRelativeDate(item.dateTs)}</span>}
@@ -70,7 +82,7 @@ const SearchSort = ({ opt, active, onClick }) => {
             ref={spatialRef}
             onClick={onClick}
             className={`focusable px-4 py-2 rounded text-sm focus:ring-4 focus:ring-purple-500 focus:scale-110 transition-all ${active ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}
-        >{opt === 'seeders' ? '⬆ Сиды' : opt === 'size' ? '📦 Размер' : '📅 Дата'}</button>
+        >{opt === 'smart' ? '🧠 Smart' : opt === 'seeders' ? '⬆ Сиды' : opt === 'size' ? '📦 Размер' : '📅 Дата'}</button>
     )
 }
 
@@ -101,7 +113,7 @@ const SearchPanel = ({
     searchMeta = null
 }) => {
     const [activeFilters, setActiveFilters] = useState([])
-    const [sortBy, setSortBy] = useState('seeders')
+    const [sortBy, setSortBy] = useState('smart')
     const [providerTooltip, setProviderTooltip] = useState(null)
 
     // Centralized voice search (no more prompt() fallback)
@@ -132,6 +144,28 @@ const SearchPanel = ({
     const sortedResults = useMemo(() => {
         return [...filteredResults].sort((a, b) => {
             switch (sortBy) {
+                case 'smart': {
+                    const statusRank = (item) => {
+                        const s = item?.playabilityStatus
+                        const peers = item?.preflight?.peers || 0
+                        if (s === 'playable') return 4
+                        if (s === 'risky') return peers > 0 ? 3 : 1
+                        if (s === 'unchecked') return 2
+                        if (s === 'unknown') return 1
+                        return 0 // dead
+                    }
+
+                    const scoreDiff = (b.playabilityScore || 0) - (a.playabilityScore || 0)
+                    if (scoreDiff !== 0) return scoreDiff
+
+                    const statusDiff = statusRank(b) - statusRank(a)
+                    if (statusDiff !== 0) return statusDiff
+
+                    const peersDiff = (b.preflight?.peers || 0) - (a.preflight?.peers || 0)
+                    if (peersDiff !== 0) return peersDiff
+
+                    return (b.seeders || 0) - (a.seeders || 0)
+                }
                 case 'seeders': return (b.seeders || 0) - (a.seeders || 0)
                 case 'size': return (b.sizeBytes || 0) - (a.sizeBytes || 0)
                 case 'date': return (b.dateTs || 0) - (a.dateTs || 0)
@@ -246,7 +280,7 @@ const SearchPanel = ({
                         />
                     ))}
                     <div className="flex-1" />
-                    {['seeders', 'size', 'date'].map(opt => (
+                    {['smart', 'seeders', 'size', 'date'].map(opt => (
                         <SearchSort
                             key={opt}
                             opt={opt}

@@ -15,6 +15,7 @@ import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules }
 import { parseRange } from './utils/range.js'
 import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
+import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry } from './localLibrary.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -213,8 +214,27 @@ app.post('/api/speed-mode', (req, res) => {
     res.json(result)
 })
 
+function mergeTorrentAndLocalLibrary(torrents, localItems) {
+    const merged = [...torrents]
+    const seenHashes = new Set(torrents.map(t => t.infoHash))
+    const seenNames = new Set(
+        torrents
+            .map(t => (t?.name || '').trim().toLowerCase())
+            .filter(Boolean)
+    )
+
+    for (const item of localItems) {
+        const normalizedName = (item?.name || '').trim().toLowerCase()
+        if (seenHashes.has(item.infoHash)) continue
+        if (normalizedName && seenNames.has(normalizedName)) continue
+        merged.push(item)
+    }
+
+    return merged
+}
+
 // API: Status (with server state)
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
     const state = getServerState()
 
     // Return 503 with Retry-After for critical states
@@ -228,7 +248,15 @@ app.get('/api/status', (req, res) => {
     }
 
     const torrents = getAllTorrents()
-    const status = torrents.map(t => ({
+    try {
+        await refreshLocalLibrary()
+    } catch (err) {
+        console.warn('[LocalLibrary] Status refresh failed:', err.message)
+    }
+    const localItems = getLocalLibrarySnapshot()
+    const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
+
+    const status = combined.map(t => ({
         infoHash: t.infoHash,
         name: t.name,
         progress: t.progress,
@@ -238,7 +266,7 @@ app.get('/api/status', (req, res) => {
         downloadSpeed: t.downloadSpeed,
         numPeers: t.numPeers,
         eta: t.eta,
-        files: t.files.map(f => ({
+        files: (t.files || []).map(f => ({
             name: f.name,
             length: f.length,
             index: f.index
@@ -249,6 +277,15 @@ app.get('/api/status', (req, res) => {
         serverStatus: state.serverStatus,
         lastStateChange: state.lastStateChange,
         torrents: status
+    })
+})
+
+app.post('/api/library/rescan', async (req, res) => {
+    await refreshLocalLibrary(true)
+    const items = getLocalLibrarySnapshot()
+    res.json({
+        success: true,
+        count: items.length
     })
 })
 
@@ -745,19 +782,26 @@ app.get('/api/ai-picks', async (req, res) => {
 // Helper: sanitize filename for M3U metadata (remove newlines and control chars)
 const sanitizeM3U = (str) => str.replace(/[\r\n\x00-\x1f]/g, ' ').trim()
 
-app.get('/playlist.m3u', (req, res) => {
+app.get('/playlist.m3u', async (req, res) => {
     // 1. Determine Host (Synology IP or Localhost)
     const host = req.get('host') || `localhost:${PORT}`
     const protocol = req.protocol || 'http'
 
     // 2. Get All Torrents
     const torrents = getAllTorrents()
+    try {
+        await refreshLocalLibrary()
+    } catch (err) {
+        console.warn('[LocalLibrary] Playlist refresh failed:', err.message)
+    }
+    const localItems = getLocalLibrarySnapshot()
+    const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
 
     let m3u = '#EXTM3U\n'
     const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.mpg', '.mpeg']
 
     // 3. Filter & Generate
-    for (const torrent of torrents) {
+    for (const torrent of combined) {
         if (!torrent.files) continue;
 
         for (const file of torrent.files) {
@@ -805,13 +849,16 @@ const mimeMap = {
 // API: Remove Torrent (with File Hygiene)
 app.delete('/api/delete/:infoHash', async (req, res) => {
     const { infoHash } = req.params
+    const softDelete = req.query.soft === '1' || req.query.soft === 'true'
     const torrent = getTorrent(infoHash) // Get info BEFORE deletion
 
-    const success = removeTorrent(infoHash)
+    // Default behavior is hard delete (destroy engine + delete files).
+    // soft=1 keeps engine in frozen keep-alive cache without disk cleanup.
+    const success = removeTorrent(infoHash, !softDelete)
 
     if (success) {
         // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
-        if (torrent && torrent.name) {
+        if (!softDelete && torrent && torrent.name) {
             const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
             const fullPath = path.join(downloadPath, torrent.name)
 
@@ -820,8 +867,20 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
                 .then(() => console.log(`[File Hygiene] Successfully removed: ${fullPath}`))
                 .catch(e => console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`))
         }
-        res.json({ success: true, message: 'Deletion started asynchronously' })
+        res.json({
+            success: true,
+            mode: softDelete ? 'soft' : 'hard',
+            message: softDelete ? 'Torrent removed and frozen for keep-alive' : 'Deletion started asynchronously'
+        })
     } else {
+        const localDeleted = await deleteLocalEntry(infoHash)
+        if (localDeleted) {
+            return res.json({
+                success: true,
+                mode: 'local',
+                message: 'Local media deleted'
+            })
+        }
         res.status(404).json({ error: 'Torrent not found' })
     }
 })
@@ -830,26 +889,41 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
 app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const { infoHash, fileIndex } = req.params
     const rangeHeader = req.headers.range
+    const index = Number.parseInt(fileIndex, 10)
+    if (!Number.isInteger(index) || index < 0) {
+        return res.status(400).send('Invalid file index')
+    }
 
-    // 🔥 ACTIVATE TURBO MODE when user starts watching
-    boostTorrent(infoHash)
-
-    // Use raw engine to access createReadStream
     const engine = getRawTorrent(infoHash)
-    if (!engine) return res.status(404).send('Torrent not found')
+    let file = null
+    let localDiskPath = null
 
-    const file = engine.files?.[fileIndex]
-    if (!file) return res.status(404).send('File not found')
+    if (engine) {
+        // 🔥 ACTIVATE TURBO MODE when user starts watching
+        boostTorrent(infoHash)
 
-    // Smart Priority: Prioritize this file's first chunks for instant playback
-    prioritizeFile(infoHash, parseInt(fileIndex, 10))
+        file = engine.files?.[index]
+        if (!file) return res.status(404).send('File not found')
 
-    // 📺 Mark files as seen when playback starts (resets new episode counter)
-    markTorrentFilesSeen(infoHash)
+        // Smart Priority: Prioritize this file's first chunks for instant playback
+        prioritizeFile(infoHash, index)
 
-    // Detect Content-Type
-    const ext = path.extname(file.name).toLowerCase()
-    const contentType = mimeMap[ext] || 'application/octet-stream'
+        // 📺 Mark files as seen when playback starts (resets new episode counter)
+        markTorrentFilesSeen(infoHash)
+    } else {
+        try {
+            await refreshLocalLibrary()
+        } catch (err) {
+            console.warn('[LocalLibrary] Stream refresh failed:', err.message)
+        }
+        const localFile = getLocalFile(infoHash, index)
+        if (!localFile) return res.status(404).send('Torrent not found')
+        file = {
+            name: localFile.name,
+            length: localFile.length
+        }
+        localDiskPath = localFile.absPath
+    }
 
     // ────────────────────────────────────────────────────────
     // 🔥 FILESYSTEM FALLBACK: Serve from disk if file is fully downloaded
@@ -857,15 +931,21 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     // know about local files → createReadStream hangs with 0 peers
     // ────────────────────────────────────────────────────────
     const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
-    const diskPath = path.join(downloadPath, file.path)
-    let servingFromDisk = false
-    try {
-        const stat = fs.statSync(diskPath)
-        if (stat.size >= file.length) {
-            servingFromDisk = true
-            console.log(`[Stream] 📁 Serving from disk: ${file.name} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`)
-        }
-    } catch (e) { /* file doesn't exist on disk, use torrent-stream */ }
+    const diskPath = localDiskPath || path.join(downloadPath, file.path)
+    let servingFromDisk = Boolean(localDiskPath)
+    if (!servingFromDisk) {
+        try {
+            const stat = fs.statSync(diskPath)
+            if (stat.size >= file.length) {
+                servingFromDisk = true
+                console.log(`[Stream] 📁 Serving from disk: ${file.name} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`)
+            }
+        } catch (e) { /* file doesn't exist on disk, use torrent-stream */ }
+    }
+
+    // Detect Content-Type
+    const ext = path.extname(file.name).toLowerCase()
+    const contentType = mimeMap[ext] || 'application/octet-stream'
 
     const parsedRange = rangeHeader ? parseRange(rangeHeader, file.length) : null
 
@@ -892,8 +972,8 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // 🔥 READAHEAD: Prioritize chunks starting from seek position
         // This ensures smooth playback after seeking
-        if (!servingFromDisk) {
-            readahead(infoHash, parseInt(fileIndex, 10), start)
+        if (engine && !servingFromDisk) {
+            readahead(infoHash, index, start)
         }
 
         // Smart Progress Tracking
@@ -905,7 +985,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const now = Date.now()
         const lastUpdate = db.data.progress[trackKey]?.timestamp || 0
 
-        if (now - lastUpdate > 10000) {
+        if (engine && now - lastUpdate > 10000) {
             db.data.progress[trackKey] = {
                 timestamp: now,
                 position: start,

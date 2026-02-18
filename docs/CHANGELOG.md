@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Local Library Recovery:** Backend now indexes completed video files directly from `DOWNLOAD_PATH` and exposes them in `/api/status` as ready items, even when original torrent engines are not active.
+- **Local Streaming Path:** `/stream/:infoHash/:fileIndex` can now serve indexed local media files without active swarm.
+- **Library Rescan API:** Added `POST /api/library/rescan` for manual refresh of local media index.
+
+### Changed
+- **Delete Semantics:** `DELETE /api/delete/:infoHash` now defaults to hard delete (destroy engine + disk cleanup). Soft keep-alive is available only via `?soft=1`.
+- **Preflight Candidate Selection:** Magnet preflight now probes top-N by seeders, not provider arrival order.
+- **Preflight Cache TTL:** Configurable via `PREFLIGHT_CACHE_TTL_MS` (default reduced to `60000` ms).
+- **Search Ranking:** `risky` items with `preflight.peers=0` are ranked lower than `unchecked` to avoid stale swarm picks at the top.
+
+### Fixed
+- **Rutor Size Parsing:** Fixed `size: N/A` issue for rows where comment counter and size used separate right-aligned cells.
+- **Frozen Reuse Resume:** On frozen-engine reuse, swarm resume is forced to avoid idle stale state.
+
 ## [3.9.0] - 2026-02-15
 
 ### Fixed

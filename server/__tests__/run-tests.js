@@ -12,6 +12,7 @@ await import('./torrent.test.js')
 await import('./watchdog.test.js')
 await import('./range.test.js')
 await import('./autodownloader.test.js')
+await import('./providers-parsing.test.js')
 
 // Run all registered tests
 await runTests()

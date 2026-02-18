@@ -52,3 +52,32 @@ test('magnet URI format validation', () => {
     expect(validMagnet.startsWith('magnet:')).toBe(true)
     expect(invalidMagnet.startsWith('magnet:')).toBe(false)
 })
+
+test('metadata timeout policy: no peers should timeout immediately', async () => {
+    const { getMetadataTimeoutDecision } = await import('../torrent.js')
+    const decision = getMetadataTimeoutDecision({
+        peers: 0,
+        attempts: 0,
+        maxGraceCycles: 2
+    })
+
+    expect(decision).toBe('timeout')
+})
+
+test('metadata timeout policy: connected peers should get grace before timeout', async () => {
+    const { getMetadataTimeoutDecision } = await import('../torrent.js')
+
+    const first = getMetadataTimeoutDecision({
+        peers: 1,
+        attempts: 0,
+        maxGraceCycles: 2
+    })
+    const second = getMetadataTimeoutDecision({
+        peers: 1,
+        attempts: 2,
+        maxGraceCycles: 2
+    })
+
+    expect(first).toBe('grace')
+    expect(second).toBe('timeout')
+})

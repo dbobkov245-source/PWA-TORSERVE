@@ -17,7 +17,7 @@ const log = logger.child('Preflight')
 const PROBE_TIMEOUT_MS = parseInt(process.env.PREFLIGHT_TIMEOUT_MS || '8000', 10)
 const MAX_CONCURRENCY = parseInt(process.env.PREFLIGHT_CONCURRENCY || '3', 10)
 const TOP_N = parseInt(process.env.PREFLIGHT_TOP_N || '8', 10)
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL_MS = parseInt(process.env.PREFLIGHT_CACHE_TTL_MS || '60000', 10) // default 60s
 
 // Same public trackers as torrent.js for consistency
 const PUBLIC_TRACKERS = [
@@ -200,15 +200,17 @@ export async function preflightResults(results) {
         }))
     }
 
-    // Only preflight top-N results that have magnets
-    const withMagnet = []
+    // Preflight top-N by seeders (not by provider arrival order)
+    const magnetCandidates = results
+        .map((result, index) => ({ index, result }))
+        .filter(({ result }) => !!result.magnet)
+        .sort((a, b) => (b.result.seeders || 0) - (a.result.seeders || 0))
+
+    const withMagnet = magnetCandidates.slice(0, TOP_N)
+    const probeIndexes = new Set(withMagnet.map(x => x.index))
     const withoutMagnet = []
     for (let i = 0; i < results.length; i++) {
-        if (results[i].magnet && i < TOP_N) {
-            withMagnet.push({ index: i, result: results[i] })
-        } else {
-            withoutMagnet.push(i)
-        }
+        if (!probeIndexes.has(i)) withoutMagnet.push(i)
     }
 
     log.info('Starting preflight', { total: results.length, probing: withMagnet.length, topN: TOP_N })
@@ -219,7 +221,7 @@ export async function preflightResults(results) {
         const infoHash = extractInfoHash(result.magnet)
         const cached = infoHash ? getCached(infoHash) : null
         if (cached) {
-            return () => Promise.resolve(cached)
+            return () => Promise.resolve({ ...cached, source: 'cache' })
         }
         return () => probeMagnet(result.magnet).then(probe => {
             const entry = {
@@ -284,7 +286,10 @@ function calcScore(result, probe) {
 
     // Preflight status weight (dominant factor)
     if (probe?.status === 'playable') score += 1000
-    else if (probe?.status === 'risky') score += 400
+    else if (probe?.status === 'risky') {
+        // risky with 0 peers is often stale index data; rank below unchecked
+        score += (probe?.peers || 0) > 0 ? 450 : 120
+    }
     else if (probe?.status === 'dead') score += 0
     else score += 200 // unchecked — neutral
 

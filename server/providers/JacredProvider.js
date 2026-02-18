@@ -5,18 +5,16 @@
  * Implements Jacred API search with:
  * - Mirror rotation
  * - User-Agent rotation
- * - Retry with exponential backoff
+ * - DoH + Worker proxy fallback (via smartFetch)
  * - Rate limiting (429) handling
  * 
  * Security note: SSL validation disabled for Jacred mirrors
  * (see header comments in original jacred.js for explanation)
  */
 
-import https from 'https'
-import http from 'http'
 import { BaseProvider, formatSize } from './BaseProvider.js'
 import { logger } from '../utils/logger.js'
-import { withRetry, retryPredicates } from '../utils/retry.js'
+import { smartFetch } from '../utils/doh.js'
 
 const log = logger.child('JacredProvider')
 
@@ -37,6 +35,7 @@ const USER_AGENTS = [
 
 const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+const JACRED_TIMEOUT_MS = parseInt(process.env.JACRED_TIMEOUT_MS || '9000', 10)
 
 export class JacredProvider extends BaseProvider {
     name = 'jacred'
@@ -55,6 +54,7 @@ export class JacredProvider extends BaseProvider {
         log.info('🔍 Starting search', { query, mirrorsCount: JACRED_MIRRORS.length })
         let hadSuccessfulResponse = false
         let lastError = null
+        let allRateLimited = true
 
         for (let i = 0; i < JACRED_MIRRORS.length; i++) {
             const mirror = JACRED_MIRRORS[i]
@@ -62,20 +62,9 @@ export class JacredProvider extends BaseProvider {
             log.info('Trying mirror', { mirror: mirrorId, attempt: i + 1 })
 
             try {
-                const data = await withRetry(() => this._doSearch(mirror, query), {
-                    maxRetries: 2,
-                    baseDelayMs: 2500,
-                    shouldRetry: (err) => {
-                        // Fail fast on 429 to avoid locking search flow for user queries.
-                        if (err.message.includes('Rate limited')) return false
-                        return retryPredicates.transient(err)
-                    },
-                    onRetry: (err, attempt, delay) => {
-                        log.warn('Mirror retry', { mirror: mirrorId, attempt, delay: Math.round(delay), error: err.message })
-                    }
-                })
-
+                const data = await this._doSearch(mirror, query)
                 hadSuccessfulResponse = true
+                allRateLimited = false
 
                 if (data && data.length > 0) {
                     this.currentMirror = mirror.host
@@ -87,11 +76,20 @@ export class JacredProvider extends BaseProvider {
             } catch (err) {
                 lastError = err
                 log.warn('❌ Mirror failed', { mirror: mirrorId, error: err.message })
+                if (!err.message.includes('Rate limited')) {
+                    allRateLimited = false
+                }
             }
 
             if (i < JACRED_MIRRORS.length - 1) {
                 await sleep(500)
             }
+        }
+
+        // Do not poison circuit breaker on temporary rate-limit bursts.
+        if (!hadSuccessfulResponse && allRateLimited) {
+            log.warn('All mirrors rate-limited, returning empty set for this cycle', { query })
+            return []
         }
 
         if (!hadSuccessfulResponse && lastError) {
@@ -119,100 +117,44 @@ export class JacredProvider extends BaseProvider {
      * Do search request to specific mirror
      * @private
      */
-    _doSearch(mirror, query, redirectCount = 0) {
-        const MAX_REDIRECTS = 3
-
-        return new Promise((resolve, reject) => {
-            const searchPath = `/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
-
-            const options = {
-                hostname: mirror.host,
-                port: mirror.port,
-                path: searchPath,
-                method: 'GET',
-                rejectUnauthorized: false,
-                headers: {
-                    'User-Agent': getRandomUserAgent(),
-                    'Accept': 'application/json'
-                },
-                timeout: 15000
+    async _doSearch(mirror, query) {
+        const url = `${mirror.protocol}://${mirror.host}:${mirror.port}/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
+        const response = await smartFetch(url, {
+            doh: 'dns-only',
+            timeout: JACRED_TIMEOUT_MS,
+            headers: {
+                'User-Agent': getRandomUserAgent(),
+                'Accept': 'application/json'
             }
-
-            const protocol = mirror.protocol === 'https' ? https : http
-
-            const req = protocol.request(options, (res) => {
-                // Handle redirects
-                if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
-                    if (redirectCount >= MAX_REDIRECTS) {
-                        reject(new Error('Too many redirects'))
-                        return
-                    }
-
-                    try {
-                        const redirectUrl = new URL(res.headers.location, `${mirror.protocol}://${mirror.host}`)
-                        const newMirror = {
-                            host: redirectUrl.hostname,
-                            port: redirectUrl.port || (redirectUrl.protocol === 'https:' ? 443 : 80),
-                            protocol: redirectUrl.protocol.replace(':', '')
-                        }
-                        log.debug('Following redirect', { to: redirectUrl.href })
-                        resolve(this._doSearch(newMirror, query, redirectCount + 1))
-                    } catch (e) {
-                        reject(new Error(`Invalid redirect: ${res.headers.location}`))
-                    }
-                    return
-                }
-
-                // Handle rate limiting
-                if (res.statusCode === 429) {
-                    const retryAfter = parseInt(res.headers['retry-after'] || '5', 10)
-                    reject(new Error(`Rate limited (retry after ${retryAfter}s)`))
-                    return
-                }
-
-                if (res.statusCode !== 200) {
-                    reject(new Error(`HTTP ${res.statusCode}`))
-                    return
-                }
-
-                let data = ''
-                res.setEncoding('utf8')
-
-                res.on('data', chunk => data += chunk)
-                res.on('end', () => {
-                    try {
-                        if (data.trim().startsWith('<')) {
-                            reject(new Error('Received HTML instead of JSON (possible Cloudflare block)'))
-                            return
-                        }
-
-                        const json = JSON.parse(data)
-                        const results = (json.Results || json.results || []).slice(0, 50).map(r =>
-                            this.normalizeResult({
-                                id: r.Guid || r.guid || Math.random().toString(36),
-                                title: r.Title || r.title || 'Unknown',
-                                size: formatSize(r.Size || r.size || 0),
-                                sizeBytes: r.Size || r.size || 0,
-                                date: r.PublishDate || r.publishDate || null,  // API v2: date support
-                                seeders: r.Seeders || r.seeders || 0,
-                                tracker: r.Tracker || r.tracker || 'Unknown',
-                                magnet: r.MagnetUri || r.magnetUri || r.Link || r.link || null
-                            })
-                        )
-                        resolve(results)
-                    } catch (err) {
-                        reject(new Error('Parse error: ' + err.message))
-                    }
-                })
-            })
-
-            req.on('error', reject)
-            req.on('timeout', () => {
-                req.destroy()
-                reject(new Error('Timeout'))
-            })
-
-            req.end()
         })
+
+        if (response.status === 429) {
+            const retryAfter = parseInt(response.headers?.['retry-after'] || '5', 10)
+            throw new Error(`Rate limited (retry after ${retryAfter}s)`)
+        }
+        if (response.status >= 400) {
+            throw new Error(`HTTP ${response.status}`)
+        }
+
+        const payload = response.data
+        if (typeof payload === 'string' && payload.trim().startsWith('<')) {
+            throw new Error('Received HTML instead of JSON (possible Cloudflare block)')
+        }
+
+        const json = typeof payload === 'string' ? JSON.parse(payload) : payload
+        const rawResults = (json?.Results || json?.results || []).slice(0, 50)
+
+        return rawResults.map(r =>
+            this.normalizeResult({
+                id: r.Guid || r.guid || Math.random().toString(36),
+                title: r.Title || r.title || 'Unknown',
+                size: formatSize(r.Size || r.size || 0),
+                sizeBytes: r.Size || r.size || 0,
+                date: r.PublishDate || r.publishDate || null,
+                seeders: r.Seeders || r.seeders || 0,
+                tracker: r.Tracker || r.tracker || 'Unknown',
+                magnet: r.MagnetUri || r.magnetUri || r.Link || r.link || null
+            })
+        )
     }
 }

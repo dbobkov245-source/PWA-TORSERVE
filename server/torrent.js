@@ -20,6 +20,10 @@ const PUBLIC_TRACKERS = [
     'http://tracker.gbitt.info:80/announce'
 ]
 
+// Metadata bootstrap timeout policy (can be tuned via env without rebuild)
+const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
+const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
+
 // ────────────────────────────────────────────────────────
 // Keep-Alive: Frozen torrents for instant resume (5 min TTL)
 // 🔥 Memory fix: reduced from 30min to 5min, max 3 frozen
@@ -226,6 +230,15 @@ const extractInfoHash = (magnet) => {
     return null
 }
 
+/**
+ * Decide whether to timeout immediately or give another metadata wait cycle.
+ * Grace is only granted when at least one wire is connected.
+ */
+export function getMetadataTimeoutDecision({ peers = 0, attempts = 0, maxGraceCycles = METADATA_GRACE_CYCLES }) {
+    if (peers > 0 && attempts < maxGraceCycles) return 'grace'
+    return 'timeout'
+}
+
 export const addTorrent = (magnetURI, skipSave = false) => {
     return new Promise((resolve, reject) => {
         // 🔥 FIX-03: Smart Deduplication by infoHash
@@ -251,6 +264,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             frozenTorrents.delete(infoHash)
             engines.set(magnetURI, engine)
             engines.set(engine.infoHash, engine)
+            if (engine.swarm?.resume) engine.swarm.resume()
             return resolve(formatEngine(engine))
         }
 
@@ -353,7 +367,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             reject(err)
         })
 
-        // 🔥 STRATEGY 3: Increased Timeout (90s)
+        // 🔥 STRATEGY 3: Configurable metadata timeout with grace cycles
         // ✅ FIX: Сохраняем ID таймаута для очистки при успешном подключении
         // 📊 DIAGNOSTICS: Log connection progress every 5s
         const startTime = Date.now()
@@ -363,18 +377,41 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log(`[Torrent] ${infoHash.slice(0, 8)} waiting... ${Math.round((Date.now() - startTime) / 1000)}s, peers: ${peers}, queued: ${candidates}`)
         }, 5000)
 
-        // ✅ FIX: Сохраняем ID таймаута для очистки при успешном подключении
-        const timeoutId = setTimeout(() => {
-            clearInterval(logInterval) // Stop logging
-            if (!engines.has(magnetURI)) {
-                console.warn('[Torrent] Timeout: no peers found')
-                engine.destroy()
-                reject(new Error('Torrent timeout: no peers found within 90 seconds'))
-            }
-        }, 90000)
+        let timeoutAttempts = 0
+        const totalTimeoutSec = Math.round((METADATA_TIMEOUT_MS * (METADATA_GRACE_CYCLES + 1)) / 1000)
 
-        // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
-        engine._timeoutId = timeoutId
+        const scheduleTimeout = () => {
+            const timeoutId = setTimeout(() => {
+                if (engines.has(magnetURI)) return
+
+                const peers = engine.swarm?.wires?.length || 0
+                const decision = getMetadataTimeoutDecision({
+                    peers,
+                    attempts: timeoutAttempts,
+                    maxGraceCycles: METADATA_GRACE_CYCLES
+                })
+
+                if (decision === 'grace') {
+                    timeoutAttempts++
+                    console.warn(`[Torrent] Metadata grace ${timeoutAttempts}/${METADATA_GRACE_CYCLES}: connected peers=${peers}`)
+                    if (engine.discover) engine.discover()
+                    if (engine.swarm?.resume) engine.swarm.resume()
+                    scheduleTimeout()
+                    return
+                }
+
+                clearInterval(logInterval)
+                console.warn(`[Torrent] Timeout: metadata unavailable after ${totalTimeoutSec}s`)
+                engine.destroy()
+                reject(new Error(`Torrent timeout: metadata unavailable within ${totalTimeoutSec} seconds`))
+            }, METADATA_TIMEOUT_MS)
+
+            // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
+            engine._timeoutId = timeoutId
+        }
+
+        // Start first timeout cycle
+        scheduleTimeout()
         engine._logInterval = logInterval // Store to clear on ready/error
     })
 }
@@ -408,7 +445,8 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
 
     // Keep-Alive: freeze instead of destroy (unless forced)
     if (!forceDestroy) {
-        console.log(`[Keep-Alive] Freezing torrent for 30min: ${infoHash}`)
+        const ttlMin = Math.round(FROZEN_TTL / 60000)
+        console.log(`[Keep-Alive] Freezing torrent for ${ttlMin}min: ${infoHash}`)
         frozenTorrents.set(infoHash, {
             engine,
             magnetURI,

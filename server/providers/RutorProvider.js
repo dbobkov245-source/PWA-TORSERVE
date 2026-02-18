@@ -27,6 +27,53 @@ const TRACKER_FETCH_OPTS = {
     timeout: 10000,
 }
 
+function stripTagsAndEntities(html = '') {
+    return html
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&quot;/gi, '"')
+        .replace(/&amp;/gi, '&')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function parseSizeFromRow(rowHtml = '') {
+    const parseFromText = (text) => {
+        const sizeMatch = text.match(/([\d.,]+)\s*(TB|GB|MB|KB|ТБ|ГБ|МБ|КБ)/i)
+        if (!sizeMatch) return null
+
+        const num = parseFloat(sizeMatch[1].replace(',', '.'))
+        if (!Number.isFinite(num)) return null
+
+        const unitRaw = sizeMatch[2].toUpperCase()
+        const unitMap = { 'ТБ': 'TB', 'ГБ': 'GB', 'МБ': 'MB', 'КБ': 'KB' }
+        const unit = unitMap[unitRaw] || unitRaw
+        const mult = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }
+        const sizeBytes = num * (mult[unit] || 1)
+
+        return {
+            size: `${num.toFixed(2)} ${unit}`,
+            sizeBytes
+        }
+    }
+
+    // Some rows contain two right-aligned cells: comments + size.
+    // Select the first right cell that actually contains a size token.
+    const rightCells = [...rowHtml.matchAll(/<td[^>]*align\s*=\s*["']?right["']?[^>]*>([\s\S]*?)<\/td>/gi)]
+        .map(m => m[1])
+
+    for (const cell of rightCells) {
+        const parsed = parseFromText(stripTagsAndEntities(cell))
+        if (parsed) return parsed
+    }
+
+    // Fallback: try whole row text
+    const fallback = parseFromText(stripTagsAndEntities(rowHtml))
+    if (fallback) return fallback
+
+    return { size: 'N/A', sizeBytes: 0 }
+}
+
 export class RutorProvider extends BaseProvider {
     name = 'rutor'
 
@@ -160,22 +207,13 @@ export class RutorProvider extends BaseProvider {
                 .replace(/&gt;/g, '>')
                 .trim()
 
-            // Extract size
-            const sizeMatch = rowHtml.match(/>(\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB))</i)
-            const sizeStr = sizeMatch ? sizeMatch[1] : 'N/A'
+            // Extract size (supports multiple Rutor markup variants)
+            const { size: sizeStr, sizeBytes } = parseSizeFromRow(rowHtml)
 
-            let sizeBytes = 0
-            const sizeNumMatch = sizeStr.match(/([\d.]+)\s*(GB|MB|KB|TB)/i)
-            if (sizeNumMatch) {
-                const num = parseFloat(sizeNumMatch[1])
-                const unit = sizeNumMatch[2].toUpperCase()
-                const mult = { 'KB': 1024, 'MB': 1024 ** 2, 'GB': 1024 ** 3, 'TB': 1024 ** 4 }
-                sizeBytes = num * (mult[unit] || 1)
-            }
-
-            // Extract seeders
-            const seedMatch = rowHtml.match(/<span[^>]*class="[^"]*green[^"]*"[^>]*>(\d+)<\/span>/i)
-            const seeders = seedMatch ? parseInt(seedMatch[1]) : 0
+            // Extract seeders (Rutor wraps value with icon/img + nbsp)
+            const seedCellMatch = rowHtml.match(/<span[^>]*class="[^"]*green[^"]*"[^>]*>([\s\S]*?)<\/span>/i)
+            const seedText = seedCellMatch ? stripTagsAndEntities(seedCellMatch[1]) : ''
+            const seeders = parseInt(seedText.match(/\d+/)?.[0] || '0', 10)
 
             results.push(this.normalizeResult({
                 id: magnet,
