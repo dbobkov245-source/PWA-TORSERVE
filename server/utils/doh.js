@@ -23,7 +23,7 @@ const RACE_TIMEOUT_MS = 5000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 1000;
 const MAX_REDIRECTS = 5;
-const DEBUG = true;
+const DEBUG = process.env.DOH_DEBUG === '1';
 
 // CF Worker proxy for ISP-blocked sites (set via WORKER_PROXY_URL env)
 const WORKER_PROXY_URL = process.env.WORKER_PROXY_URL || '';

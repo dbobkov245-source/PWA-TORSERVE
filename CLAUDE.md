@@ -91,6 +91,44 @@ const { focusedIndex, setFocusedIndex, containerProps, isFocused } = useTVNaviga
 - ❌ Пропущенный `tabIndex` — не захватит клавиатурные события
 - ❌ Зависимость от `onClick` — всегда дублируй через `onSelect`
 
+## 🐛 Backend — Known Gotchas & Applied Fixes
+
+### 🔌 Torrent Engine — Inbound TCP (КРИТИЧНО)
+`torrent-stream` требует явного вызова `engine.listen(port)` — иначе торрент работает ТОЛЬКО в исходящем режиме и реальный swarm не подключается.
+
+```javascript
+// server/torrent.js — обязательно после создания engine:
+engine.listen(TORRENT_LISTEN_PORT, () => {
+    console.log(`[Torrent] Listening on port ${engine.port}`)
+})
+```
+
+Docker: порт **6881** должен быть замаплен явно в `docker-compose`:
+```yaml
+ports:
+  - "6881:6881"
+environment:
+  - TORRENT_PORT=6881
+```
+
+### ⏱️ Stream Stall Watchdog
+`file.createReadStream({start: endOfFile})` в torrent-stream **зависает без таймаута**, если нужные pieces ещё не скачаны. Это вызывало freeze при probe-запросе плеера к хвосту MKV для определения duration.
+
+Watchdog в `server/index.js` — 8-секундный таймер, убивает висящий стрим:
+```javascript
+const STALL_TIMEOUT_MS = parseInt(process.env.STREAM_STALL_TIMEOUT_MS) || 8000
+```
+
+### 🔇 DoH Debug Logging
+`server/utils/doh.js` — DEBUG контролируется env-переменной:
+```
+DOH_DEBUG=1   # включить подробные логи
+DOH_DEBUG=0   # (default) тишина
+```
+**Не хардкодь `const DEBUG = true`** — это генерирует 3-5 строк лога на каждый HTTP-запрос.
+
+---
+
 ## 🚨 Known Issues
 - **SEC-01:** `VITE_TMDB_API_KEY` exposed в клиентском бандле. Нужна миграция на серверную инъекцию через `/api/proxy`.
 

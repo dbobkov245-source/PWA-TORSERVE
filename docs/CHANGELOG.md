@@ -4,20 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-02-21
+
 ### Added
-- **Local Library Recovery:** Backend now indexes completed video files directly from `DOWNLOAD_PATH` and exposes them in `/api/status` as ready items, even when original torrent engines are not active.
-- **Local Streaming Path:** `/stream/:infoHash/:fileIndex` can now serve indexed local media files without active swarm.
-- **Library Rescan API:** Added `POST /api/library/rescan` for manual refresh of local media index.
+- **Smart Sort in Search:** Новый режим сортировки "🧠 Smart" — дефолтный. Ранжирует результаты поиска по `playabilityScore`, статусу (playable > risky > unchecked > dead) и числу peers. Заменяет старый дефолт "По сидам".
+- **Playability Badges in Search:** В каждом результате поиска теперь отображается иконка + статус: 🟢 live N, 🟡 risky N, 🔴 dead, ⚪ unchecked.
 
-### Changed
-- **Delete Semantics:** `DELETE /api/delete/:infoHash` now defaults to hard delete (destroy engine + disk cleanup). Soft keep-alive is available only via `?soft=1`.
-- **Preflight Candidate Selection:** Magnet preflight now probes top-N by seeders, not provider arrival order.
-- **Preflight Cache TTL:** Configurable via `PREFLIGHT_CACHE_TTL_MS` (default reduced to `60000` ms).
-- **Search Ranking:** `risky` items with `preflight.peers=0` are ranked lower than `unchecked` to avoid stale swarm picks at the top.
+### Fixed (Backend — не влияет на APK)
+- **Torrent Inbound TCP:** `engine.listen(TORRENT_PORT)` теперь вызывается явно. Без этого `torrent-stream` не принимал входящие соединения от пиров (только исходящие). Результат: скорость загрузки выросла с 0 до 2-4 MB/s.
+- **Port Already In Use Crash:** При восстановлении нескольких торрентов после рестарта — только первый engine занимает фиксированный порт 6881 (`fixedPortClaimed` флаг), остальные получают ephemeral порт. Предотвращает краш Node.js процесса.
+- **docker-compose:** Добавлен маппинг порта `6881:6881` TCP+UDP и переменная `TORRENT_PORT=6881`.
 
-### Fixed
-- **Rutor Size Parsing:** Fixed `size: N/A` issue for rows where comment counter and size used separate right-aligned cells.
-- **Frozen Reuse Resume:** On frozen-engine reuse, swarm resume is forced to avoid idle stale state.
+### Docs
+- **CLAUDE.md / AGENTS.md:** Добавлена секция `Backend — Known Gotchas` с тремя критическими уроками: `engine.listen()`, Stream Stall Watchdog, DOH_DEBUG.
+- **Cleanup:** Удалены мусорные файлы (consolelog.md 337KB, bugreport.md 1.1MB, docs/claude.md, патчи).
+- **History:** POSTER_BATTLE_HISTORY.md перемещён в `docs/history/`.
+
+### Previously Unreleased (included in this release)
+- **Local Library Recovery:** Backend теперь индексирует завершённые видеофайлы из `DOWNLOAD_PATH` и отдаёт их в `/api/status`.
+- **Local Streaming Path:** `/stream/:infoHash/:fileIndex` умеет стримить локальные файлы без активного swarm.
+- **Library Rescan API:** `POST /api/library/rescan`.
+- **Delete Semantics:** `DELETE /api/delete/:infoHash` по умолчанию — hard delete. Soft mode через `?soft=1`.
+- **Search Ranking:** `risky` с `preflight.peers=0` ниже `unchecked` в результатах.
+- **Rutor Size Parsing:** Исправлен парсинг размера когда counter и size в разных ячейках.
+- **Frozen Reuse Resume:** При реюзе замороженного engine — принудительное возобновление swarm.
 
 ## [3.9.0] - 2026-02-15
 

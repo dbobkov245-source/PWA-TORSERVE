@@ -1020,8 +1020,35 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             }
         }
 
+        // 🔥 v2.4: Stall watchdog — если torrent-stream не выдал ни байта за
+        // STREAM_STALL_TIMEOUT_MS (дефолт 8с), значит нужные pieces ещё не скачаны.
+        // В этом случае обрываем соединение чтобы плеер сделал retry.
+        // Плеер (Lampa/ExoPlayer) автоматически переподключится, и к тому времени
+        // либо pieces появятся, либо сработает disk-fallback (stat.size >= file.length).
+        // Без этого watchdog'а file.createReadStream() висит вечно → плеер замерзает.
+        const STALL_TIMEOUT_MS = parseInt(process.env.STREAM_STALL_TIMEOUT_MS) || 8000
+        let stallTimer = null
+        let bytesEmitted = 0
+
+        if (!servingFromDisk) {
+            stallTimer = setTimeout(() => {
+                if (bytesEmitted === 0) {
+                    console.warn(`[Stream] ⚠️ Stall detected for ${infoHash.slice(0,8)} byte=${start}: no data in ${STALL_TIMEOUT_MS}ms, aborting (pieces not ready)`)
+                    cleanup()
+                    // res уже имеет writeHead(206) — закрываем без тела чтобы плеер сделал retry
+                    if (!res.writableEnded) res.end()
+                }
+            }, STALL_TIMEOUT_MS)
+        }
+
+        stream.once('data', () => {
+            bytesEmitted++
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+        })
+
         // 🔥 v2.3: Handle stream errors to prevent hanging responses
         stream.on('error', (err) => {
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
             console.error(`[Stream] Error for ${infoHash}/${fileIndex}:`, err.message)
             cleanup()
             if (!res.headersSent) {
@@ -1031,8 +1058,16 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // M1: Track active streams for /api/metrics
         activeStreams++
-        res.on('close', () => { activeStreams--; cleanup() })
-        res.on('error', () => { activeStreams--; cleanup() })
+        res.on('close', () => {
+            activeStreams--
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+            cleanup()
+        })
+        res.on('error', () => {
+            activeStreams--
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+            cleanup()
+        })
 
         stream.pipe(res)
     }

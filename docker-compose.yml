@@ -8,10 +8,12 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+      - "6881:6881"   # Torrent inbound TCP (match TORRENT_PORT)
     environment:
       - NODE_ENV=production
       - DOWNLOAD_PATH=/app/downloads
       - DB_PATH=/app/data/db.json
+      - TORRENT_PORT=6881
     volumes:
       # Persistent data (database, settings)
       - ./data:/app/data

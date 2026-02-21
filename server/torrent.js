@@ -24,6 +24,14 @@ const PUBLIC_TRACKERS = [
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
 
+// Torrent TCP listen port — must match docker-compose port mapping
+// Set TORRENT_PORT=6881 in env and expose 6881:6881/tcp in docker-compose
+// Without a real listen port, peers cannot make inbound connections to us.
+const TORRENT_LISTEN_PORT = parseInt(process.env.TORRENT_PORT || '0', 10)
+// 0 = OS picks a random ephemeral port (no-listen fallback; outbound-only mode)
+// Only the FIRST engine claims the fixed port; subsequent engines get port=0.
+let fixedPortClaimed = false
+
 // ────────────────────────────────────────────────────────
 // Keep-Alive: Frozen torrents for instant resume (5 min TTL)
 // 🔥 Memory fix: reduced from 30min to 5min, max 3 frozen
@@ -298,6 +306,19 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             return reject(err)
         }
 
+        // 🔌 FIX: Open inbound TCP socket so remote peers can connect back to us.
+        // Without listen(), torrent-stream announces port 6881 to trackers/DHT but
+        // no real socket is bound → inbound connections are silently dropped.
+        // Only the first engine claims the fixed TORRENT_PORT; subsequent engines
+        // get port=0 so they don't crash with "port already in use".
+        const claimingFixedPort = (!fixedPortClaimed && TORRENT_LISTEN_PORT > 0)
+        if (claimingFixedPort) fixedPortClaimed = true
+        const listenPort = claimingFixedPort ? TORRENT_LISTEN_PORT : 0
+        engine._holdsFixedPort = claimingFixedPort
+        engine.listen(listenPort, () => {
+            console.log(`[Torrent] Listening on port ${engine.port} (inbound TCP enabled)`)
+        })
+
         engine.on('ready', () => {
             // ✅ FIX: Очищаем таймаут при успешном подключении
             if (engine._timeoutId) {
@@ -363,6 +384,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }
 
             console.error('[Torrent] Engine error:', err.message)
+            if (engine._holdsFixedPort) fixedPortClaimed = false
             engine.destroy()
             reject(err)
         })
@@ -431,6 +453,9 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
             break
         }
     }
+
+    // Release fixed port claim so next engine can claim 6881
+    if (engine._holdsFixedPort) fixedPortClaimed = false
 
     // Remove from active map
     engines.delete(infoHash)

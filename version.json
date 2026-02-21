@@ -1,7 +1,7 @@
 {
-    "version": "3.9.0",
-    "versionCode": 11,
+    "version": "3.10.0",
+    "versionCode": 12,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.9.0/app-debug.apk",
-    "notes": "v3.9.0:\n- 🎤 Voice Search Rollback: Reverted to simple reliable flow (v3.7.2 style). Fixed \"double press\" bug on Android TV.\n- 🔄 Auto-Update Fix: Installation now retries from cache on restart if first attempt failed.\n- 🛠️ Fixed \"double press\" bug on Android TV.\n\nv3.8.4 (Hotfix):\n- 🎤 Voice Search: attempted fix for \"double press\" (failed)\n- 🎤 Voice Search: improved fallback stability\n- 🔄 Auto-Update: improved install handoff\n- 🔄 Auto-Update: prevent repeated re-downloads\n\nv3.8.3:\n- 🛠 Fixed voice-search button freeze\n- 🎤 Hybrid Voice Search stabilized\n\nv3.8.2:\n- 🎤 Re-enabled Hybrid Voice Search\n\nv3.8.1 (Hotfix):\n- 🔧 Disable Hybrid Voice Search"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.0/app-debug.apk",
+    "notes": "v3.10.0:\n- 🧠 Smart Sort: Умная сортировка результатов поиска по playability + peers. Теперь живые торренты всегда наверху.\n- 🟢 Playability Badges: Иконки статуса в каждом результате поиска (🟢 live, 🟡 risky, 🔴 dead, ⚪ unchecked).\n\nv3.9.0:\n- 🎤 Voice Search Rollback: Reverted to simple reliable flow. Fixed \"double press\" bug on Android TV.\n- 🔄 Auto-Update Fix: Installation now retries from cache on restart."
 }

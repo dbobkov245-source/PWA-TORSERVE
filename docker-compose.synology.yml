@@ -10,10 +10,16 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+      # 🔌 FIX: Torrent inbound TCP port — must match TORRENT_PORT below.
+      # Peers from trackers/DHT need to reach us on this port.
+      # Also open 6881/UDP in your NAS firewall for DHT traffic.
+      - "6881:6881"
     environment:
       - NODE_ENV=production
       - DOWNLOAD_PATH=/app/downloads
       - DB_PATH=/app/data/db.json
+      # 🔌 FIX: Port announced to trackers/DHT for inbound connections
+      - TORRENT_PORT=6881
     volumes:
       # Downloads folder (map to your NAS media folder)
       - /volume1/docker/pwa-torserve/downloads:/app/downloads
