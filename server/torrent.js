@@ -45,17 +45,20 @@ sharedDHT.on('error', (err) => console.warn('[DHT] Error:', err.message))
 
 const engines = new Map()
 
-// 🔥 Best Public Trackers (Tier 1 & 2)
+// 🔥 Best Public Trackers — verified working (tested 2026-02-23)
+// Tested from Russian ISP: open.stealth.si:80 and torrent.eu.org:451 respond reliably.
+// opentrackr.org:1337 is ISP-blocked from Russia.
 const PUBLIC_TRACKERS = [
-    'udp://tracker.opentrackr.org:1337/announce',
-    'udp://open.stealth.si:80/announce',
-    'udp://tracker.torrent.eu.org:451/announce',
-    'udp://tracker.tiny-vps.com:6969/announce',
-    'udp://tracker.cyberia.is:6969/announce',
-    'udp://tracker.moeking.me:6969/announce',
-    'udp://p4p.arenabg.com:1337/announce',
-    'udp://explodie.org:6969/announce',
-    'http://tracker.gbitt.info:80/announce'
+    'udp://open.stealth.si:80/announce',           // ✅ Works from RU
+    'udp://tracker.torrent.eu.org:451/announce',   // ✅ Works from RU
+    'udp://explodie.org:6969/announce',            // ✅ Works from RU
+    'udp://tracker.opentrackr.org:1337/announce',  // ⚠ Blocked by some RU ISPs
+    'udp://tracker.openbittorrent.com:6969/announce',
+    'udp://retracker.lanta-net.ru:2710/announce',  // Russian tracker — works locally
+    'udp://opentor.net:6969/announce',
+    'udp://tracker.zer0day.to:1337/announce',
+    'http://tracker.gbitt.info:80/announce',
+    'https://tracker.tamersunion.org:443/announce', // HTTPS — bypasses port blocks
 ]
 
 // Metadata bootstrap timeout policy (can be tuned via env without rebuild)
@@ -331,13 +334,17 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         let engine
         try {
             // 🔥 STRATEGY 2: Eco Mode (20 connections) by default
+            // NOTE: trackers: PUBLIC_TRACKERS is CRITICAL — torrent-stream loads cached
+            // .torrent files which have announce=[] (metadata info-dict has no trackers).
+            // Only opts.trackers → discovery.announce persists across cache loads.
             engine = torrentStream(enrichedMagnet, {
                 path: path,
                 connections: 20,       // Eco Mode: RAM-safe limit
                 uploads: 0,
                 dht: sharedDHT,        // ✅ Shared DHT — pre-bootstrapped, fixed UDP port
                 verify: false,
-                tracker: true
+                tracker: true,
+                trackers: PUBLIC_TRACKERS, // ✅ CRITICAL: survives .torrent cache reload
             })
         } catch (err) {
             console.error('[Torrent] Failed to create engine:', err.message)

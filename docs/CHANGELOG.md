@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed (Backend — не влияет на APK)
+- **КРИТИЧНО — Tracker announces broken after restart (`torrent.js`):** Все торренты показывали 0 peers после перезапуска контейнера. Корневая причина: `torrent-stream` кэширует `.torrent`-файлы в `/tmp/`, и при загрузке из кэша `torrent.announce = []` (пустой список трекеров — metadata info-dict не содержит трекеры). `discovery.announce` тоже был пустым, т.к. `opts.trackers` не передавался. Итог: трекер-клиент создавался без URL → анонсы не отправлялись → 0 peers навсегда. **Фикс:** Добавлен `trackers: PUBLIC_TRACKERS` в engine options → `discovery.announce = PUBLIC_TRACKERS` → трекеры всегда доступны независимо от кэша.
 - **Kickstart: select all video files (`torrent.js`):** При восстановлении торрента на `engine ready` теперь вызывается `file.select()` на **всех** видеофайлах, а не только на крупнейшем. Исправлена критическая ошибка: сериальные торренты (несколько эпизодов) не скачивались вообще — был выбран только самый большой файл (напр. E01), а остальные эпизоды оставались невыбранными навсегда. В `torrent-stream` невыбранный файл никогда не скачивается, независимо от числа подключённых пиров. Приоритизация (`prioritizeFileInternal`) теперь ставится на первый файл по имени (E01→E02→... — естественный порядок эпизодов).
 
 ## [3.10.0] - 2026-02-21
