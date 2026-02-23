@@ -333,7 +333,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
             // ────────────────────────────────────────────────────────
-            // FIX-01: Smart Selection (Video Only, Sort by Size)
+            // FIX-01: Smart Selection (Video Only, All Files)
             // ────────────────────────────────────────────────────────
             if (engine.files && engine.files.length > 0) {
                 // 1. Filter video extensions
@@ -341,17 +341,16 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                     /\.(mp4|mkv|avi|webm|mov|mpg|mpeg)$/i.test(f.name)
                 )
 
-                // 2. Sort by length DESC
-                videoFiles.sort((a, b) => b.length - a.length)
-
-                // 3. Select LARGEST video file (if any)
                 if (videoFiles.length > 0) {
-                    const largestVideo = videoFiles[0]
-                    console.log(`[Torrent] Kickstart: Prioritizing largest video: ${largestVideo.name} (${(largestVideo.length / 1024 / 1024).toFixed(1)} MB)`)
-                    largestVideo.select()
+                    // 2. Select ALL video files so multi-episode torrents download completely
+                    videoFiles.forEach(f => f.select())
+                    console.log(`[Torrent] Kickstart: Selected ${videoFiles.length} video file(s)`)
 
-                    // Also enable priority strategy
-                    const idx = engine.files.indexOf(largestVideo)
+                    // 3. Prioritize first file by name (natural episode order: E01 → E02 → ...)
+                    const sorted = [...videoFiles].sort((a, b) => a.name.localeCompare(b.name))
+                    const firstVideo = sorted[0]
+                    console.log(`[Torrent] Kickstart: Prioritizing first video: ${firstVideo.name} (${(firstVideo.length / 1024 / 1024).toFixed(1)} MB)`)
+                    const idx = engine.files.indexOf(firstVideo)
                     if (idx !== -1) prioritizeFileInternal(engine, idx)
                 } else {
                     console.log('[Torrent] IsKickstart: No video files found, nothing selected automatically.')
