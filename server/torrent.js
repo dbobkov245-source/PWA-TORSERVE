@@ -3,7 +3,45 @@ import process from 'process'
 import fs from 'fs'
 import fsPromises from 'fs/promises'
 import path from 'path'
+import { createRequire } from 'module'
 import { db, safeWrite } from './db.js'
+
+// ────────────────────────────────────────────────────────
+// Shared DHT Instance — bootstrap once, reuse across all engines
+//
+// Root cause of "0 peers after restart":
+//   torrent-discovery creates a NEW DHT per engine (when dht: true) and calls
+//   dht.listen(undefined) → random ephemeral UDP port.
+//   Docker only maps 6881/udp → DHT responses are silently dropped.
+//   Result: DHT never finds peers, swarm.queued = 0 forever.
+//
+// Fix: single shared DHT that listens on the mapped 6881/udp port.
+//   - Bootstraps once at server start (not per-torrent)
+//   - All engines share the same routing table (no cold start per torrent)
+//   - When passed as dht: sharedDHT, torrent-discovery uses it as-is
+//     (does NOT call dht.listen() again, does NOT destroy it on engine.destroy())
+// ────────────────────────────────────────────────────────
+const _require = createRequire(import.meta.url)
+
+// bittorrent-dht is a nested dep of torrent-stream, not at top-level
+let DHTClient
+try {
+    // Try top-level first (in case it's hoisted)
+    DHTClient = _require('bittorrent-dht/client')
+} catch {
+    // Fall back to torrent-stream's nested copy
+    const tsDir = path.dirname(_require.resolve('torrent-stream'))
+    DHTClient = _require(path.join(tsDir, 'node_modules/bittorrent-dht/client'))
+}
+
+const DHT_UDP_PORT = parseInt(process.env.TORRENT_PORT || '6881', 10)
+export const sharedDHT = new DHTClient()
+
+sharedDHT.listen(DHT_UDP_PORT, () => {
+    console.log(`[DHT] Shared DHT listening on UDP port ${DHT_UDP_PORT}`)
+})
+sharedDHT.on('ready', () => console.log('[DHT] Shared DHT bootstrapped'))
+sharedDHT.on('error', (err) => console.warn('[DHT] Error:', err.message))
 
 const engines = new Map()
 
@@ -297,7 +335,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 path: path,
                 connections: 20,       // Eco Mode: RAM-safe limit
                 uploads: 0,
-                dht: true,             // ✅ DHT enabled
+                dht: sharedDHT,        // ✅ Shared DHT — pre-bootstrapped, fixed UDP port
                 verify: false,
                 tracker: true
             })
@@ -846,6 +884,12 @@ export const destroyAllTorrents = () => {
     frozenTorrents.clear()
 
     console.log('[Shutdown] All torrents destroyed')
+
+    // Destroy shared DHT on shutdown
+    try {
+        sharedDHT.destroy()
+        console.log('[DHT] Shared DHT destroyed')
+    } catch (e) { }
 }
 
 // ────────────────────────────────────────────────────────
