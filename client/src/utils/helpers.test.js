@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { cleanTitle, formatSize, formatEta, formatSpeed, organizeFiles, extractQualityBadges, getMaxEpisodeNumber } from './helpers.js'
+import { cleanTitle, formatSize, formatEta, formatSpeed, organizeFiles, extractQualityBadges, getMaxEpisodeNumber, resolveInitialServerUrl } from './helpers.js'
 
 describe('cleanTitle', () => {
     it('removes common torrent suffixes', () => {
@@ -64,6 +64,29 @@ describe('formatEta', () => {
 
     it('handles negative values', () => {
         expect(formatEta(-10)).toBe('')
+    })
+})
+
+describe('resolveInitialServerUrl', () => {
+    it('returns empty string for native app when nothing stored', () => {
+        expect(resolveInitialServerUrl({
+            isNative: true,
+            storedUrl: ''
+        })).toBe('')
+    })
+
+    it('returns stored server URL for native app', () => {
+        expect(resolveInitialServerUrl({
+            isNative: true,
+            storedUrl: 'http://example.local:3000'
+        })).toBe('http://example.local:3000')
+    })
+
+    it('returns empty string on web even if stored URL exists', () => {
+        expect(resolveInitialServerUrl({
+            isNative: false,
+            storedUrl: 'http://example.local:3000'
+        })).toBe('')
     })
 })
 

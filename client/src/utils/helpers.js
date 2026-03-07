@@ -99,6 +99,14 @@ export const formatEta = (seconds) => {
 }
 
 /**
+ * Resolve initial server URL without embedding environment-specific LAN hosts in git.
+ */
+export const resolveInitialServerUrl = ({ isNative, storedUrl }) => {
+    if (!isNative) return ''
+    return storedUrl || ''
+}
+
+/**
  * Generate gradient based on string hash (for fallback poster background)
  */
 export const getGradient = (str) => {

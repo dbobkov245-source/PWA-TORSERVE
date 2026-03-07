@@ -22,7 +22,7 @@ import { checkForUpdate, tryInstallPending } from './utils/appUpdater'
 import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
 
 // Helpers
-import { cleanTitle } from './utils/helpers'
+import { cleanTitle, resolveInitialServerUrl } from './utils/helpers'
 
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
@@ -78,10 +78,10 @@ const ListSortButton = ({ sort, active, onClick }) => {
 function App() {
   // State: Server & Settings
   const [serverUrl, setServerUrl] = useState(() => {
-    if (Capacitor.isNativePlatform()) {
-      return localStorage.getItem('serverUrl') || 'http://192.168.1.70:3000'
-    }
-    return ''
+    return resolveInitialServerUrl({
+      isNative: Capacitor.isNativePlatform(),
+      storedUrl: localStorage.getItem('serverUrl') || ''
+    })
   })
   const [tmdbProxyUrl, setTmdbProxyUrl] = useState(localStorage.getItem('tmdbProxyUrl') || import.meta.env.VITE_TMDB_PROXY_URL || '')
 

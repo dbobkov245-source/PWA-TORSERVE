@@ -199,10 +199,9 @@ DOH_DEBUG=0   # (default) тишина
 
 ### 🖥️ NAS Deploy — Synology SSH
 
-**Адрес NAS:** `192.168.1.70` (MAC: `00:11:32:*` — Synology)
-**Пользователь:** `ilya8253@192.168.1.70`, пароль через sudo
+Не коммить реальные IP-адреса, логины или пароли в репозиторий. Для локального деплоя используй приватные переменные окружения или личные заметки вне git.
 
-**Путь к файлам:**
+**Типовые пути:**
 - Серверный код: `/volume1/docker/pwa-torserve/server/` (volume mount → `/app/server/`)
 - Docker config: `/volume1/docker/pwa-torserve/docker-compose.yml`
 - БД: `/volume1/docker/app/data/db.json`
@@ -210,31 +209,23 @@ DOH_DEBUG=0   # (default) тишина
 
 **Деплой серверного файла:**
 ```bash
-cat server/torrent.js | ssh ilya8253@192.168.1.70 "cat > /volume1/docker/pwa-torserve/server/torrent.js"
+cat server/torrent.js | ssh <user>@<host> "cat > /volume1/docker/pwa-torserve/server/torrent.js"
 ```
-> ⚠️ `scp` не работает на этих путях. Только `cat | ssh "cat >"`.
+> ⚠️ На некоторых Synology `scp` не работает на bind-mounted путях. В таком случае используй `cat | ssh "cat >"`.
 
 **Перезапуск контейнера:**
 ```bash
-# Написать скрипт на NAS и запустить через sudo (heredoc с паролем):
-ssh host "cat > /volume1/homes/Ilya8253/restart.sh << 'EOF'
-#!/bin/sh
-/usr/local/bin/docker restart pwa-torserve1
-EOF
-chmod +x /volume1/homes/Ilya8253/restart.sh"
-ssh host "sudo -S sh /volume1/homes/Ilya8253/restart.sh" <<< 'PASSWORD'
+ssh <user>@<host> "sudo -S /usr/local/bin/docker restart pwa-torserve1"
 ```
-> ⚠️ `echo 'pw' | sudo -S cmd` НЕ работает через SSH (stdin race). Работает только `<<< 'pw'` для простых однострочных команд или через script-файл.
 
 **Пересоздать контейнер** (когда env-переменные менялись):
 ```bash
-# Только если docker-compose.yml изменился — иначе env не применяется!
-ssh host "sudo -S sh -c 'cd /volume1/docker/pwa-torserve && /usr/local/bin/docker-compose down && /usr/local/bin/docker-compose up -d'" <<< 'PASSWORD'
+ssh <user>@<host> "sudo -S sh -c 'cd /volume1/docker/pwa-torserve && /usr/local/bin/docker-compose down && /usr/local/bin/docker-compose up -d'"
 ```
 
 **Проверить статус загрузок:**
 ```bash
-curl -s http://192.168.1.70:3000/api/status | python3 -c "
+curl -s http://<host>:3000/api/status | python3 -c "
 import json, sys; data=json.load(sys.stdin)
 for t in data.get('torrents',[]): print(round(t.get('progress',0)*100,1),'%', t.get('downloadSpeed',0)//1024,'KB/s', t.get('numPeers',0),'p |', t.get('name','')[:45])
 "
