@@ -4,7 +4,17 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { cleanTitle, formatSize, formatEta, formatSpeed, organizeFiles, extractQualityBadges, getMaxEpisodeNumber, resolveInitialServerUrl } from './helpers.js'
+import {
+    buildServerRequestUrl,
+    cleanTitle,
+    formatSize,
+    formatEta,
+    formatSpeed,
+    organizeFiles,
+    extractQualityBadges,
+    getMaxEpisodeNumber,
+    resolveInitialServerUrl
+} from './helpers.js'
 
 describe('cleanTitle', () => {
     it('removes common torrent suffixes', () => {
@@ -87,6 +97,48 @@ describe('resolveInitialServerUrl', () => {
             isNative: false,
             storedUrl: 'http://example.local:3000'
         })).toBe('')
+    })
+})
+
+describe('buildServerRequestUrl', () => {
+    it('uses the stored native server URL for relative API paths', () => {
+        expect(buildServerRequestUrl('/api/v2/search?query=Primate', {
+            isNative: true,
+            serverUrl: 'http://192.168.1.70:3000',
+            browserOrigin: 'https://localhost'
+        })).toBe('http://192.168.1.70:3000/api/v2/search?query=Primate')
+    })
+
+    it('uses browser origin for web when no server URL is stored', () => {
+        expect(buildServerRequestUrl('/api/v2/search?query=Dune', {
+            isNative: false,
+            serverUrl: '',
+            browserOrigin: 'https://example.com'
+        })).toBe('https://example.com/api/v2/search?query=Dune')
+    })
+
+    it('returns empty string for native relative API paths when server URL is missing', () => {
+        expect(buildServerRequestUrl('/api/v2/search?query=Primate', {
+            isNative: true,
+            serverUrl: '',
+            browserOrigin: 'https://localhost'
+        })).toBe('')
+    })
+
+    it('keeps absolute URLs unchanged', () => {
+        expect(buildServerRequestUrl('http://192.168.1.70:3000/api/status', {
+            isNative: true,
+            serverUrl: '',
+            browserOrigin: 'https://localhost'
+        })).toBe('http://192.168.1.70:3000/api/status')
+    })
+
+    it('normalizes http URLs missing double slash', () => {
+        expect(buildServerRequestUrl('/api/status', {
+            isNative: true,
+            serverUrl: 'http:192.168.1.70:3000',
+            browserOrigin: 'https://localhost'
+        })).toBe('http://192.168.1.70:3000/api/status')
     })
 })
 

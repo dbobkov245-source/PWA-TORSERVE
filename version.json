@@ -1,7 +1,7 @@
 {
-    "version": "3.10.3",
-    "versionCode": 15,
+    "version": "3.10.4",
+    "versionCode": 16,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.3/app-debug.apk",
-    "notes": "v3.10.3:\n- 🔄 Auto-Update: клиент ждёт реальный результат установки APK и больше не зацикливается на pending install при неудачном обновлении.\n- 🛡️ Auto-Update: несовместимый APK (не тот пакет, старая версия или другая подпись) отклоняется до перехода в системный installer.\n- 📺 Android Bridge: причина отказа установки теперь возвращается в клиент вместо тихого провала."
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.4/app-debug.apk",
+    "notes": "v3.10.4:\n- 🎬 Карточка фильма теперь заранее прогревает торренты по метаданным и открывает полный список без ручного ввода запроса.\n- 🔘 Кнопки `Торренты`, `Найти торренты` и `Назад` в карточке выровнены по одинаковой ширине и высоте.\n- 🤖 Android: relative API paths теперь переводятся в абсолютные backend URL для native-запросов, а схема WebView переведена на `http` для работы с LAN-сервером без mixed-content блокировки."
 }

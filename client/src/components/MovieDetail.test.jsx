@@ -104,4 +104,42 @@ describe('MovieDetail action row', () => {
         expect(onOpenMovieTorrents).toHaveBeenCalledTimes(1)
         expect(onSearch).toHaveBeenCalledWith('The Matrix')
     })
+
+    it('renders primary actions with equal-width button layout hooks', async () => {
+        render(
+            <MovieDetail
+                item={{
+                    id: 603,
+                    title: 'The Matrix',
+                    release_date: '1999-03-31',
+                    media_type: 'movie',
+                    vote_average: 8.7,
+                    overview: 'Neo chooses.'
+                }}
+                torrentSession={{
+                    status: 'ready',
+                    items: [{ id: 'one', seeders: 12, tags: ['1080p'] }]
+                }}
+                onOpenMovieTorrents={() => {}}
+                onSearch={() => {}}
+                onBack={() => {}}
+                onSelect={() => {}}
+                onSelectPerson={() => {}}
+                onSelectGenre={() => {}}
+            />
+        )
+
+        await act(async () => {
+            vi.advanceTimersByTime(600)
+            await Promise.resolve()
+        })
+
+        const primaryActions = screen.getByTestId('movie-primary-actions')
+
+        expect(primaryActions.className).toContain('grid')
+        expect(primaryActions.className).toContain('sm:grid-cols-3')
+        expect(screen.getByRole('button', { name: 'Торренты · 1' }).className).toContain('w-full')
+        expect(screen.getByRole('button', { name: '🔍 Найти торренты' }).className).toContain('w-full')
+        expect(screen.getByRole('button', { name: '⬅️ Назад' }).className).toContain('w-full')
+    })
 })

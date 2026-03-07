@@ -106,6 +106,47 @@ export const resolveInitialServerUrl = ({ isNative, storedUrl }) => {
     return storedUrl || ''
 }
 
+const normalizeServerUrl = (serverUrl) => {
+    const trimmed = (serverUrl || '').trim().replace(/\/+$/, '')
+    if (!trimmed) return ''
+    if (/^https?:\/\//i.test(trimmed)) return trimmed
+
+    const slashlessMatch = trimmed.match(/^(https?):(?!\/\/)(.+)$/i)
+    if (slashlessMatch) {
+        return `${slashlessMatch[1]}://${slashlessMatch[2].replace(/^\/+/, '')}`
+    }
+
+    return trimmed
+}
+
+/**
+ * Resolve the backend base URL for runtime API requests.
+ * Native builds require an explicit configured server URL.
+ * Web builds can fall back to the current browser origin.
+ */
+export const resolveServerBaseUrl = ({ isNative, serverUrl, browserOrigin }) => {
+    const cleanServerUrl = normalizeServerUrl(serverUrl)
+    if (cleanServerUrl && cleanServerUrl.includes('://')) return cleanServerUrl
+
+    const cleanBrowserOrigin = (browserOrigin || '').trim().replace(/\/+$/, '')
+    if (!isNative && cleanBrowserOrigin && cleanBrowserOrigin.includes('://')) return cleanBrowserOrigin
+
+    return ''
+}
+
+/**
+ * Convert a relative server API path into an absolute request URL when possible.
+ */
+export const buildServerRequestUrl = (url, options) => {
+    if (!url) return ''
+    if (/^https?:\/\//i.test(url)) return url
+
+    const baseUrl = resolveServerBaseUrl(options)
+    if (!baseUrl) return ''
+
+    return new URL(url, `${baseUrl}/`).toString()
+}
+
 /**
  * Generate gradient based on string hash (for fallback poster background)
  */

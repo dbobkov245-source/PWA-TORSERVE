@@ -24,7 +24,7 @@ import { checkForUpdate, tryInstallPending } from './utils/appUpdater'
 import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
 
 // Helpers
-import { cleanTitle, resolveInitialServerUrl } from './utils/helpers'
+import { buildServerRequestUrl, cleanTitle, resolveInitialServerUrl } from './utils/helpers'
 
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
@@ -367,9 +367,25 @@ function App() {
     navigator.clipboard.writeText(url).then(() => alert('URL copied'))
   }
 
+  const resolveServerRequest = useCallback((url) => {
+    const requestUrl = buildServerRequestUrl(url, {
+      isNative: Capacitor.isNativePlatform(),
+      serverUrl,
+      browserOrigin: typeof window !== 'undefined' ? window.location.origin : ''
+    })
+
+    if (!requestUrl) {
+      throw new Error('Server URL is not configured')
+    }
+
+    return requestUrl
+  }, [serverUrl])
+
   const fetchSearchJson = useCallback(async (url) => {
+    const requestUrl = resolveServerRequest(url)
+
     try {
-      const res = await fetch(url)
+      const res = await fetch(requestUrl)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       return await res.json()
     } catch (fetchError) {
@@ -377,7 +393,7 @@ function App() {
 
       const nativeRes = await CapacitorHttp.request({
         method: 'GET',
-        url,
+        url: requestUrl,
         headers: { Accept: 'application/json' }
       })
 
@@ -395,7 +411,7 @@ function App() {
 
       return nativeRes.data || {}
     }
-  }, [])
+  }, [resolveServerRequest])
 
   const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false } = {}) => {
     const params = new URLSearchParams({
@@ -407,8 +423,8 @@ function App() {
       params.set('skipCache', '1')
     }
 
-    return fetchSearchJson(`${serverUrl}/api/v2/search?${params.toString()}`)
-  }, [fetchSearchJson, serverUrl])
+    return fetchSearchJson(`/api/v2/search?${params.toString()}`)
+  }, [fetchSearchJson])
 
   const buildFallbackMovieTorrentSession = useCallback((item) => {
     if (!item) return null

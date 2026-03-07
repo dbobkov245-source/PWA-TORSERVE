@@ -24,11 +24,11 @@ const MovieTorrentAction = ({ session, onOpen, buttonRef }) => {
     const summaryLabel = getSummaryLabel(session)
 
     return (
-        <div className="flex flex-col gap-1">
+        <div className="flex h-full w-full flex-col gap-1">
             <button
                 ref={buttonRef}
                 onClick={onOpen}
-                className="focusable px-8 py-3 bg-purple-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all"
+                className="focusable w-full px-8 py-3 bg-purple-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all"
             >
                 {buttonLabel}
             </button>

@@ -288,22 +288,27 @@ const MovieDetail = ({
                         </div>
 
                         {/* Actions */}
-                        <div className="flex flex-wrap gap-4">
-                            <MovieTorrentAction
-                                session={torrentSession}
-                                buttonRef={torrentBtnRef}
-                                onOpen={() => allowInteraction && onOpenMovieTorrents?.()}
-                            />
-                            <button
-                                ref={searchBtnRef}
-                                onClick={() => allowInteraction && onSearch?.(getSearchQuery(item))}
-                                className={`focusable px-8 py-3 bg-blue-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all ${!allowInteraction ? 'opacity-50' : ''}`}
-                            >🔍 Найти торренты</button>
-                            <button
-                                ref={backBtnRef}
-                                onClick={onBack}
-                                className="focusable px-8 py-3 bg-gray-800 focus:bg-white focus:text-black focus:ring-4 focus:ring-white text-white font-bold rounded-xl transition-all"
-                            >⬅️ Назад</button>
+                        <div className="flex flex-wrap items-start gap-4">
+                            <div
+                                data-testid="movie-primary-actions"
+                                className="grid w-full max-w-4xl grid-cols-1 items-start gap-4 sm:grid-cols-3"
+                            >
+                                <MovieTorrentAction
+                                    session={torrentSession}
+                                    buttonRef={torrentBtnRef}
+                                    onOpen={() => allowInteraction && onOpenMovieTorrents?.()}
+                                />
+                                <button
+                                    ref={searchBtnRef}
+                                    onClick={() => allowInteraction && onSearch?.(getSearchQuery(item))}
+                                    className={`focusable w-full px-8 py-3 bg-blue-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all ${!allowInteraction ? 'opacity-50' : ''}`}
+                                >🔍 Найти торренты</button>
+                                <button
+                                    ref={backBtnRef}
+                                    onClick={onBack}
+                                    className="focusable w-full px-8 py-3 bg-gray-800 focus:bg-white focus:text-black focus:ring-4 focus:ring-white text-white font-bold rounded-xl transition-all"
+                                >⬅️ Назад</button>
+                            </div>
                             {trailer && (
                                 <button
                                     ref={trailerBtnRef}
