@@ -1,8 +1,10 @@
 package com.torserve.pwa;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -16,10 +18,19 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.JSObject;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import org.json.JSONArray;
 
 @CapacitorPlugin(name = "TVPlayer")
 public class TVPlayer extends Plugin {
+    private static final String INSTALL_RESULT_EXTRA = "android.intent.extra.INSTALL_RESULT";
+    private static final int INSTALL_SUCCEEDED = 1;
+    private static final int INSTALL_FAILED_UPDATE_INCOMPATIBLE = -7;
+    private static final int INSTALL_FAILED_VERSION_DOWNGRADE = -25;
+    private static final int INSTALL_PARSE_FAILED_NOT_APK = -100;
+    private static final int INSTALL_PARSE_FAILED_NO_CERTIFICATES = -103;
+    private static final int INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES = -104;
 
     /**
      * Check if a package (player app) is installed
@@ -239,6 +250,101 @@ public class TVPlayer extends Plugin {
         }
     }
 
+    private long getVersionCode(PackageInfo packageInfo) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return packageInfo.getLongVersionCode();
+        }
+        return packageInfo.versionCode;
+    }
+
+    private Signature[] getPackageSignatures(PackageInfo packageInfo) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (packageInfo.signingInfo == null) {
+                return null;
+            }
+            return packageInfo.signingInfo.getApkContentsSigners();
+        }
+        return packageInfo.signatures;
+    }
+
+    private boolean signaturesMatch(PackageInfo installedInfo, PackageInfo apkInfo) {
+        Signature[] installedSignatures = getPackageSignatures(installedInfo);
+        Signature[] apkSignatures = getPackageSignatures(apkInfo);
+        if (installedSignatures == null || apkSignatures == null) {
+            return false;
+        }
+        if (installedSignatures.length != apkSignatures.length) {
+            return false;
+        }
+
+        Set<String> installed = new HashSet<>();
+        for (Signature signature : installedSignatures) {
+            installed.add(signature.toCharsString());
+        }
+
+        Set<String> apk = new HashSet<>();
+        for (Signature signature : apkSignatures) {
+            apk.add(signature.toCharsString());
+        }
+
+        return installed.equals(apk);
+    }
+
+    private String validateApkForInstall(String path) {
+        try {
+            PackageManager packageManager = getContext().getPackageManager();
+            int packageInfoFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? PackageManager.GET_SIGNING_CERTIFICATES
+                    : PackageManager.GET_SIGNATURES;
+
+            PackageInfo installedInfo = packageManager.getPackageInfo(
+                    getContext().getPackageName(),
+                    packageInfoFlags);
+            PackageInfo apkInfo = packageManager.getPackageArchiveInfo(path, packageInfoFlags);
+
+            if (apkInfo == null) {
+                return "Cannot read APK manifest";
+            }
+
+            if (!getContext().getPackageName().equals(apkInfo.packageName)) {
+                return "APK package does not match installed app";
+            }
+
+            long installedVersionCode = getVersionCode(installedInfo);
+            long apkVersionCode = getVersionCode(apkInfo);
+            if (apkVersionCode > 0 && installedVersionCode > 0 && apkVersionCode <= installedVersionCode) {
+                return "APK is not newer than the installed app";
+            }
+
+            if (!signaturesMatch(installedInfo, apkInfo)) {
+                return "APK signature does not match installed app";
+            }
+
+            return null;
+        } catch (PackageManager.NameNotFoundException e) {
+            return "Cannot read installed app info: " + e.getMessage();
+        }
+    }
+
+    private String describeInstallResult(int installResult) {
+        switch (installResult) {
+            case INSTALL_SUCCEEDED:
+                return "INSTALL_SUCCEEDED";
+            case INSTALL_FAILED_UPDATE_INCOMPATIBLE:
+                return "INSTALL_FAILED_UPDATE_INCOMPATIBLE";
+            case INSTALL_FAILED_VERSION_DOWNGRADE:
+                return "INSTALL_FAILED_VERSION_DOWNGRADE";
+            case INSTALL_PARSE_FAILED_NOT_APK:
+                return "INSTALL_PARSE_FAILED_NOT_APK";
+            case INSTALL_PARSE_FAILED_NO_CERTIFICATES:
+                return "INSTALL_PARSE_FAILED_NO_CERTIFICATES";
+            case INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES:
+                return "INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES";
+            default:
+                return "INSTALL_FAILED(" + installResult + ")";
+        }
+    }
+
     /**
      * Install an APK file from the given path.
      * Uses FileProvider to expose the file safely (Android 7+).
@@ -264,6 +370,12 @@ public class TVPlayer extends Plugin {
         }
 
         try {
+            String validationError = validateApkForInstall(path);
+            if (validationError != null) {
+                call.reject(validationError);
+                return;
+            }
+
             // Android 8+: app-level "install unknown apps" gate can block installer launch.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                     !getContext().getPackageManager().canRequestPackageInstalls()) {
@@ -288,8 +400,7 @@ public class TVPlayer extends Plugin {
             installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
 
             if (installIntent.resolveActivity(getContext().getPackageManager()) != null) {
-                getContext().startActivity(installIntent);
-                call.resolve();
+                startActivityForResult(call, installIntent, "apkInstallResult");
                 return;
             }
 
@@ -298,10 +409,43 @@ public class TVPlayer extends Plugin {
             viewIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
             viewIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getContext().startActivity(viewIntent);
-            call.resolve();
+            viewIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+            startActivityForResult(call, viewIntent, "apkInstallResult");
         } catch (Exception e) {
             call.reject("Error installing APK: " + e.getMessage());
         }
+    }
+
+    @ActivityCallback
+    private void apkInstallResult(PluginCall call, ActivityResult result) {
+        if (call == null) {
+            return;
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("resultCode", result.getResultCode());
+
+        Intent data = result.getData();
+        int installResult = Integer.MIN_VALUE;
+        if (data != null && data.hasExtra(INSTALL_RESULT_EXTRA)) {
+            installResult = data.getIntExtra(INSTALL_RESULT_EXTRA, Integer.MIN_VALUE);
+            ret.put("installResult", installResult);
+            ret.put("installStatus", describeInstallResult(installResult));
+        }
+
+        if (result.getResultCode() == Activity.RESULT_OK
+                || installResult == INSTALL_SUCCEEDED) {
+            call.resolve(ret);
+            return;
+        }
+
+        String message = "APK installation was cancelled";
+        if (installResult != Integer.MIN_VALUE) {
+            message = "APK installation failed: " + describeInstallResult(installResult);
+        } else if (result.getResultCode() == Activity.RESULT_FIRST_USER) {
+            message = "APK installation failed";
+        }
+
+        call.reject(message, "APK_INSTALL_FAILED", ret);
     }
 }

@@ -1,7 +1,7 @@
 {
-    "version": "3.10.2",
-    "versionCode": 14,
+    "version": "3.10.3",
+    "versionCode": 15,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.2/app-debug.apk",
-    "notes": "v3.10.2:\n- 🧹 Repo Sanitization: убран хардкод локального NAS IP из client runtime и Capacitor config.\n- 📄 Docs Cleanup: release HEAD больше не несёт лишний CHANGELOG diff.\n- 🔄 Auto-Update: сохранён фикс повторного prompt на уже установленный APK.\n- 📁 Local Library: sparse/incomplete файлы больше не показываются как ready.\n- 📺 Auto-Download: season packs без номера серии больше не добавляются как новые эпизоды.\n- ▶️ TV Player: сохранён фикс Android handoff для внешнего плеера."
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.3/app-debug.apk",
+    "notes": "v3.10.3:\n- 🔄 Auto-Update: клиент ждёт реальный результат установки APK и больше не зацикливается на pending install при неудачном обновлении.\n- 🛡️ Auto-Update: несовместимый APK (не тот пакет, старая версия или другая подпись) отклоняется до перехода в системный installer.\n- 📺 Android Bridge: причина отказа установки теперь возвращается в клиент вместо тихого провала."
 }

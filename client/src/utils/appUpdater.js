@@ -49,6 +49,24 @@ async function installCachedApk(fileName, onProgress) {
     await TVPlayer.installApk({ path: fileInfo.uri });
 }
 
+async function confirmPendingInstallApplied(pending) {
+    const current = await getCurrentVersion();
+    if (hasInstalledPendingVersion(current, pending)) {
+        clearPendingInstall();
+        return current;
+    }
+
+    throw new Error(
+        `Установка завершилась без обновления приложения (текущая версия: ${current.versionName || 'unknown'}). ` +
+        'APK может быть несовместим по подписи или установка была отменена.'
+    );
+}
+
+async function installPendingApk(pending, onProgress) {
+    await installCachedApk(pending.fileName, onProgress);
+    return confirmPendingInstallApplied(pending);
+}
+
 /**
  * Compare two semver strings.
  * Returns 1 if left > right, -1 if left < right, 0 if equal.
@@ -165,6 +183,7 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
 
     const version = String(options.version || 'latest').replace(/[^\w.-]/g, '_');
     const fileName = `update-${version}.apk`;
+    let attemptedPendingInstall = null;
 
     try {
         const pending = readPendingInstall();
@@ -174,7 +193,8 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
             try {
                 await Filesystem.stat({ path: fileName, directory: Directory.Cache });
                 if (onProgress) onProgress(95);
-                await installCachedApk(fileName, onProgress);
+                attemptedPendingInstall = pending;
+                await installPendingApk(pending, onProgress);
                 return;
             } catch {
                 // Cache entry is stale -> continue with fresh download.
@@ -205,19 +225,23 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
             directory: Directory.Cache
         });
 
-        writePendingInstall({
+        attemptedPendingInstall = {
             url,
             fileName,
             version,
             versionCode: options.versionCode ?? null,
             timestamp: Date.now()
-        });
+        };
+        writePendingInstall(attemptedPendingInstall);
 
         if (onProgress) onProgress(90);
 
         // Trigger native APK installation
-        await installCachedApk(fileName, onProgress);
+        await installPendingApk(attemptedPendingInstall, onProgress);
     } catch (e) {
+        if (attemptedPendingInstall) {
+            clearPendingInstall();
+        }
         console.error('[Updater] Download/install failed:', e);
         throw e;
     }
@@ -251,10 +275,10 @@ export async function tryInstallPending() {
         console.log('[Updater] Found pending install:', pending.fileName);
 
         // Trigger install
-        await installCachedApk(pending.fileName);
+        await installPendingApk(pending);
         return true;
     } catch (e) {
-        console.warn('[Updater] Pending install file not found or invalid:', e);
+        console.warn('[Updater] Pending install retry failed:', e);
         clearPendingInstall();
         return false;
     }

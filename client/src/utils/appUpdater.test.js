@@ -72,10 +72,15 @@ describe('tryInstallPending', () => {
     })
 
     it('retries cached install when the installed version is still older', async () => {
-        mockTVPlayer.getAppVersion.mockResolvedValue({
-            versionName: '3.9.0',
-            versionCode: 11
-        })
+        mockTVPlayer.getAppVersion
+            .mockResolvedValueOnce({
+                versionName: '3.9.0',
+                versionCode: 11
+            })
+            .mockResolvedValueOnce({
+                versionName: '3.10.0',
+                versionCode: 12
+            })
         localStorage.setItem('app_update_pending_install', JSON.stringify({
             fileName: 'update-3.10.0.apk',
             version: '3.10.0',
@@ -93,5 +98,30 @@ describe('tryInstallPending', () => {
         expect(mockTVPlayer.installApk).toHaveBeenCalledWith({
             path: 'file:///cache/update-3.10.0.apk'
         })
+        expect(localStorage.getItem('app_update_pending_install')).toBeNull()
+    })
+
+    it('clears pending install when installer returns without updating the app', async () => {
+        mockTVPlayer.getAppVersion
+            .mockResolvedValueOnce({
+                versionName: '3.9.0',
+                versionCode: 11
+            })
+            .mockResolvedValueOnce({
+                versionName: '3.9.0',
+                versionCode: 11
+            })
+
+        localStorage.setItem('app_update_pending_install', JSON.stringify({
+            fileName: 'update-3.10.0.apk',
+            version: '3.10.0',
+            versionCode: 12,
+            url: 'https://example.com/app.apk'
+        }))
+
+        const started = await tryInstallPending()
+
+        expect(started).toBe(false)
+        expect(localStorage.getItem('app_update_pending_install')).toBeNull()
     })
 })
