@@ -10,5 +10,6 @@ generate_code_doc.py
 
 # Private folders (not for public GitHub)
 deploy/
+.worktrees/
 *FULL_PROJECT_CODE.md
 *.apk
