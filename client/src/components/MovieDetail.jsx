@@ -135,13 +135,13 @@ const MovieDetail = ({
         if (!item?.id) return
         getFavorites().then(favs => {
             setIsFavorite(favs.some(f => f.tmdbId === item.id))
-        }).catch(() => {})
+        }).catch(() => { })
     }, [item?.id])
 
     // HIST-01: Auto-record view in history
     useEffect(() => {
         if (!item?.id) return
-        recordHistory(item).catch(() => {})
+        recordHistory(item).catch(() => { })
     }, [item?.id])
 
     // FAV-01: Toggle favorite
@@ -212,7 +212,7 @@ const MovieDetail = ({
                 if (details?.belongs_to_collection) {
                     getCollection(details.belongs_to_collection.id).then(c => {
                         if (!controller.signal.aborted && c?.parts) setCollection(c)
-                    }).catch(() => {})
+                    }).catch(() => { })
                 }
 
                 const creditsData = await getCredits(item.id, mediaType)
@@ -248,9 +248,9 @@ const MovieDetail = ({
                                 const filtered = (dr.results || []).filter(r => r.id !== item.id && r.poster_path)
                                 setKeywordRecs(filtered.slice(0, 10))
                             }
-                        }).catch(() => {})
+                        }).catch(() => { })
                     }
-                }).catch(() => {})
+                }).catch(() => { })
 
             } catch (err) { console.warn(err) }
             finally { if (!controller.signal.aborted) setLoadingExtra(false) }
@@ -291,7 +291,7 @@ const MovieDetail = ({
                         <div className="flex flex-wrap items-start gap-4">
                             <div
                                 data-testid="movie-primary-actions"
-                                className="grid w-full max-w-4xl grid-cols-1 items-start gap-4 sm:grid-cols-3"
+                                className="grid w-full max-w-4xl grid-cols-1 items-stretch gap-4 sm:grid-cols-3"
                             >
                                 <MovieTorrentAction
                                     session={torrentSession}
@@ -301,12 +301,12 @@ const MovieDetail = ({
                                 <button
                                     ref={searchBtnRef}
                                     onClick={() => allowInteraction && onSearch?.(getSearchQuery(item))}
-                                    className={`focusable w-full px-8 py-3 bg-blue-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all ${!allowInteraction ? 'opacity-50' : ''}`}
+                                    className={`focusable w-full h-full min-h-[56px] px-2 py-2 flex items-center justify-center bg-blue-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all ${!allowInteraction ? 'opacity-50' : ''}`}
                                 >🔍 Найти торренты</button>
                                 <button
                                     ref={backBtnRef}
                                     onClick={onBack}
-                                    className="focusable w-full px-8 py-3 bg-gray-800 focus:bg-white focus:text-black focus:ring-4 focus:ring-white text-white font-bold rounded-xl transition-all"
+                                    className="focusable w-full h-full min-h-[56px] px-2 py-2 flex items-center justify-center bg-gray-800 focus:bg-white focus:text-black focus:ring-4 focus:ring-white text-white font-bold rounded-xl transition-all"
                                 >⬅️ Назад</button>
                             </div>
                             {trailer && (
@@ -327,11 +327,10 @@ const MovieDetail = ({
                             <button
                                 ref={favBtnRef}
                                 onClick={() => allowInteraction && handleToggleFavorite()}
-                                className={`focusable px-6 py-3 font-bold rounded-xl transition-all focus:ring-4 ${
-                                    isFavorite
+                                className={`focusable px-6 py-3 font-bold rounded-xl transition-all focus:ring-4 ${isFavorite
                                         ? 'bg-pink-600 focus:bg-pink-400 focus:ring-pink-300 text-white'
                                         : 'bg-gray-800 focus:bg-pink-600 focus:ring-pink-300 text-white'
-                                } ${favLoading ? 'opacity-50' : ''}`}
+                                    } ${favLoading ? 'opacity-50' : ''}`}
                             >{isFavorite ? '❤️ В избранном' : '🤍 Избранное'}</button>
                         </div>
 

@@ -83,44 +83,66 @@ export function useMovieTorrentPreload({
         let lastMeta = null
 
         try {
-            for (const query of queries) {
-                lastQuery = query
+            let pendingCount = queries.length;
+            let stopped = false;
 
-                const response = await searchTorrents(query, {
-                    forceFresh,
-                    limit: 100
-                })
+            queries.forEach((query) => {
+                (async () => {
+                    try {
+                        const response = await searchTorrents(query, { forceFresh, limit: 100 });
+                        if (stopped || requestId !== requestIdRef.current) return;
 
-                if (requestId !== requestIdRef.current) return null
+                        lastQuery = query;
+                        combinedItems = mergeItems(combinedItems.concat(response?.items || []));
+                        lastProviders = { ...lastProviders, ...response?.meta?.providers };
+                        if (response?.meta) lastMeta = response.meta;
 
-                combinedItems = mergeItems(combinedItems.concat(response?.items || []))
-                lastProviders = response?.meta?.providers || {}
-                lastMeta = response?.meta || null
+                        const nextSession = {
+                            ...baseSession,
+                            query: lastQuery,
+                            items: combinedItems,
+                            providers: lastProviders,
+                            meta: lastMeta,
+                            loading: true,
+                            status: 'loading',
+                            fromCache: false,
+                            updatedAt: Date.now()
+                        };
 
-                if (shouldStopMovieTorrentPreload(combinedItems)) break
-            }
+                        if (shouldStopMovieTorrentPreload(combinedItems)) {
+                            stopped = true;
+                            nextSession.loading = false;
+                            nextSession.status = combinedItems.length ? 'ready' : 'empty';
+                            cacheRef.current.set(key, { session: nextSession, expiresAt: Date.now() + ttlMs });
+                        }
 
-            const nextSession = {
-                ...baseSession,
-                query: lastQuery,
-                items: combinedItems,
-                providers: lastProviders,
-                meta: lastMeta,
-                loading: false,
-                error: null,
-                status: combinedItems.length ? 'ready' : 'empty',
-                fromCache: false,
-                updatedAt: Date.now()
-            }
+                        if (requestId === requestIdRef.current) {
+                            setSession(nextSession);
+                        }
+                    } catch (error) {
+                        console.error('[Preload] error:', error);
+                    } finally {
+                        pendingCount--;
+                        if (pendingCount === 0 && !stopped && requestId === requestIdRef.current) {
+                            const finalSession = {
+                                ...baseSession,
+                                query: lastQuery,
+                                items: combinedItems,
+                                providers: lastProviders,
+                                meta: lastMeta,
+                                loading: false,
+                                status: combinedItems.length ? 'ready' : 'empty',
+                                fromCache: false,
+                                updatedAt: Date.now()
+                            };
+                            cacheRef.current.set(key, { session: finalSession, expiresAt: Date.now() + ttlMs });
+                            setSession(finalSession);
+                        }
+                    }
+                })();
+            });
 
-            if (requestId !== requestIdRef.current) return null
-
-            cacheRef.current.set(key, {
-                session: nextSession,
-                expiresAt: Date.now() + ttlMs
-            })
-            setSession(nextSession)
-            return nextSession
+            return null;
         } catch (error) {
             if (requestId !== requestIdRef.current) return null
 
