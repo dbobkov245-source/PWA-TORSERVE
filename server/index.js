@@ -15,7 +15,7 @@ import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules }
 import { parseRange } from './utils/range.js'
 import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
-import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry } from './localLibrary.js'
+import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary } from './localLibrary.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -213,25 +213,6 @@ app.post('/api/speed-mode', (req, res) => {
     const result = setSpeedMode(mode)
     res.json(result)
 })
-
-function mergeTorrentAndLocalLibrary(torrents, localItems) {
-    const merged = [...torrents]
-    const seenHashes = new Set(torrents.map(t => t.infoHash))
-    const seenNames = new Set(
-        torrents
-            .map(t => (t?.name || '').trim().toLowerCase())
-            .filter(Boolean)
-    )
-
-    for (const item of localItems) {
-        const normalizedName = (item?.name || '').trim().toLowerCase()
-        if (seenHashes.has(item.infoHash)) continue
-        if (normalizedName && seenNames.has(normalizedName)) continue
-        merged.push(item)
-    }
-
-    return merged
-}
 
 // API: Status (with server state)
 app.get('/api/status', async (req, res) => {

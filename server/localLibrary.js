@@ -18,6 +18,23 @@ const cache = {
 
 let activeScanPromise = null
 
+function normalizeLibraryName(name = '') {
+    return String(name).trim().toLowerCase()
+}
+
+function hasPlayableVideoFiles(item) {
+    if (!Array.isArray(item?.files) || item.files.length === 0) return false
+    return item.isReady === true || Number(item?.progress || 0) >= 0.99
+}
+
+function shouldPreferLocalItem(torrentItem, localItem) {
+    const localPlayable = hasPlayableVideoFiles(localItem)
+    if (!localPlayable) return false
+
+    const torrentPlayable = hasPlayableVideoFiles(torrentItem)
+    return !torrentPlayable
+}
+
 function getDownloadPath() {
     return path.resolve(process.env.DOWNLOAD_PATH || './downloads')
 }
@@ -54,11 +71,15 @@ async function collectVideoFiles(rootPath) {
             if (!isVideoFile(entry.name)) continue
 
             const stat = await fsPromises.stat(absPath)
+            const allocatedBytes = (typeof stat.blocks === 'number')
+                ? stat.blocks * 512
+                : stat.size
             const relativeName = path.relative(rootPath, absPath) || entry.name
             collected.push({
                 absPath,
                 name: relativeName,
-                length: stat.size
+                length: stat.size,
+                downloaded: Math.min(allocatedBytes, stat.size)
             })
         }
     }
@@ -69,7 +90,10 @@ async function collectVideoFiles(rootPath) {
         return [{
             absPath: rootPath,
             name: path.basename(rootPath),
-            length: stat.size
+            length: stat.size,
+            downloaded: Math.min((typeof stat.blocks === 'number')
+                ? stat.blocks * 512
+                : stat.size, stat.size)
         }]
     }
 
@@ -80,6 +104,9 @@ async function collectVideoFiles(rootPath) {
 
 function toTorrentLikeItem(name, absRootPath, files, totalSize) {
     const infoHash = makeInfoHash(absRootPath)
+    const downloaded = files.reduce((sum, file) => sum + Math.min(file.downloaded ?? file.length, file.length), 0)
+    const progress = totalSize > 0 ? Math.min(downloaded / totalSize, 1) : 0
+    const isReady = progress >= 0.99
     const indexedFiles = files
         .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
         .map((file, index) => ({
@@ -92,9 +119,9 @@ function toTorrentLikeItem(name, absRootPath, files, totalSize) {
     return {
         infoHash,
         name,
-        progress: 1,
-        isReady: true,
-        downloaded: totalSize,
+        progress,
+        isReady,
+        downloaded,
         totalSize,
         downloadSpeed: 0,
         uploadSpeed: 0,
@@ -161,6 +188,51 @@ export async function refreshLocalLibrary(force = false) {
 
 export function getLocalLibrarySnapshot() {
     return cache.items
+}
+
+export function mergeTorrentAndLocalLibrary(torrents = [], localItems = []) {
+    const merged = []
+    const usedLocalHashes = new Set()
+    const localByName = new Map()
+
+    for (const item of localItems) {
+        const normalizedName = normalizeLibraryName(item?.name)
+        if (!normalizedName || localByName.has(normalizedName)) continue
+        localByName.set(normalizedName, item)
+    }
+
+    for (const torrent of torrents) {
+        const normalizedName = normalizeLibraryName(torrent?.name)
+        const localMatch = normalizedName ? localByName.get(normalizedName) : null
+
+        if (localMatch && shouldPreferLocalItem(torrent, localMatch)) {
+            merged.push(localMatch)
+            usedLocalHashes.add(localMatch.infoHash)
+            continue
+        }
+
+        merged.push(torrent)
+    }
+
+    const seenHashes = new Set(merged.map(item => item?.infoHash).filter(Boolean))
+    const seenNames = new Set(
+        merged
+            .map(item => normalizeLibraryName(item?.name))
+            .filter(Boolean)
+    )
+
+    for (const item of localItems) {
+        const normalizedName = normalizeLibraryName(item?.name)
+        if (seenHashes.has(item.infoHash)) continue
+        if (usedLocalHashes.has(item.infoHash)) continue
+        if (normalizedName && seenNames.has(normalizedName)) continue
+
+        merged.push(item)
+        seenHashes.add(item.infoHash)
+        if (normalizedName) seenNames.add(normalizedName)
+    }
+
+    return merged
 }
 
 export function getLocalFile(infoHash, fileIndex) {

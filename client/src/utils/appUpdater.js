@@ -50,17 +50,38 @@ async function installCachedApk(fileName, onProgress) {
 }
 
 /**
- * Compare two semver strings: returns true if remote > local
+ * Compare two semver strings.
+ * Returns 1 if left > right, -1 if left < right, 0 if equal.
  */
-function isNewerVersion(remote, local) {
-    const r = remote.split('.').map(Number);
-    const l = local.split('.').map(Number);
+function compareVersions(left, right) {
+    const l = String(left || '').split('.').map(Number);
+    const r = String(right || '').split('.').map(Number);
     for (let i = 0; i < 3; i++) {
-        const rv = r[i] || 0;
         const lv = l[i] || 0;
-        if (rv > lv) return true;
-        if (rv < lv) return false;
+        const rv = r[i] || 0;
+        if (lv > rv) return 1;
+        if (lv < rv) return -1;
     }
+    return 0;
+}
+
+function isNewerVersion(remote, local) {
+    return compareVersions(remote, local) > 0;
+}
+
+function hasInstalledPendingVersion(currentVersion, pending) {
+    if (!pending || !currentVersion) return false;
+
+    const currentCode = Number(currentVersion.versionCode);
+    const pendingCode = Number(pending.versionCode);
+    if (Number.isFinite(currentCode) && Number.isFinite(pendingCode) && pendingCode > 0) {
+        if (currentCode >= pendingCode) return true;
+    }
+
+    if (pending.version && currentVersion.versionName) {
+        return compareVersions(currentVersion.versionName, pending.version) >= 0;
+    }
+
     return false;
 }
 
@@ -118,6 +139,7 @@ export async function checkForUpdate() {
             available,
             forceUpdate,
             version: remote.version,
+            versionCode: remote.versionCode,
             notes: remote.notes || '',
             url: remote.url,
             currentVersion: local.versionName
@@ -187,6 +209,7 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
             url,
             fileName,
             version,
+            versionCode: options.versionCode ?? null,
             timestamp: Date.now()
         });
 
@@ -212,6 +235,13 @@ export async function tryInstallPending() {
     if (!pending || !pending.fileName) return false;
 
     try {
+        const current = await getCurrentVersion();
+        if (hasInstalledPendingVersion(current, pending)) {
+            console.log('[Updater] Pending install already satisfied:', current.versionName);
+            clearPendingInstall();
+            return false;
+        }
+
         // Check if file exists in cache
         await Filesystem.stat({
             path: pending.fileName,

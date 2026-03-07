@@ -194,6 +194,15 @@ export const organizeFiles = (files) => {
 }
 
 /**
+ * Return the highest detected episode number from a file list.
+ */
+export const getMaxEpisodeNumber = (files) => {
+    const { episodes } = organizeFiles(files)
+    if (episodes.length === 0) return 0
+    return episodes[episodes.length - 1].episode || 0
+}
+
+/**
  * Extract quality badges from torrent/file name
  * Returns array of badge objects with label and color
  * ADR-001 Item 7: Quality Badges на постерах

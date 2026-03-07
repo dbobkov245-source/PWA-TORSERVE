@@ -13,6 +13,8 @@ await import('./watchdog.test.js')
 await import('./range.test.js')
 await import('./autodownloader.test.js')
 await import('./providers-parsing.test.js')
+await import('./searchCache.test.js')
+await import('./local-library.test.js')
 
 // Run all registered tests
 await runTests()

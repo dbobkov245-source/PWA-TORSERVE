@@ -22,7 +22,10 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
             await downloadAndInstall(
                 updateInfo.url,
                 (pct) => setProgress(pct),
-                { version: updateInfo.version }
+                {
+                    version: updateInfo.version,
+                    versionCode: updateInfo.versionCode
+                }
             );
         } catch (e) {
             setStatus('error');

@@ -1,7 +1,7 @@
 {
-    "version": "3.10.0",
-    "versionCode": 12,
+    "version": "3.10.1",
+    "versionCode": 13,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.0/app-debug.apk",
-    "notes": "v3.10.0:\n- 🧠 Smart Sort: Умная сортировка результатов поиска по playability + peers. Теперь живые торренты всегда наверху.\n- 🟢 Playability Badges: Иконки статуса в каждом результате поиска (🟢 live, 🟡 risky, 🔴 dead, ⚪ unchecked).\n\nv3.9.0:\n- 🎤 Voice Search Rollback: Reverted to simple reliable flow. Fixed \"double press\" bug on Android TV.\n- 🔄 Auto-Update Fix: Installation now retries from cache on restart."
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.1/app-debug.apk",
+    "notes": "v3.10.1:\n- 🔄 Auto-Update: убран повторный системный prompt на уже установленный APK после обновления.\n- 📁 Local Library: sparse/incomplete файлы больше не показываются как полностью готовые.\n- 📺 Auto-Download: season packs без номера серии больше не подхватываются как новые эпизоды.\n- 🎯 Auto-Download UI: последняя серия теперь корректно определяется по SxxExx.\n- ▶️ TV Player: восстановлен обязательный Android handoff flag для запуска внешнего плеера."
 }

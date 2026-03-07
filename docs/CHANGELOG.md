@@ -8,6 +8,17 @@ All notable changes to this project will be documented in this file.
 - **КРИТИЧНО — Tracker announces broken after restart (`torrent.js`):** Все торренты показывали 0 peers после перезапуска контейнера. Корневая причина: `torrent-stream` кэширует `.torrent`-файлы в `/tmp/`, и при загрузке из кэша `torrent.announce = []` (пустой список трекеров — metadata info-dict не содержит трекеры). `discovery.announce` тоже был пустым, т.к. `opts.trackers` не передавался. Итог: трекер-клиент создавался без URL → анонсы не отправлялись → 0 peers навсегда. **Фикс:** Добавлен `trackers: PUBLIC_TRACKERS` в engine options → `discovery.announce = PUBLIC_TRACKERS` → трекеры всегда доступны независимо от кэша.
 - **Kickstart: select all video files (`torrent.js`):** При восстановлении торрента на `engine ready` теперь вызывается `file.select()` на **всех** видеофайлах, а не только на крупнейшем. Исправлена критическая ошибка: сериальные торренты (несколько эпизодов) не скачивались вообще — был выбран только самый большой файл (напр. E01), а остальные эпизоды оставались невыбранными навсегда. В `torrent-stream` невыбранный файл никогда не скачивается, независимо от числа подключённых пиров. Приоритизация (`prioritizeFileInternal`) теперь ставится на первый файл по имени (E01→E02→... — естественный порядок эпизодов).
 
+## [3.10.1] - 2026-03-07
+
+### Fixed
+- **Auto-Update:** Исправлен повторный системный prompt на установку APK после уже завершённого обновления. В pending-install state теперь учитывается `versionCode`.
+- **Auto-Download UI:** Исправлен расчёт `lastEpisode` из имён вида `S01E05`; picker больше не сохраняет серию как `1` вместо `5`.
+- **TV Player:** Восстановлен обязательный `FLAG_ACTIVITY_NEW_TASK` для запуска внешнего плеера через Android intent.
+
+### Fixed (Backend — влияет на отображение в APK)
+- **Local Library:** Sparse/placeholder-файлы в `DOWNLOAD_PATH` больше не считаются полностью скачанными и не маскируют активные торренты как `ready`.
+- **Auto-Download:** Season-pack релизы без явного номера серии теперь распознаются как batch и не добавляются как “новая серия”.
+
 ## [3.10.0] - 2026-02-21
 
 ### Added

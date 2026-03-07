@@ -387,6 +387,17 @@ export function parseTorrentTitle(title, sizeFromAPI = 0) {
         return result
     }
 
+    // Pattern 6: Season pack without explicit episode
+    const seasonOnlyMatch = cleanTitle.match(/(?:^|[\.\s])S(\d{1,2})(?!E\d{1,3})(?:[\.\s]|$)/i)
+    if (seasonOnlyMatch) {
+        result.season = parseInt(seasonOnlyMatch[1], 10)
+        result.episode = 0
+        result.isBatch = true
+        const titlePart = cleanTitle.split(/(?:^|[\.\s])S\d{1,2}(?!E\d{1,3})(?:[\.\s]|$)/i)[0]
+        result.title = cleanTitlePart(titlePart)
+        return result
+    }
+
     // Generic fallback
     result.title = cleanTitlePart(cleanTitle)
     return result

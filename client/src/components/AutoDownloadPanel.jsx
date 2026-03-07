@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { cleanTitle, getMaxEpisodeNumber } from '../utils/helpers'
 
 // TV Remote focusable button — registered in spatial navigation
 function FocusableButton({ onClick, disabled, className, children, autoFocus }) {
@@ -76,15 +77,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
             })
             .map(t => {
                 const videos = t.files?.filter(f => /\.(mp4|mkv|avi|webm|mov)$/i.test(f.name)) || []
-                let maxEpisode = 0
-
-                videos.forEach(f => {
-                    const match = f.name.match(/[ES](\d{1,3})|[-–]\s*(\d{1,3})(?:\s|$|\[|\()/i)
-                    if (match) {
-                        const ep = parseInt(match[1] || match[2], 10)
-                        if (ep > maxEpisode) maxEpisode = ep
-                    }
-                })
+                const maxEpisode = getMaxEpisodeNumber(videos)
 
                 const resMatch = t.name.match(/\b(2160p?|1080p?|720p?)\b/i)
                 const resolution = resMatch ? resMatch[1].replace('p', '') : ''
@@ -200,7 +193,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
     // Add rule from torrent picker
     const addFromTorrent = (series) => {
         setNewRule({
-            query: series.name.replace(/\./g, ' ').split(/[-\[\(]/)[0].trim(),
+            query: cleanTitle(series.name) || series.name.replace(/\./g, ' ').split(/[-\[\(]/)[0].trim(),
             resolution: series.resolution || '2160',
             group: '',
             lastEpisode: series.lastEpisode
