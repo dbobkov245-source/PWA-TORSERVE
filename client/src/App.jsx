@@ -4,6 +4,8 @@ import { registerPlugin, Capacitor, CapacitorHttp } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useVoiceSearch } from './hooks/useVoiceSearch.jsx'
 import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
+import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
+import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 
 // Components
 import Poster from './components/Poster'
@@ -115,6 +117,7 @@ function App() {
   const [searchProviders, setSearchProviders] = useState({})
   const [searchMeta, setSearchMeta] = useState(null)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [searchOrigin, setSearchOrigin] = useState('manual')
   const lastSearchRef = useRef({ query: '' })
 
   // State: Auto-Download
@@ -143,7 +146,14 @@ function App() {
     if (updateInfo?.available) { /* handled by UpdateModal dismiss */ }
     else if (selectedTorrent) setSelectedTorrent(null)
     else if (showSettings) setShowSettings(false)
-    else if (showSearch) { setShowSearch(false); setSearchResults([]); setSearchProviders({}) }
+    else if (showSearch) {
+      setShowSearch(false)
+      setSearchOrigin('manual')
+      setSearchResults([])
+      setSearchProviders({})
+      setSearchMeta(null)
+      setSearchLoading(false)
+    }
     else if (showSidebar) setShowSidebar(false)
     else if (activeMovie) setActiveMovie(null)
     else if (activePerson) setActivePerson(null)
@@ -387,6 +397,62 @@ function App() {
     }
   }, [])
 
+  const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false } = {}) => {
+    const params = new URLSearchParams({
+      query,
+      limit: String(limit)
+    })
+
+    if (forceFresh) {
+      params.set('skipCache', '1')
+    }
+
+    return fetchSearchJson(`${serverUrl}/api/v2/search?${params.toString()}`)
+  }, [fetchSearchJson, serverUrl])
+
+  const buildFallbackMovieTorrentSession = useCallback((item) => {
+    if (!item) return null
+
+    return {
+      query: buildMovieTorrentQueries(item)[0] || '',
+      items: [],
+      providers: {},
+      meta: null,
+      status: 'loading',
+      fromCache: false
+    }
+  }, [])
+
+  const hydrateSearchFromMovieSession = useCallback((session) => {
+    if (!session) {
+      setSearchQuery('')
+      setSearchResults([])
+      setSearchProviders({})
+      setSearchMeta(null)
+      setSearchLoading(false)
+      return
+    }
+
+    setSearchQuery(session.query || '')
+    setSearchResults(session.items || [])
+    setSearchProviders(session.providers || {})
+    setSearchMeta({
+      query: session.query || '',
+      cached: Boolean(session.fromCache || session.meta?.cached),
+      ms: session.meta?.ms || 0,
+      fresh: false
+    })
+    setSearchLoading(session.status === 'loading')
+  }, [])
+
+  const {
+    session: movieTorrentSession,
+    refresh: refreshMovieTorrentSession
+  } = useMovieTorrentPreload({
+    item: activeMovie,
+    searchTorrents: performTorrentSearch
+  })
+
   const searchRuTracker = async (query) => {
     let forceFresh = false
     let effectiveQuery = query
@@ -404,21 +470,17 @@ function App() {
       forceFresh = true
     }
 
+    setSearchOrigin('manual')
     setSearchLoading(true)
     setSearchResults([])
     setSearchProviders({})
     setSearchMeta(null)
 
-    const params = new URLSearchParams({
-      query: normalizedQuery,
-      limit: '100'
-    })
-    if (forceFresh) {
-      params.set('skipCache', '1')
-    }
-
     try {
-      const data = await fetchSearchJson(`${serverUrl}/api/v2/search?${params.toString()}`)
+      const data = await performTorrentSearch(normalizedQuery, {
+        forceFresh,
+        limit: 100
+      })
       setSearchResults(data.items || [])
       setSearchProviders(data.meta?.providers || {})
       setSearchMeta({
@@ -428,9 +490,25 @@ function App() {
         fresh: forceFresh
       })
       lastSearchRef.current.query = normalizedQuery
+      return data
     } catch (e) { console.error('Search error:', e) }
     finally { setSearchLoading(false) }
   }
+
+  const openMovieTorrentSearch = useCallback(() => {
+    const session = movieTorrentSession || buildFallbackMovieTorrentSession(activeMovie)
+    setSearchOrigin('movie-detail')
+    hydrateSearchFromMovieSession(session)
+    setActiveView('list')
+    setShowSearch(true)
+  }, [activeMovie, buildFallbackMovieTorrentSession, hydrateSearchFromMovieSession, movieTorrentSession])
+
+  useEffect(() => {
+    if (!showSearch || searchOrigin !== 'movie-detail') return
+    if (!movieTorrentSession) return
+
+    hydrateSearchFromMovieSession(movieTorrentSession)
+  }, [showSearch, searchOrigin, movieTorrentSession, hydrateSearchFromMovieSession])
 
   const addFromSearch = async (magnet, title) => {
     setLoading(true)
@@ -584,6 +662,8 @@ function App() {
             activePerson={activePerson} setActivePerson={setActivePerson}
             activeCategory={activeCategory} setActiveCategory={setActiveCategory}
             showSidebar={showSidebar} setShowSidebar={setShowSidebar}
+            torrentSession={movieTorrentSession}
+            onOpenMovieTorrents={openMovieTorrentSearch}
             onSearch={(q) => {
               const query = q || searchQuery;
               setSearchQuery(query);
@@ -625,7 +705,10 @@ function App() {
                 <button
                   ref={mainSearchBtnRef}
                   tabIndex="0"
-                  onClick={() => setShowSearch(!showSearch)}
+                  onClick={() => {
+                    setSearchOrigin('manual')
+                    setShowSearch(!showSearch)
+                  }}
                   className="focusable bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105 focus:ring-4 focus:ring-purple-400"
                 >
                   🔍 Поиск
@@ -649,8 +732,25 @@ function App() {
                 searchQuery={searchQuery}
                 onSearchQueryChange={setSearchQuery}
                 onSearch={searchRuTracker}
-                onForceRefresh={(q) => searchRuTracker({ query: q, forceFresh: true })}
-                onClose={() => { setShowSearch(false); setSearchResults([]); setSearchProviders({}); setSearchMeta(null) }}
+                onForceRefresh={async (q) => {
+                  if (searchOrigin === 'movie-detail' && activeMovie) {
+                    const refreshedSession = await refreshMovieTorrentSession()
+                    if (refreshedSession) {
+                      hydrateSearchFromMovieSession(refreshedSession)
+                      return
+                    }
+                  }
+
+                  await searchRuTracker({ query: q, forceFresh: true })
+                }}
+                onClose={() => {
+                  setShowSearch(false)
+                  setSearchOrigin('manual')
+                  setSearchResults([])
+                  setSearchProviders({})
+                  setSearchMeta(null)
+                  setSearchLoading(false)
+                }}
                 onAddTorrent={addFromSearch}
                 searchResults={searchResults}
                 searchLoading={searchLoading}

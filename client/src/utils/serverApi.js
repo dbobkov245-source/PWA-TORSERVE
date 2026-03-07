@@ -116,3 +116,22 @@ export async function clearHistory() {
     if (!res.ok) throw new Error('Failed to clear history')
     return res.json()
 }
+
+// ────────────────────────────────────────────────────────
+// 🔎 Torrent Search
+// ────────────────────────────────────────────────────────
+
+export async function searchTorrents(query, { limit = 100, forceFresh = false } = {}) {
+    const params = new URLSearchParams({
+        query,
+        limit: String(limit)
+    })
+
+    if (forceFresh) {
+        params.set('skipCache', '1')
+    }
+
+    const res = await fetch(`${getServerBase()}/api/v2/search?${params.toString()}`)
+    if (!res.ok) throw new Error('Failed to search torrents')
+    return res.json()
+}

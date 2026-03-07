@@ -25,6 +25,8 @@ const HomePanel = ({
     activePerson, setActivePerson,
     activeCategory, setActiveCategory,
     showSidebar, setShowSidebar,
+    torrentSession,
+    onOpenMovieTorrents,
     onSearch, onClose
 }) => {
     const MAX_HOME_QUALITY_TITLES = 60
@@ -328,6 +330,8 @@ const HomePanel = ({
     if (activeMovie) return (
         <MovieDetail
             item={activeMovie}
+            torrentSession={torrentSession}
+            onOpenMovieTorrents={onOpenMovieTorrents}
             onBack={() => setActiveMovie(null)}
             onSearch={onSearch}
             onSelect={setActiveMovie}
