@@ -7,6 +7,7 @@ import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails,
 import { getFavorites, addFavorite, removeFavorite, recordHistory } from '../utils/serverApi'
 import { Capacitor } from '@capacitor/core'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import MovieTorrentAction from './MovieTorrentAction'
 
 // ─── Sub-Components ─────────────────────────────────────────
 
@@ -90,6 +91,8 @@ const RecButton = ({ rec, onClick }) => {
 
 const MovieDetail = ({
     item,
+    torrentSession,
+    onOpenMovieTorrents,
     onSearch,
     onBack,
     onSelect,
@@ -115,6 +118,7 @@ const MovieDetail = ({
     const [favLoading, setFavLoading] = useState(false)
 
     // Spatial Refs
+    const torrentBtnRef = useSpatialItem('detail')
     const searchBtnRef = useSpatialItem('detail')
     const backBtnRef = useSpatialItem('detail')
     const trailerBtnRef = useSpatialItem('detail')
@@ -285,6 +289,11 @@ const MovieDetail = ({
 
                         {/* Actions */}
                         <div className="flex flex-wrap gap-4">
+                            <MovieTorrentAction
+                                session={torrentSession}
+                                buttonRef={torrentBtnRef}
+                                onOpen={() => allowInteraction && onOpenMovieTorrents?.()}
+                            />
                             <button
                                 ref={searchBtnRef}
                                 onClick={() => allowInteraction && onSearch?.(getSearchQuery(item))}
