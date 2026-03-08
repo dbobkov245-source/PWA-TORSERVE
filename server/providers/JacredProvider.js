@@ -147,9 +147,11 @@ export class JacredProvider extends BaseProvider {
      */
     async _doSearch(mirror, query, _isRetry = false) {
         const url = `${mirror.protocol}://${mirror.host}:${mirror.port}/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
-        const response = await smartFetch(url, {
-            doh: 'dns-only',
-            timeout: JACRED_TIMEOUT_MS,
+
+        // Using native fetch instead of smartFetch to avoid HTTP 403 blocks 
+        // that occur with http.request on certain infrastructure patterns.
+        const response = await fetch(url, {
+            signal: AbortSignal.timeout(JACRED_TIMEOUT_MS),
             headers: {
                 'User-Agent': getRandomUserAgent(),
                 'Accept': 'application/json'
@@ -157,7 +159,7 @@ export class JacredProvider extends BaseProvider {
         })
 
         if (response.status === 429) {
-            const retryAfterSec = parseInt(response.headers?.['retry-after'] || '5', 10)
+            const retryAfterSec = parseInt(response.headers.get('retry-after') || '5', 10)
             const waitMs = Math.min(retryAfterSec * 1000, MAX_RATE_LIMIT_WAIT_MS)
 
             if (!_isRetry) {
@@ -169,16 +171,22 @@ export class JacredProvider extends BaseProvider {
 
             throw new Error(`Rate limited (retry after ${retryAfterSec}s)`)
         }
-        if (response.status >= 400) {
+        if (!response.ok) {
             throw new Error(`HTTP ${response.status}`)
         }
 
-        const payload = response.data
-        if (typeof payload === 'string' && payload.trim().startsWith('<')) {
+        const payloadText = await response.text()
+        if (payloadText.trim().startsWith('<')) {
             throw new Error('Received HTML instead of JSON (possible Cloudflare block)')
         }
 
-        const json = typeof payload === 'string' ? JSON.parse(payload) : payload
+        let json
+        try {
+            json = JSON.parse(payloadText)
+        } catch (e) {
+            throw new Error('Failed to parse JSON response')
+        }
+
         const rawResults = (json?.Results || json?.results || []).slice(0, 50)
 
         return rawResults.map(r =>
