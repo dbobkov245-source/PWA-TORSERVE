@@ -3,10 +3,11 @@
  * PWA-TorServe Provider Architecture
  * 
  * Implements Jacred API search with:
- * - Mirror rotation
+ * - Mirror rotation (jac.red primary, jacred.xyz fallback)
  * - User-Agent rotation
  * - DoH + Worker proxy fallback (via smartFetch)
- * - Rate limiting (429) handling
+ * - Rate limiting (429) handling: wait + retry
+ * - Request coalescing: deduplicate parallel identical queries
  * 
  * Security note: SSL validation disabled for Jacred mirrors
  * (see header comments in original jacred.js for explanation)
@@ -18,10 +19,10 @@ import { smartFetch } from '../utils/doh.js'
 
 const log = logger.child('JacredProvider')
 
-// Jacred mirrors — HTTP first (HTTPS often blocked by ISP on port 443)
+// Jacred mirrors — jac.red is the new primary domain (jacred.xyz is dead since ~March 2026)
 const JACRED_MIRRORS = [
-    { host: 'jacred.xyz', port: 80, protocol: 'http' },
-    { host: 'jacred.xyz', port: 443, protocol: 'https' },
+    { host: 'jac.red', port: 80, protocol: 'http' },
+    { host: 'jacred.xyz', port: 80, protocol: 'http' },   // legacy fallback
 ]
 
 // User-Agent rotation to avoid rate limiting
@@ -35,7 +36,10 @@ const USER_AGENTS = [
 
 const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-const JACRED_TIMEOUT_MS = parseInt(process.env.JACRED_TIMEOUT_MS || '9000', 10)
+const JACRED_TIMEOUT_MS = parseInt(process.env.JACRED_TIMEOUT_MS || '15000', 10)
+
+// Max ms to wait on a 429 retry-after before giving up
+const MAX_RATE_LIMIT_WAIT_MS = 10000
 
 export class JacredProvider extends BaseProvider {
     name = 'jacred'
@@ -43,14 +47,37 @@ export class JacredProvider extends BaseProvider {
     constructor() {
         super()
         this.currentMirror = JACRED_MIRRORS[0].host
+        // In-flight request map for coalescing: query -> Promise
+        this._inflight = new Map()
     }
 
     /**
      * Search torrents via Jacred API
+     * Uses request coalescing to avoid duplicate parallel requests (which cause 429).
      * @param {string} query
      * @returns {Promise<Array>} Normalized SearchResult[]
      */
     async search(query) {
+        const key = query.toLowerCase().trim()
+
+        // COALESCING: if an identical query is already in-flight, share the result
+        if (this._inflight.has(key)) {
+            log.debug('⚡ Coalesced request (in-flight)', { query })
+            return this._inflight.get(key)
+        }
+
+        const promise = this._search(query)
+            .finally(() => this._inflight.delete(key))
+
+        this._inflight.set(key, promise)
+        return promise
+    }
+
+    /**
+     * Internal search — executes actual HTTP requests
+     * @private
+     */
+    async _search(query) {
         log.info('🔍 Starting search', { query, mirrorsCount: JACRED_MIRRORS.length })
         let hadSuccessfulResponse = false
         let lastError = null
@@ -114,10 +141,11 @@ export class JacredProvider extends BaseProvider {
     }
 
     /**
-     * Do search request to specific mirror
+     * Do search request to specific mirror.
+     * On 429: waits for retry-after (up to MAX_RATE_LIMIT_WAIT_MS) and retries once.
      * @private
      */
-    async _doSearch(mirror, query) {
+    async _doSearch(mirror, query, _isRetry = false) {
         const url = `${mirror.protocol}://${mirror.host}:${mirror.port}/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
         const response = await smartFetch(url, {
             doh: 'dns-only',
@@ -129,8 +157,17 @@ export class JacredProvider extends BaseProvider {
         })
 
         if (response.status === 429) {
-            const retryAfter = parseInt(response.headers?.['retry-after'] || '5', 10)
-            throw new Error(`Rate limited (retry after ${retryAfter}s)`)
+            const retryAfterSec = parseInt(response.headers?.['retry-after'] || '5', 10)
+            const waitMs = Math.min(retryAfterSec * 1000, MAX_RATE_LIMIT_WAIT_MS)
+
+            if (!_isRetry) {
+                // Retry once after waiting
+                log.warn('Rate limited — waiting before retry', { mirror: mirror.host, waitMs })
+                await sleep(waitMs)
+                return this._doSearch(mirror, query, true)
+            }
+
+            throw new Error(`Rate limited (retry after ${retryAfterSec}s)`)
         }
         if (response.status >= 400) {
             throw new Error(`HTTP ${response.status}`)
