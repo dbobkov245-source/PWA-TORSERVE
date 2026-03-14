@@ -81,3 +81,10 @@ test('metadata timeout policy: connected peers should get grace before timeout',
     expect(first).toBe('grace')
     expect(second).toBe('timeout')
 })
+
+test('status cache ttl uses env override with a safe default', async () => {
+    const { getStatusCacheTtlMs } = await import('../torrent.js')
+
+    expect(getStatusCacheTtlMs({})).toBe(10000)
+    expect(getStatusCacheTtlMs({ STATUS_CACHE_TTL_MS: '15000' })).toBe(15000)
+})

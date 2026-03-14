@@ -571,7 +571,12 @@ export const getRawTorrent = (infoHash) => {
 // ────────────────────────────────────────────────────────
 let statusCache = null
 let statusCacheTime = 0
-const STATUS_CACHE_TTL = 5000 // 🔥 v2.3: increased from 2s to 5s for ARM CPU optimization
+export function getStatusCacheTtlMs(env = process.env) {
+    const parsed = parseInt(env.STATUS_CACHE_TTL_MS || '10000', 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 10000
+}
+
+const STATUS_CACHE_TTL = getStatusCacheTtlMs()
 
 export const getAllTorrents = () => {
     const now = Date.now()

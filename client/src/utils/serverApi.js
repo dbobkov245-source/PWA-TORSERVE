@@ -121,7 +121,7 @@ export async function clearHistory() {
 // 🔎 Torrent Search
 // ────────────────────────────────────────────────────────
 
-export async function searchTorrents(query, { limit = 100, forceFresh = false } = {}) {
+export async function searchTorrents(query, { limit = 100, forceFresh = false, signal } = {}) {
     const params = new URLSearchParams({
         query,
         limit: String(limit)
@@ -131,7 +131,10 @@ export async function searchTorrents(query, { limit = 100, forceFresh = false } 
         params.set('skipCache', '1')
     }
 
-    const res = await fetch(`${getServerBase()}/api/v2/search?${params.toString()}`)
+    const url = `${getServerBase()}/api/v2/search?${params.toString()}`
+    const res = signal
+        ? await fetch(url, { signal })
+        : await fetch(url)
     if (!res.ok) throw new Error('Failed to search torrents')
     return res.json()
 }

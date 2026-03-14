@@ -15,6 +15,7 @@ await import('./autodownloader.test.js')
 await import('./providers-parsing.test.js')
 await import('./searchCache.test.js')
 await import('./local-library.test.js')
+await import('./statusResponse.test.js')
 
 // Run all registered tests
 await runTests()

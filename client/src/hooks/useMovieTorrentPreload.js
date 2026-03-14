@@ -5,6 +5,10 @@ import {
     shouldStopMovieTorrentPreload
 } from '../utils/movieTorrentSearch.js'
 
+function isAbortError(error) {
+    return error?.name === 'AbortError'
+}
+
 function getMediaType(item) {
     return item?.media_type === 'tv' || item?.name || item?.original_name ? 'tv' : 'movie'
 }
@@ -45,13 +49,22 @@ export function useMovieTorrentPreload({
 }) {
     const cacheRef = useRef(new Map())
     const requestIdRef = useRef(0)
+    const abortControllerRef = useRef(null)
     const [session, setSession] = useState(null)
+
+    const abortActiveRequest = useCallback(() => {
+        abortControllerRef.current?.abort()
+        abortControllerRef.current = null
+    }, [])
 
     const load = useCallback(async (currentItem, { forceFresh = false } = {}) => {
         if (!currentItem) {
+            abortActiveRequest()
             setSession(null)
             return null
         }
+
+        abortActiveRequest()
 
         const key = getMovieTorrentKey(currentItem)
         const requestId = ++requestIdRef.current
@@ -69,6 +82,8 @@ export function useMovieTorrentPreload({
 
         const queries = buildMovieTorrentQueries(currentItem)
         const baseSession = createBaseSession(currentItem)
+        const controller = new AbortController()
+        abortControllerRef.current = controller
 
         setSession({
             ...baseSession,
@@ -81,68 +96,104 @@ export function useMovieTorrentPreload({
         let lastQuery = queries[0] || ''
         let lastProviders = {}
         let lastMeta = null
+        let hadSuccessfulSearch = false
+        let lastSearchError = null
 
         try {
-            let pendingCount = queries.length;
-            let stopped = false;
+            for (const query of queries) {
+                if (controller.signal.aborted || requestId !== requestIdRef.current) {
+                    return null
+                }
 
-            queries.forEach((query) => {
-                (async () => {
-                    try {
-                        const response = await searchTorrents(query, { forceFresh, limit: 100 });
-                        if (stopped || requestId !== requestIdRef.current) return;
+                try {
+                    const response = await searchTorrents(query, {
+                        forceFresh,
+                        limit: 100,
+                        signal: controller.signal
+                    })
 
-                        lastQuery = query;
-                        combinedItems = mergeItems(combinedItems.concat(response?.items || []));
-                        lastProviders = { ...lastProviders, ...response?.meta?.providers };
-                        if (response?.meta) lastMeta = response.meta;
-
-                        const nextSession = {
-                            ...baseSession,
-                            query: lastQuery,
-                            items: combinedItems,
-                            providers: lastProviders,
-                            meta: lastMeta,
-                            loading: true,
-                            status: 'loading',
-                            fromCache: false,
-                            updatedAt: Date.now()
-                        };
-
-                        if (shouldStopMovieTorrentPreload(combinedItems)) {
-                            stopped = true;
-                            nextSession.loading = false;
-                            nextSession.status = combinedItems.length ? 'ready' : 'empty';
-                            cacheRef.current.set(key, { session: nextSession, expiresAt: Date.now() + ttlMs });
-                        }
-
-                        if (requestId === requestIdRef.current) {
-                            setSession(nextSession);
-                        }
-                    } catch (error) {
-                        console.error('[Preload] error:', error);
-                    } finally {
-                        pendingCount--;
-                        if (pendingCount === 0 && !stopped && requestId === requestIdRef.current) {
-                            const finalSession = {
-                                ...baseSession,
-                                query: lastQuery,
-                                items: combinedItems,
-                                providers: lastProviders,
-                                meta: lastMeta,
-                                loading: false,
-                                status: combinedItems.length ? 'ready' : 'empty',
-                                fromCache: false,
-                                updatedAt: Date.now()
-                            };
-                            cacheRef.current.set(key, { session: finalSession, expiresAt: Date.now() + ttlMs });
-                            setSession(finalSession);
-                        }
+                    if (controller.signal.aborted || requestId !== requestIdRef.current) {
+                        return null
                     }
-                })();
-            });
 
-            return null;
+                    hadSuccessfulSearch = true
+                    lastSearchError = null
+                    lastQuery = query
+                    combinedItems = mergeItems(combinedItems.concat(response?.items || []))
+                    lastProviders = { ...lastProviders, ...response?.meta?.providers }
+                    if (response?.meta) lastMeta = response.meta
+
+                    const shouldStop = shouldStopMovieTorrentPreload(combinedItems)
+                    const nextSession = {
+                        ...baseSession,
+                        query: lastQuery,
+                        items: combinedItems,
+                        providers: lastProviders,
+                        meta: lastMeta,
+                        loading: !shouldStop,
+                        status: shouldStop ? (combinedItems.length ? 'ready' : 'empty') : 'loading',
+                        fromCache: false,
+                        updatedAt: Date.now()
+                    }
+
+                    if (shouldStop) {
+                        cacheRef.current.set(key, { session: nextSession, expiresAt: Date.now() + ttlMs })
+                    }
+
+                    if (requestId === requestIdRef.current) {
+                        setSession(nextSession)
+                    }
+
+                    if (shouldStop) {
+                        return nextSession
+                    }
+                } catch (error) {
+                    if (controller.signal.aborted || requestId !== requestIdRef.current || isAbortError(error)) {
+                        return null
+                    }
+
+                    lastSearchError = error
+                    console.error('[Preload] error:', error)
+                }
+            }
+
+            if (controller.signal.aborted || requestId !== requestIdRef.current) {
+                return null
+            }
+
+            if (!hadSuccessfulSearch && lastSearchError) {
+                const failedSession = {
+                    ...baseSession,
+                    query: lastQuery,
+                    items: [],
+                    providers: lastProviders,
+                    meta: lastMeta,
+                    loading: false,
+                    error: lastSearchError?.message || 'Search failed',
+                    status: 'error',
+                    fromCache: false,
+                    updatedAt: Date.now()
+                }
+
+                setSession(failedSession)
+                return failedSession
+            }
+
+            const finalSession = {
+                ...baseSession,
+                query: lastQuery,
+                items: combinedItems,
+                providers: lastProviders,
+                meta: lastMeta,
+                loading: false,
+                status: combinedItems.length ? 'ready' : 'empty',
+                fromCache: false,
+                updatedAt: Date.now()
+            }
+
+            cacheRef.current.set(key, { session: finalSession, expiresAt: Date.now() + ttlMs })
+            setSession(finalSession)
+            return finalSession
         } catch (error) {
             if (requestId !== requestIdRef.current) return null
 
@@ -161,18 +212,27 @@ export function useMovieTorrentPreload({
 
             setSession(failedSession)
             return failedSession
+        } finally {
+            if (abortControllerRef.current === controller) {
+                abortControllerRef.current = null
+            }
         }
-    }, [searchTorrents, ttlMs])
+    }, [abortActiveRequest, searchTorrents, ttlMs])
 
     useEffect(() => {
         if (!item) {
             requestIdRef.current += 1
+            abortActiveRequest()
             setSession(null)
             return
         }
 
         load(item)
-    }, [item, load])
+
+        return () => {
+            abortActiveRequest()
+        }
+    }, [abortActiveRequest, item, load])
 
     const refresh = useCallback(async () => {
         if (!item) return null

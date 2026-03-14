@@ -16,6 +16,7 @@ import { parseRange } from './utils/range.js'
 import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary } from './localLibrary.js'
+import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -229,35 +230,17 @@ app.get('/api/status', async (req, res) => {
     }
 
     const torrents = getAllTorrents()
-    try {
-        await refreshLocalLibrary()
-    } catch (err) {
-        console.warn('[LocalLibrary] Status refresh failed:', err.message)
-    }
+    scheduleBackgroundRefresh(
+        () => refreshLocalLibrary(),
+        (err) => console.warn('[LocalLibrary] Status refresh failed:', err.message)
+    )
     const localItems = getLocalLibrarySnapshot()
     const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
-
-    const status = combined.map(t => ({
-        infoHash: t.infoHash,
-        name: t.name,
-        progress: t.progress,
-        isReady: t.isReady,  // ✅ Fix: передаём isReady для правильного отображения в UI
-        downloaded: t.downloaded,
-        totalSize: t.totalSize,
-        downloadSpeed: t.downloadSpeed,
-        numPeers: t.numPeers,
-        eta: t.eta,
-        files: (t.files || []).map(f => ({
-            name: f.name,
-            length: f.length,
-            index: f.index
-        }))
-    }))
 
     res.json({
         serverStatus: state.serverStatus,
         lastStateChange: state.lastStateChange,
-        torrents: status
+        torrents: serializeStatusItems(combined)
     })
 })
 

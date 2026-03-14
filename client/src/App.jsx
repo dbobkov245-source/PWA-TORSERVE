@@ -6,6 +6,7 @@ import { useVoiceSearch } from './hooks/useVoiceSearch.jsx'
 import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
 import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
+import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 
 // Components
 import Poster from './components/Poster'
@@ -19,6 +20,7 @@ import UpdateModal from './components/UpdateModal'
 
 // Utilities
 import { checkForUpdate, tryInstallPending } from './utils/appUpdater'
+import { createSerializedPollTask } from './utils/statusPolling.js'
 
 // Hooks
 import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpatialNavigation'
@@ -205,7 +207,7 @@ function App() {
     else setActiveZone('main')
   }, [updateInfo, showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
 
-  const fetchStatus = useCallback(async () => {
+  const fetchStatusImpl = useCallback(async () => {
     const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
     try {
       if (!baseUrl) return
@@ -217,6 +219,8 @@ function App() {
       } else { setServerStatus('degraded') }
     } catch { setServerStatus('error') }
   }, [serverUrl])
+
+  const fetchStatus = useMemo(() => createSerializedPollTask(fetchStatusImpl), [fetchStatusImpl])
 
   useEffect(() => {
     fetchStatus()
@@ -381,39 +385,21 @@ function App() {
     return requestUrl
   }, [serverUrl])
 
-  const fetchSearchJson = useCallback(async (url) => {
+  const fetchSearchJson = useCallback(async (url, { signal } = {}) => {
     const requestUrl = resolveServerRequest(url)
-
-    try {
-      const res = await fetch(requestUrl)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return await res.json()
-    } catch (fetchError) {
-      if (!Capacitor.isNativePlatform()) throw fetchError
-
-      const nativeRes = await CapacitorHttp.request({
+    return fetchServerSearchJson(requestUrl, {
+      signal,
+      isNativePlatform: Capacitor.isNativePlatform(),
+      allowNativeFallback: !signal,
+      nativeRequest: () => CapacitorHttp.request({
         method: 'GET',
         url: requestUrl,
         headers: { Accept: 'application/json' }
       })
-
-      if (nativeRes.status < 200 || nativeRes.status >= 300) {
-        throw new Error(`Native HTTP ${nativeRes.status}`)
-      }
-
-      if (typeof nativeRes.data === 'string') {
-        try {
-          return JSON.parse(nativeRes.data)
-        } catch {
-          throw new Error('Native HTTP returned non-JSON payload')
-        }
-      }
-
-      return nativeRes.data || {}
-    }
+    })
   }, [resolveServerRequest])
 
-  const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false } = {}) => {
+  const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false, signal } = {}) => {
     const params = new URLSearchParams({
       query,
       limit: String(limit)
@@ -423,7 +409,7 @@ function App() {
       params.set('skipCache', '1')
     }
 
-    return fetchSearchJson(`/api/v2/search?${params.toString()}`)
+    return fetchSearchJson(`/api/v2/search?${params.toString()}`, { signal })
   }, [fetchSearchJson])
 
   const buildFallbackMovieTorrentSession = useCallback((item) => {

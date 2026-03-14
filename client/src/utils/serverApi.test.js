@@ -39,4 +39,21 @@ describe('searchTorrents', () => {
             'http://192.168.1.70:3000/api/v2/search?query=Fight+Club&limit=25&skipCache=1'
         )
     })
+
+    it('forwards abort signal to fetch when provided', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+
+        const controller = new AbortController()
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ items: [], meta: { providers: {} } })
+        })
+
+        await searchTorrents('Primate', { signal: controller.signal })
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            'http://192.168.1.70:3000/api/v2/search?query=Primate&limit=100',
+            { signal: controller.signal }
+        )
+    })
 })
