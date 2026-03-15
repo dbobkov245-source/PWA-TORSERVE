@@ -16,6 +16,9 @@ await import('./providers-parsing.test.js')
 await import('./searchCache.test.js')
 await import('./local-library.test.js')
 await import('./statusResponse.test.js')
+await import('./deployment-config.test.js')
+await import('./stream-source.test.js')
+await import('./request-meta.test.js')
 
 // Run all registered tests
 await runTests()

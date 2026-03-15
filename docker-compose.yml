@@ -8,7 +8,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "6881:6881"   # Torrent inbound TCP (match TORRENT_PORT)
+      - "6881:6881/tcp"   # Torrent peer connections
+      - "6881:6881/udp"   # DHT/tracker UDP for peer discovery
     environment:
       - NODE_ENV=production
       - DOWNLOAD_PATH=/app/downloads

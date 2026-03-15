@@ -17,6 +17,8 @@ import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
+import { getAllocatedSizeBytes, shouldServeFileFromDisk } from './streamSource.js'
+import { describeRequestSource } from './requestMeta.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -95,7 +97,8 @@ app.use('/api/', (req, res, next) => {
 // DEBUG: Log all non-static requests
 app.use((req, res, next) => {
     if (!req.url.match(/\.(js|css|png|jpg|ico|map)$/)) {
-        console.log(`[HTTP] ${req.method} ${req.url}`)
+        const source = req.method === 'DELETE' ? ` ${describeRequestSource(req)}` : ''
+        console.log(`[HTTP] ${req.method} ${req.url}${source}`)
     }
     next()
 })
@@ -815,6 +818,9 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
     const { infoHash } = req.params
     const softDelete = req.query.soft === '1' || req.query.soft === 'true'
     const torrent = getTorrent(infoHash) // Get info BEFORE deletion
+    const requestSource = describeRequestSource(req)
+
+    console.warn(`[Delete] ${softDelete ? 'Soft' : 'Hard'} delete requested for ${infoHash} ${requestSource}`)
 
     // Default behavior is hard delete (destroy engine + delete files).
     // soft=1 keeps engine in frozen keep-alive cache without disk cleanup.
@@ -900,9 +906,10 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     if (!servingFromDisk) {
         try {
             const stat = fs.statSync(diskPath)
-            if (stat.size >= file.length) {
+            if (shouldServeFileFromDisk(stat, file.length)) {
                 servingFromDisk = true
-                console.log(`[Stream] 📁 Serving from disk: ${file.name} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`)
+                const allocatedBytes = Math.min(getAllocatedSizeBytes(stat), file.length)
+                console.log(`[Stream] 📁 Serving from disk: ${file.name} (${(allocatedBytes / 1024 / 1024).toFixed(1)} MB allocated)`)
             }
         } catch (e) { /* file doesn't exist on disk, use torrent-stream */ }
     }
@@ -988,7 +995,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         // STREAM_STALL_TIMEOUT_MS (дефолт 8с), значит нужные pieces ещё не скачаны.
         // В этом случае обрываем соединение чтобы плеер сделал retry.
         // Плеер (Lampa/ExoPlayer) автоматически переподключится, и к тому времени
-        // либо pieces появятся, либо сработает disk-fallback (stat.size >= file.length).
+        // либо pieces появятся, либо сработает disk-fallback после полной allocation на диске.
         // Без этого watchdog'а file.createReadStream() висит вечно → плеер замерзает.
         const STALL_TIMEOUT_MS = parseInt(process.env.STREAM_STALL_TIMEOUT_MS) || 8000
         let stallTimer = null
