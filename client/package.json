@@ -19,7 +19,9 @@
     "@capacitor/filesystem": "^6.0.4",
     "@capacitor/preferences": "^6.0.3",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-virtualized-auto-sizer": "^2.0.3",
+    "react-window": "^1.8.11"
   },
   "devDependencies": {
     "@capacitor/android": "^6.2.1",

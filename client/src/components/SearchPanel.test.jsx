@@ -21,4 +21,8 @@ describe('SearchPanel', () => {
         expect(src).toContain('onAdd(item)')
         expect(src).not.toContain("onAdd(item.magnet || item.id, item.title)")
     })
+    it('imports FixedSizeList from react-window for virtualized rendering', () => {
+        expect(src).toContain("from 'react-window'")
+        expect(src).toContain('FixedSizeList')
+    })
 })
