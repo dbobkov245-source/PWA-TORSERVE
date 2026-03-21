@@ -42,7 +42,7 @@ const getPlayabilityMeta = (status, preflightPeers) => {
     }
 }
 
-const SearchResultItem = ({ item, index, onAdd }) => {
+const SearchResultItem = ({ item, onAdd }) => {
     const rowRef = useSpatialItem('search')
     const playability = getPlayabilityMeta(item.playabilityStatus, item.preflight?.peers || 0)
 
@@ -321,6 +321,7 @@ const SearchPanel = ({
                                     itemCount={sortedResults.length}
                                     itemSize={ROW_HEIGHT}
                                     itemData={{ results: sortedResults, onAdd: onAddTorrent }}
+                                    overscanCount={3}
                                     className="custom-scrollbar"
                                 >
                                     {VirtualRow}
