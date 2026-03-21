@@ -227,10 +227,37 @@ function App() {
   const fetchStatus = useMemo(() => createSerializedPollTask(fetchStatusImpl), [fetchStatusImpl])
 
   useEffect(() => {
-    fetchStatus()
-    const timer = setInterval(fetchStatus, 5000)
-    return () => clearInterval(timer)
-  }, [fetchStatus])
+    const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
+    if (!baseUrl) return
+
+    let fallbackTimer = null
+
+    const es = new EventSource(`${baseUrl}/api/status/stream`)
+
+    es.addEventListener('status', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setTorrents(data.torrents || [])
+        setServerStatus(data.serverStatus === 'ok' ? 'ok' : 'degraded')
+      } catch { /* malformed event */ }
+      if (fallbackTimer) {
+        clearInterval(fallbackTimer)
+        fallbackTimer = null
+      }
+    })
+
+    es.onerror = () => {
+      setServerStatus('degraded')
+      if (!fallbackTimer) {
+        fallbackTimer = setInterval(fetchStatus, 5000)
+      }
+    }
+
+    return () => {
+      es.close()
+      if (fallbackTimer) clearInterval(fallbackTimer)
+    }
+  }, [serverUrl, fetchStatus])
 
   // Check for app updates on launch
   useEffect(() => {
