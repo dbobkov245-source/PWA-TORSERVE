@@ -230,6 +230,8 @@ function App() {
     const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
     if (!baseUrl) return
 
+    fetchStatus() // prime state immediately while SSE connects
+
     let fallbackTimer = null
 
     const es = new EventSource(`${baseUrl}/api/status/stream`)
@@ -238,7 +240,8 @@ function App() {
       try {
         const data = JSON.parse(e.data)
         setTorrents(data.torrents || [])
-        setServerStatus(data.serverStatus === 'ok' ? 'ok' : 'degraded')
+        if (data.serverStatus) setServerStatus(data.serverStatus)
+        if (data.lastStateChange) setLastStateChange(data.lastStateChange)
       } catch { /* malformed event */ }
       if (fallbackTimer) {
         clearInterval(fallbackTimer)
@@ -247,8 +250,8 @@ function App() {
     })
 
     es.onerror = () => {
-      setServerStatus('degraded')
       if (!fallbackTimer) {
+        setServerStatus('degraded')
         fallbackTimer = setInterval(fetchStatus, 5000)
       }
     }
