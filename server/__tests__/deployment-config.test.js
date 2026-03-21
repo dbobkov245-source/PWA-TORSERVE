@@ -47,3 +47,9 @@ test('stream handler uses async stat to avoid blocking the event loop', () => {
     const indexSrc = readRepoFile('server/index.js')
     expect(indexSrc).not.toContain('fs.statSync')
 })
+
+test('index.js has GET /api/status/stream SSE endpoint', () => {
+    const indexSrc = readRepoFile('server/index.js')
+    expect(indexSrc).toContain('/api/status/stream')
+    expect(indexSrc).toContain('text/event-stream')
+})

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
 import fsPromises from 'fs/promises'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen, onTorrentChange, offTorrentChange } from './torrent.js'
 import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
@@ -220,32 +220,64 @@ app.post('/api/speed-mode', (req, res) => {
     res.json(result)
 })
 
+function buildStatusPayload() {
+    const state = getServerState()
+    if (state.serverStatus === 'circuit_open' || state.serverStatus === 'error') {
+        return { serverStatus: state.serverStatus, lastStateChange: state.lastStateChange, torrents: [] }
+    }
+    const torrents = getAllTorrents()
+    const localItems = getLocalLibrarySnapshot()
+    const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
+    return {
+        serverStatus: state.serverStatus,
+        lastStateChange: state.lastStateChange,
+        torrents: serializeStatusItems(combined)
+    }
+}
+
 // API: Status (with server state)
 app.get('/api/status', async (req, res) => {
-    const state = getServerState()
-
-    // Return 503 with Retry-After for critical states
-    if (state.serverStatus === 'circuit_open' || state.serverStatus === 'error') {
-        res.set('Retry-After', '300') // 5 minutes
-        return res.status(503).json({
-            serverStatus: state.serverStatus,
-            lastStateChange: state.lastStateChange,
-            torrents: []
-        })
+    const payload = buildStatusPayload()
+    if (payload.serverStatus === 'circuit_open' || payload.serverStatus === 'error') {
+        res.set('Retry-After', '300')
+        return res.status(503).json(payload)
     }
-
-    const torrents = getAllTorrents()
     scheduleBackgroundRefresh(
         () => refreshLocalLibrary(),
         (err) => console.warn('[LocalLibrary] Status refresh failed:', err.message)
     )
-    const localItems = getLocalLibrarySnapshot()
-    const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
+    res.json(buildStatusPayload())
+})
 
-    res.json({
-        serverStatus: state.serverStatus,
-        lastStateChange: state.lastStateChange,
-        torrents: serializeStatusItems(combined)
+app.get('/api/status/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders()
+
+    const send = () => {
+        try {
+            res.write(`event: status\ndata: ${JSON.stringify(buildStatusPayload())}\n\n`)
+        } catch { /* client disconnected */ }
+    }
+
+    send() // send current status immediately on connect
+    onTorrentChange(send)
+
+    // Push progress updates every 3s while active downloads exist
+    const progressTimer = setInterval(() => {
+        if (getActiveTorrentsCount() > 0) send()
+    }, 3000)
+
+    // Heartbeat to prevent proxy timeouts
+    const heartbeat = setInterval(() => {
+        try { res.write(': ping\n\n') } catch { /* ignore */ }
+    }, 30000)
+
+    req.on('close', () => {
+        offTorrentChange(send)
+        clearInterval(progressTimer)
+        clearInterval(heartbeat)
     })
 })
 
