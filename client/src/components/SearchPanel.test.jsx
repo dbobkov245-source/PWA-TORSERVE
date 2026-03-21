@@ -17,4 +17,8 @@ describe('SearchPanel', () => {
         expect(src).not.toContain('key={r.id || i}')
         expect(src).toContain('key={r.magnet')
     })
+    it('passes full item object to onAdd (not just magnet+title)', () => {
+        expect(src).toContain('onAdd(item)')
+        expect(src).not.toContain("onAdd(item.magnet || item.id, item.title)")
+    })
 })

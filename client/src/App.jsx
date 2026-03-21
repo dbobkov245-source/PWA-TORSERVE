@@ -8,6 +8,9 @@ import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 
+import { useToast, ToastContainer } from './components/Toast'
+import { getAddToastMessage } from './utils/toastMessages'
+
 // Components
 import Poster from './components/Poster'
 import { DegradedBanner, ErrorScreen, BufferingBanner, ServerStatusBar } from './components/StatusBanners'
@@ -94,6 +97,7 @@ function App() {
   const [magnet, setMagnet] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const { toasts, showToast } = useToast()
 
   // State: UI
   const [showSettings, setShowSettings] = useState(false)
@@ -512,7 +516,8 @@ function App() {
     hydrateSearchFromMovieSession(movieTorrentSession)
   }, [showSearch, searchOrigin, movieTorrentSession, hydrateSearchFromMovieSession])
 
-  const addFromSearch = async (magnet, title) => {
+  const addFromSearch = async (item) => {
+    const magnet = typeof item === 'string' ? item : (item.magnet || item.id)
     setLoading(true)
     try {
       const res = await fetch(`${serverUrl}/api/add`, {
@@ -521,16 +526,14 @@ function App() {
         body: JSON.stringify({ magnet })
       })
       if (res.ok) {
-        // 1. Clear search state to unmount SearchResultItem components
+        const toast = getAddToastMessage(item?.playabilityStatus)
+        if (toast) showToast(toast.message, toast.type)
         setSearchResults([])
         setSearchProviders({})
-        // 2. Close panel AFTER clearing (allows React to complete unmount)
         requestAnimationFrame(() => {
           setShowSearch(false)
           setActiveView('list')
           fetchStatus()
-          // 3. Recover focus after DOM settles - BUG-1 fix: use timeout instead of rAF
-          // to ensure search zone elements are fully unregistered before recovery
           setTimeout(() => {
             SpatialEngine.setActiveZone('main')
             SpatialEngine.recoverFocus()
@@ -850,6 +853,7 @@ function App() {
             </div>
           </div>
         )}
+      <ToastContainer toasts={toasts} />
       </div>
     </div>
   )

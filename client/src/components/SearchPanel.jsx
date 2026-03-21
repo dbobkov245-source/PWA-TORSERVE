@@ -46,7 +46,7 @@ const SearchResultItem = ({ item, index, onAdd }) => {
         <div
             ref={rowRef}
             className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors"
-            onClick={() => onAdd(item.magnet || item.id, item.title)}
+            onClick={() => onAdd(item)}
         >
             <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-white truncate">{item.title}</div>
