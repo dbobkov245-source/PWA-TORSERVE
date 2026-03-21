@@ -23,7 +23,8 @@ const timeoutSignal = (ms) => {
         if (AbortSignal.timeout) return AbortSignal.timeout(ms)
     } catch { /* AbortSignal.timeout not supported */ }
     const controller = new AbortController()
-    setTimeout(() => controller.abort(), ms)
+    const id = setTimeout(() => controller.abort(), ms)
+    controller.signal.addEventListener('abort', () => clearTimeout(id), { once: true })
     return controller.signal
 }
 
@@ -379,8 +380,8 @@ export const saveMetadata = (name, data) => {
     try {
         localStorage.setItem(key, JSON.stringify(entry))
 
-        // O4: LRU Eviction with 10% eviction batch
-        if (Math.random() < 0.1) {
+        // LRU Eviction: always check after write, not randomly
+        {
             const allKeys = Object.keys(localStorage).filter(k => k.startsWith(METADATA_CACHE_PREFIX))
             if (allKeys.length > METADATA_CACHE_LIMIT) {
                 // Find oldest entries

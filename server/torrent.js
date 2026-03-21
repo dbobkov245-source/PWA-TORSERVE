@@ -253,13 +253,18 @@ async function removeTorrentFromDB(infoHash) {
     }
 }
 
+export function getPersistedTorrentsToRestore(persisted = []) {
+    return persisted.filter(torrent => torrent?.magnet && torrent.completed !== true)
+}
+
 // Restore all saved torrents on server startup
 export async function restoreTorrents() {
     await db.read()
     const saved = db.data.torrents || []
-    console.log(`[Persistence] Restoring ${saved.length} torrents...`)
+    const restorable = getPersistedTorrentsToRestore(saved)
+    console.log(`[Persistence] Restoring ${restorable.length}/${saved.length} torrents...`)
 
-    for (const { magnet, name } of saved) {
+    for (const { magnet, name } of restorable) {
         try {
             await addTorrent(magnet, true) // true = skip saving (already in DB)
             console.log(`[Persistence] Restored: ${name}`)
@@ -608,15 +613,20 @@ export const invalidateStatusCache = () => {
 const diskDownloadCache = new Map() // infoHash -> { bytes, updatedAt, updating }
 const DISK_CACHE_TTL = 30000 // 30 seconds
 
+// Exported for testing: evicts the oldest (insertion-order) entry when cache exceeds maxSize
+export function evictDiskCacheOldestEntry(cache, maxSize) {
+    if (cache.size > maxSize) {
+        const oldestKey = cache.keys().next().value
+        cache.delete(oldestKey)
+    }
+}
+
 // Non-blocking: returns cached value, schedules background update
 function getDownloadedFromDisk(engine) {
     const infoHash = engine.infoHash
 
-    // 🔥 Memory fix: hard cap on cache size
-    if (diskDownloadCache.size > 50) {
-        console.log('[Memory] Clearing diskDownloadCache (size exceeded 50)')
-        diskDownloadCache.clear()
-    }
+    // Evict one oldest entry instead of clearing everything
+    evictDiskCacheOldestEntry(diskDownloadCache, 200)
 
     const cached = diskDownloadCache.get(infoHash)
     const now = Date.now()

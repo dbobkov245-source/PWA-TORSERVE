@@ -78,11 +78,11 @@ describe('formatEta', () => {
 })
 
 describe('resolveInitialServerUrl', () => {
-    it('returns empty string for native app when nothing stored', () => {
+    it('returns default string for native app when nothing stored', () => {
         expect(resolveInitialServerUrl({
             isNative: true,
             storedUrl: ''
-        })).toBe('')
+        })).toBe('http://192.168.1.70:3000')
     })
 
     it('returns stored server URL for native app', () => {

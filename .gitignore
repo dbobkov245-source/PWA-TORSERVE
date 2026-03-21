@@ -9,6 +9,10 @@ generate_code_doc.py
 *.tar
 
 # Private folders (not for public GitHub)
+docs/
+Gemini.md
+CLAUDE.md
+AGENTS.md
 deploy/
 .worktrees/
 *FULL_PROJECT_CODE.md

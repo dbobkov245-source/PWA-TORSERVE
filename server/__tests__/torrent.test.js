@@ -88,3 +88,46 @@ test('status cache ttl uses env override with a safe default', async () => {
     expect(getStatusCacheTtlMs({})).toBe(10000)
     expect(getStatusCacheTtlMs({ STATUS_CACHE_TTL_MS: '15000' })).toBe(15000)
 })
+
+test('diskDownloadCache evicts only oldest entry when size limit exceeded', async () => {
+    const { evictDiskCacheOldestEntry } = await import('../torrent.js')
+
+    const cache = new Map([
+        ['hash1', { bytes: 100, updatedAt: 1000 }],
+        ['hash2', { bytes: 200, updatedAt: 2000 }],
+        ['hash3', { bytes: 300, updatedAt: 3000 }],
+    ])
+
+    evictDiskCacheOldestEntry(cache, 2)
+
+    expect(cache.size).toBe(2)
+    expect(cache.has('hash1')).toBe(false)
+    expect(cache.has('hash2')).toBe(true)
+    expect(cache.has('hash3')).toBe(true)
+})
+
+test('diskDownloadCache does not evict when under size limit', async () => {
+    const { evictDiskCacheOldestEntry } = await import('../torrent.js')
+
+    const cache = new Map([['hash1', { bytes: 100, updatedAt: 1000 }]])
+
+    evictDiskCacheOldestEntry(cache, 2)
+
+    expect(cache.size).toBe(1)
+    expect(cache.has('hash1')).toBe(true)
+})
+
+test('restore selection skips completed persisted torrents', async () => {
+    const { getPersistedTorrentsToRestore } = await import('../torrent.js')
+
+    const persisted = [
+        { magnet: 'magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', name: 'done.mkv', completed: true },
+        { magnet: 'magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'partial.mkv', completed: false },
+        { magnet: 'magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc', name: 'legacy.mkv' }
+    ]
+
+    expect(getPersistedTorrentsToRestore(persisted)).toEqual([
+        { magnet: 'magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'partial.mkv', completed: false },
+        { magnet: 'magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc', name: 'legacy.mkv' }
+    ])
+})

@@ -19,6 +19,8 @@ import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocal
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
 import { getAllocatedSizeBytes, shouldServeFileFromDisk } from './streamSource.js'
 import { describeRequestSource } from './requestMeta.js'
+import { safeJoinDownloadPath } from './utils/filePath.js'
+import { isMagnetHashMatch } from './utils/magnetHash.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -462,10 +464,7 @@ app.delete('/api/db/torrents/:hash', async (req, res) => {
     const before = db.data.torrents?.length || 0
     const hashLower = hash.toLowerCase()
 
-    db.data.torrents = (db.data.torrents || []).filter(t => {
-        const magnetLower = t.magnet.toLowerCase()
-        return !magnetLower.includes(hashLower)
-    })
+    db.data.torrents = (db.data.torrents || []).filter(t => !isMagnetHashMatch(t.magnet, hashLower))
 
     const removed = before - db.data.torrents.length
 
@@ -830,7 +829,13 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
         // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
         if (!softDelete && torrent && torrent.name) {
             const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
-            const fullPath = path.join(downloadPath, torrent.name)
+            let fullPath
+            try {
+                fullPath = safeJoinDownloadPath(downloadPath, torrent.name)
+            } catch (e) {
+                console.error(`[Delete Error] Rejected unsafe path for "${torrent.name}": ${e.message}`)
+                return res.status(400).json({ error: 'Invalid torrent path' })
+            }
 
             // Fire-and-forget async deletion to avoid blocking the server
             fsPromises.rm(fullPath, { recursive: true, force: true })
@@ -905,7 +910,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     let servingFromDisk = Boolean(localDiskPath)
     if (!servingFromDisk) {
         try {
-            const stat = fs.statSync(diskPath)
+            const stat = await fsPromises.stat(diskPath)
             if (shouldServeFileFromDisk(stat, file.length)) {
                 servingFromDisk = true
                 const allocatedBytes = Math.min(getAllocatedSizeBytes(stat), file.length)

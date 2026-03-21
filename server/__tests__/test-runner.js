@@ -16,9 +16,22 @@ function test(name, fn) {
     tests.push({ name, fn })
 }
 
+// Negate an assertion: expect(x).not.toBe(y)
+function negateMatchers(matchers) {
+    const negated = {}
+    for (const [key, fn] of Object.entries(matchers)) {
+        negated[key] = (...args) => {
+            let threw = false
+            try { fn(...args) } catch { threw = true }
+            if (!threw) throw new Error(`Expected assertion "${key}(${JSON.stringify(args[0])})" to fail, but it passed`)
+        }
+    }
+    return negated
+}
+
 // Assertion helpers
 function expect(actual) {
-    return {
+    const matchers = {
         toBe: (expected) => {
             if (actual !== expected) {
                 throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
@@ -58,8 +71,29 @@ function expect(actual) {
             if (actual === undefined) {
                 throw new Error(`Expected value to be defined`)
             }
+        },
+        toThrow: (expectedMsg) => {
+            if (typeof actual !== 'function') {
+                throw new Error(`Expected a function, got ${typeof actual}`)
+            }
+            let threw = false
+            let thrownMsg = ''
+            try {
+                actual()
+            } catch (e) {
+                threw = true
+                thrownMsg = e.message
+            }
+            if (!threw) {
+                throw new Error(`Expected function to throw, but it did not`)
+            }
+            if (expectedMsg && !thrownMsg.includes(expectedMsg)) {
+                throw new Error(`Expected throw message to contain "${expectedMsg}", got "${thrownMsg}"`)
+            }
         }
     }
+    matchers.not = negateMatchers(matchers)
+    return matchers
 }
 
 // Run all tests

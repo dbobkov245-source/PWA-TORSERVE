@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { searchTorrents } from './serverApi.js'
+import { searchTorrents, getAIPicks } from './serverApi.js'
 
 describe('searchTorrents', () => {
     beforeEach(() => {
@@ -55,5 +55,40 @@ describe('searchTorrents', () => {
             'http://192.168.1.70:3000/api/v2/search?query=Primate&limit=100',
             { signal: controller.signal }
         )
+    })
+})
+
+describe('getAIPicks', () => {
+    beforeEach(() => {
+        localStorage.clear()
+    })
+
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it('calls /api/ai-picks on the configured server', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ([{ id: 1, title: 'Movie' }])
+        })
+
+        await getAIPicks()
+
+        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.1.70:3000/api/ai-picks')
+    })
+
+    it('returns empty array on server error', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: false,
+            status: 500
+        })
+
+        const result = await getAIPicks()
+        expect(result).toEqual([])
     })
 })

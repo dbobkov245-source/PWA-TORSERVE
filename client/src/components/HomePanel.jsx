@@ -16,7 +16,7 @@ import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
 import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
 import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
-import { getFavorites, getHistory, toTmdbItem } from '../utils/serverApi'
+import { getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { useQualityBadges } from '../hooks/useQualityBadges'
 
@@ -303,10 +303,7 @@ const HomePanel = ({
                 name: 'Подборки AI',
                 icon: '🤖',
                 fetcher: async () => {
-                    const base = localStorage.getItem('serverUrl')?.replace(/\/$/, '') || window.location.origin
-                    const res = await fetch(`${base}/api/ai-picks`)
-                    if (!res.ok) return { results: [], total_pages: 1 }
-                    const data = await res.json()
+                    const data = await getAIPicks()
                     return { results: data.map(toTmdbItem), total_pages: 1 }
                 }
             })

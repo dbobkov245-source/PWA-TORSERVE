@@ -296,7 +296,7 @@ const SearchPanel = ({
                 <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                     {sortedResults.map((r, i) => (
                         <SearchResultItem
-                            key={r.id || i}
+                            key={r.magnet || r.id || i}
                             item={r}
                             onAdd={onAddTorrent}
                         />

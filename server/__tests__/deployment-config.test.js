@@ -42,3 +42,8 @@ test('env example enables fixed torrent port for inbound peer discovery', () => 
     const envExample = readRepoFile('.env.example')
     expect(envExample).toContain('TORRENT_PORT=6881')
 })
+
+test('stream handler uses async stat to avoid blocking the event loop', () => {
+    const indexSrc = readRepoFile('server/index.js')
+    expect(indexSrc).not.toContain('fs.statSync')
+})

@@ -118,6 +118,20 @@ export async function clearHistory() {
 }
 
 // ────────────────────────────────────────────────────────
+// 🤖 AI Picks
+// ────────────────────────────────────────────────────────
+
+export async function getAIPicks() {
+    try {
+        const res = await fetch(`${getServerBase()}/api/ai-picks`)
+        if (!res.ok) return []
+        return res.json()
+    } catch {
+        return []
+    }
+}
+
+// ────────────────────────────────────────────────────────
 // 🔎 Torrent Search
 // ────────────────────────────────────────────────────────
 
