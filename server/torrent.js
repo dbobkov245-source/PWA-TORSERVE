@@ -45,6 +45,14 @@ sharedDHT.on('error', (err) => console.warn('[DHT] Error:', err.message))
 
 const engines = new Map()
 
+// ─── Change Emitter (for SSE) ────────────────────────────────
+const _changeListeners = new Set()
+export function onTorrentChange(cb) { _changeListeners.add(cb) }
+export function offTorrentChange(cb) { _changeListeners.delete(cb) }
+export function _notifyTorrentChangeForTest() { _changeListeners.forEach(cb => cb()) }
+
+function notifyTorrentChange() { _changeListeners.forEach(cb => cb()) }
+
 // 🔥 Best Public Trackers — verified working (tested 2026-02-23)
 // Tested from Russian ISP: open.stealth.si:80 and torrent.eu.org:451 respond reliably.
 // opentrackr.org:1337 is ISP-blocked from Russia.
@@ -418,6 +426,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
             }
 
+            notifyTorrentChange()
             resolve(formatEngine(engine))
         })
 
@@ -539,6 +548,7 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
     // Remove from persistent storage
     removeTorrentFromDB(infoHash)
 
+    notifyTorrentChange()
     return true
 }
 

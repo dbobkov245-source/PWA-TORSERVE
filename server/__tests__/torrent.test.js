@@ -131,3 +131,15 @@ test('restore selection skips completed persisted torrents', async () => {
         { magnet: 'magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc', name: 'legacy.mkv' }
     ])
 })
+
+test('onTorrentChange registers a listener that fires on notify', async () => {
+    const { onTorrentChange, offTorrentChange, _notifyTorrentChangeForTest } = await import('../torrent.js')
+    let called = 0
+    const cb = () => called++
+    onTorrentChange(cb)
+    _notifyTorrentChangeForTest()
+    expect(called).toBe(1)
+    offTorrentChange(cb)
+    _notifyTorrentChangeForTest()
+    expect(called).toBe(1) // not called again after unsubscribe
+})
