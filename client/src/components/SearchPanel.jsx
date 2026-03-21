@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { FixedSizeList } from 'react-window'
-import { AutoSizer } from 'react-virtualized-auto-sizer'
 import { useVoiceSearch } from '../hooks/useVoiceSearch.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
-
-const ROW_HEIGHT = 72
 
 // ─── Sub-Components ─────────────────────────────────────────
 
@@ -42,7 +38,7 @@ const getPlayabilityMeta = (status, preflightPeers) => {
     }
 }
 
-const SearchResultItem = ({ item, onAdd }) => {
+const SearchResultItem = ({ item, index, onAdd }) => {
     const rowRef = useSpatialItem('search')
     const playability = getPlayabilityMeta(item.playabilityStatus, item.preflight?.peers || 0)
 
@@ -50,7 +46,7 @@ const SearchResultItem = ({ item, onAdd }) => {
         <div
             ref={rowRef}
             className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors"
-            onClick={() => onAdd(item)}
+            onClick={() => onAdd(item.magnet || item.id, item.title)}
         >
             <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-white truncate">{item.title}</div>
@@ -100,16 +96,6 @@ const getProviderInfo = (status, count) => {
         case 'error': return { icon: '❌', style: 'bg-red-900/40 text-red-400 border-red-500/40', label: 'Error' }
         default: return { icon: '○', style: 'bg-gray-800/30 text-gray-400 border-gray-600/30', label: 'Unknown' }
     }
-}
-
-const VirtualRow = ({ index, style, data }) => {
-    const item = data.results[index]
-    // Stable identity: key={r.magnet || r.id || index} — react-window manages DOM keys internally
-    return (
-        <div style={{ ...style, paddingRight: '4px' }}>
-            <SearchResultItem item={item} onAdd={data.onAdd} />
-        </div>
-    )
 }
 
 // ─── Main Component ───────────────────────────────────────────
@@ -306,31 +292,17 @@ const SearchPanel = ({
             )}
 
             {/* Results */}
-            {sortedResults.length > 0 && (() => {
-                const listHeight = Math.min(
-                    sortedResults.length * ROW_HEIGHT,
-                    typeof window !== 'undefined' ? window.innerHeight * 0.5 : 400
-                )
-                return (
-                    <div style={{ height: listHeight }}>
-                        <AutoSizer>
-                            {({ height, width }) => (
-                                <FixedSizeList
-                                    height={height}
-                                    width={width}
-                                    itemCount={sortedResults.length}
-                                    itemSize={ROW_HEIGHT}
-                                    itemData={{ results: sortedResults, onAdd: onAddTorrent }}
-                                    overscanCount={3}
-                                    className="custom-scrollbar"
-                                >
-                                    {VirtualRow}
-                                </FixedSizeList>
-                            )}
-                        </AutoSizer>
-                    </div>
-                )
-            })()}
+            {sortedResults.length > 0 && (
+                <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    {sortedResults.map((r, i) => (
+                        <SearchResultItem
+                            key={r.magnet || r.id || i}
+                            item={r}
+                            onAdd={onAddTorrent}
+                        />
+                    ))}
+                </div>
+            )}
 
             {searchLoading && (
                 <div className="text-center text-gray-400 py-6">

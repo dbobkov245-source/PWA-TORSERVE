@@ -11,18 +11,10 @@ const src = fs.readFileSync(
 )
 
 describe('SearchPanel', () => {
-    it('uses react-window FixedSizeList instead of .map() — no manual key management needed', () => {
-        // react-window manages keys internally; no .map() with key prop
+    it('uses stable magnet-based key for result list items, not array index fallback', () => {
+        // key={r.id || i} relies on index when id is missing — breaks on sort/reorder
+        // key={r.magnet || r.id} is stable across re-sorts
         expect(src).not.toContain('key={r.id || i}')
-        expect(src).not.toContain('.map((r, i)')
-        expect(src).toContain('FixedSizeList')
-    })
-    it('passes full item object to onAdd (not just magnet+title)', () => {
-        expect(src).toContain('onAdd(item)')
-        expect(src).not.toContain("onAdd(item.magnet || item.id, item.title)")
-    })
-    it('imports FixedSizeList from react-window for virtualized rendering', () => {
-        expect(src).toContain("from 'react-window'")
-        expect(src).toContain('FixedSizeList')
+        expect(src).toContain('key={r.magnet')
     })
 })

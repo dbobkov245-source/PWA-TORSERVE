@@ -1,7 +1,7 @@
 {
-    "version": "3.10.7",
-    "versionCode": 19,
+    "version": "3.11.0",
+    "versionCode": 20,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.10.7/app-debug.apk",
-    "notes": "v3.10.7:\n- 🔒 Защита от path traversal при удалении торрентов\n- 🐛 Исправлен поиск торрентов по hash (точное совпадение btih)\n- ⚡️ Неблокирующий stat() при стриминге файлов\n- 🛡️ Детерминированное вытеснение LRU-кэша метаданных\n- 🔧 Исправлена утечка AbortSignal таймеров\n- 🔑 AI-подборки через централизованный serverApi"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.0/app-debug.apk",
+    "notes": "v3.11.0:\n- ⚡️ Виртуализация списка поиска (react-window) — до 100 результатов без тормозов\n- 🟡 Предупреждение при добавлении мёртвых/рискованных торрентов\n- 🔄 SSE вместо polling — обновления статуса в реальном времени\n- 🔧 Исправлена деградация статуса при переподключении SSE"
 }

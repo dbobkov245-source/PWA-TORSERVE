@@ -8,9 +8,6 @@ import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 
-import { useToast, ToastContainer } from './components/Toast'
-import { getAddToastMessage } from './utils/toastMessages'
-
 // Components
 import Poster from './components/Poster'
 import { DegradedBanner, ErrorScreen, BufferingBanner, ServerStatusBar } from './components/StatusBanners'
@@ -97,7 +94,6 @@ function App() {
   const [magnet, setMagnet] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const { toasts, showToast } = useToast()
 
   // State: UI
   const [showSettings, setShowSettings] = useState(false)
@@ -227,40 +223,10 @@ function App() {
   const fetchStatus = useMemo(() => createSerializedPollTask(fetchStatusImpl), [fetchStatusImpl])
 
   useEffect(() => {
-    const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
-    if (!baseUrl) return
-
-    fetchStatus() // prime state immediately while SSE connects
-
-    let fallbackTimer = null
-
-    const es = new EventSource(`${baseUrl}/api/status/stream`)
-
-    es.addEventListener('status', (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        setTorrents(data.torrents || [])
-        if (data.serverStatus) setServerStatus(data.serverStatus)
-        if (data.lastStateChange) setLastStateChange(data.lastStateChange)
-      } catch { /* malformed event */ }
-      if (fallbackTimer) {
-        clearInterval(fallbackTimer)
-        fallbackTimer = null
-      }
-    })
-
-    es.onerror = () => {
-      if (!fallbackTimer) {
-        setServerStatus('degraded')
-        fallbackTimer = setInterval(fetchStatus, 5000)
-      }
-    }
-
-    return () => {
-      es.close()
-      if (fallbackTimer) clearInterval(fallbackTimer)
-    }
-  }, [serverUrl, fetchStatus])
+    fetchStatus()
+    const timer = setInterval(fetchStatus, 5000)
+    return () => clearInterval(timer)
+  }, [fetchStatus])
 
   // Check for app updates on launch
   useEffect(() => {
@@ -546,8 +512,7 @@ function App() {
     hydrateSearchFromMovieSession(movieTorrentSession)
   }, [showSearch, searchOrigin, movieTorrentSession, hydrateSearchFromMovieSession])
 
-  const addFromSearch = async (item) => {
-    const magnet = typeof item === 'string' ? item : (item.magnet || item.id)
+  const addFromSearch = async (magnet, title) => {
     setLoading(true)
     try {
       const res = await fetch(`${serverUrl}/api/add`, {
@@ -556,14 +521,16 @@ function App() {
         body: JSON.stringify({ magnet })
       })
       if (res.ok) {
-        const toast = getAddToastMessage(item?.playabilityStatus)
-        if (toast) showToast(toast.message, toast.type)
+        // 1. Clear search state to unmount SearchResultItem components
         setSearchResults([])
         setSearchProviders({})
+        // 2. Close panel AFTER clearing (allows React to complete unmount)
         requestAnimationFrame(() => {
           setShowSearch(false)
           setActiveView('list')
           fetchStatus()
+          // 3. Recover focus after DOM settles - BUG-1 fix: use timeout instead of rAF
+          // to ensure search zone elements are fully unregistered before recovery
           setTimeout(() => {
             SpatialEngine.setActiveZone('main')
             SpatialEngine.recoverFocus()
@@ -883,7 +850,6 @@ function App() {
             </div>
           </div>
         )}
-        <ToastContainer toasts={toasts} />
       </div>
     </div>
   )
