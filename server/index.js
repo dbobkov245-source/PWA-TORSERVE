@@ -246,13 +246,14 @@ app.get('/api/status', async (req, res) => {
         () => refreshLocalLibrary(),
         (err) => console.warn('[LocalLibrary] Status refresh failed:', err.message)
     )
-    res.json(buildStatusPayload())
+    res.json(payload)
 })
 
 app.get('/api/status/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
     res.flushHeaders()
 
     const send = () => {
@@ -266,7 +267,14 @@ app.get('/api/status/stream', (req, res) => {
 
     // Push progress updates every 3s while active downloads exist
     const progressTimer = setInterval(() => {
-        if (getActiveTorrentsCount() > 0) send()
+        const isDownloading = getAllTorrents().some(t => (t.progress || 0) < 1 && (t.downloadSpeed || 0) > 0)
+        if (isDownloading) {
+            scheduleBackgroundRefresh(
+                () => refreshLocalLibrary(),
+                (err) => console.warn('[LocalLibrary] SSE refresh failed:', err.message)
+            )
+            send()
+        }
     }, 3000)
 
     // Heartbeat to prevent proxy timeouts
