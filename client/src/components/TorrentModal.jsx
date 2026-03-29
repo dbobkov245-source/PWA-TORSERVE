@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { App } from '@capacitor/app'
 import { cleanTitle, formatSize, organizeFiles } from '../utils/helpers'
 import { getMetadata } from '../utils/tmdbClient'
-import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const RatingBadge = ({ rating }) => {
     if (!rating || rating === 0) return null
@@ -41,6 +41,8 @@ const TorrentModal = ({
     const [metadata, setMetadata] = useState(null)
     const [episodesExpanded, setEpisodesExpanded] = useState(false)
     const [allowInteraction, setAllowInteraction] = useState(false)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+    const [deletePending, setDeletePending] = useState(false)
 
     // Spatial Refs
     const closeBtnRef = useSpatialItem('modal')
@@ -50,6 +52,8 @@ const TorrentModal = ({
     const expandBtnRef = useSpatialItem('modal')
     const copyBtnRef = useSpatialItem('modal')
     const deleteBtnRef = useSpatialItem('modal')
+    const deleteCancelBtnRef = useSpatialItem('modal', 'delete-confirm-cancel')
+    const deleteConfirmBtnRef = useSpatialItem('modal', 'delete-confirm-confirm')
 
     useEffect(() => {
         // Prevent phantom clicks from previous screen
@@ -57,27 +61,44 @@ const TorrentModal = ({
 
         // NAV-04: Focus Trap & Restore
         const previousActive = document.activeElement
-        if (playBtnRef.current) playBtnRef.current.focus()
-        else if (closeBtnRef.current) closeBtnRef.current.focus()
-
-        // NAV-04: Capacitor Back Button Listener (Android TV)
-        let backListener
-        const setupListener = async () => {
-            backListener = await App.addListener('backButton', () => {
-                onClose()
-            })
-        }
-        setupListener()
+        requestAnimationFrame(() => {
+            SpatialEngine.recoverFocus('modal')
+        })
 
         return () => {
             clearTimeout(timer)
-            if (backListener) backListener.remove()
             // Restore focus
             if (previousActive && typeof previousActive.focus === 'function') {
                 previousActive.focus()
             }
         }
     }, [])
+
+    useEffect(() => {
+        let backListener
+        const setupListener = async () => {
+            backListener = await App.addListener('backButton', () => {
+                if (showDeleteConfirm) {
+                    setShowDeleteConfirm(false)
+                    return
+                }
+                onClose()
+            })
+        }
+        setupListener()
+
+        return () => {
+            if (backListener) backListener.remove()
+        }
+    }, [onClose, showDeleteConfirm])
+
+    useEffect(() => {
+        if (!showDeleteConfirm) return
+
+        requestAnimationFrame(() => {
+            SpatialEngine.focusId('modal', 'delete-confirm-cancel')
+        })
+    }, [showDeleteConfirm])
 
     useEffect(() => {
         if (torrent?.name) {
@@ -103,6 +124,24 @@ const TorrentModal = ({
     const INITIAL_EPISODES = 8
     const visibleEpisodes = episodesExpanded ? mainList : mainList.slice(0, INITIAL_EPISODES)
     const hasMoreEpisodes = mainList.length > INITIAL_EPISODES && !episodesExpanded
+
+    const handleDeleteRequest = () => {
+        if (!allowInteraction || deletePending) return
+        setShowDeleteConfirm(true)
+    }
+
+    const handleDeleteConfirm = async () => {
+        if (deletePending) return
+        setDeletePending(true)
+        try {
+            const result = await onDelete(torrent.infoHash)
+            if (result !== false) {
+                setShowDeleteConfirm(false)
+            }
+        } finally {
+            setDeletePending(false)
+        }
+    }
 
     return (
         <div
@@ -219,10 +258,47 @@ const TorrentModal = ({
                     >📋 Copy</button>
                     <button
                         ref={deleteBtnRef}
-                        onClick={() => onDelete(torrent.infoHash)}
+                        onClick={handleDeleteRequest}
                         className="focusable flex-1 bg-red-900/50 text-red-500 py-2.5 rounded font-medium focus:bg-red-600 focus:text-white text-sm"
                     >🗑 Delete</button>
                 </div>
+
+                {showDeleteConfirm && (
+                    <div
+                        className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 p-4"
+                        onClick={() => !deletePending && setShowDeleteConfirm(false)}
+                    >
+                        <div
+                            className="w-full max-w-sm rounded-2xl border border-red-900/50 bg-[#111827] p-5 shadow-2xl"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <h3 className="text-lg font-bold text-white">Удалить торрент?</h3>
+                            <p className="mt-2 text-sm text-gray-400">
+                                Это уберет торрент из списка и остановит стриминг.
+                            </p>
+                            <div className="mt-4 flex gap-3">
+                                <button
+                                    type="button"
+                                    ref={deleteCancelBtnRef}
+                                    disabled={deletePending}
+                                    onClick={() => setShowDeleteConfirm(false)}
+                                    className="focusable flex-1 rounded-xl bg-gray-800 px-4 py-3 font-bold text-white focus:bg-white focus:text-black disabled:opacity-50"
+                                >
+                                    Отмена
+                                </button>
+                                <button
+                                    type="button"
+                                    ref={deleteConfirmBtnRef}
+                                    disabled={deletePending}
+                                    onClick={handleDeleteConfirm}
+                                    className="focusable flex-1 rounded-xl bg-red-700 px-4 py-3 font-bold text-white focus:bg-red-500 disabled:opacity-50"
+                                >
+                                    {deletePending ? 'Удаление...' : 'Удалить'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )

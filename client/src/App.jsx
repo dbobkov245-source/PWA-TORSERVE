@@ -7,6 +7,7 @@ import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
 import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
+import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
 
 // Components
 import Poster from './components/Poster'
@@ -119,8 +120,12 @@ function App() {
   const [searchProviders, setSearchProviders] = useState({})
   const [searchMeta, setSearchMeta] = useState(null)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [searchAddPendingKey, setSearchAddPendingKey] = useState(null)
   const [searchOrigin, setSearchOrigin] = useState('manual')
   const lastSearchRef = useRef({ query: '' })
+  const manualSearchAbortRef = useRef(null)
+  const manualSearchRequestIdRef = useRef(0)
+  const searchAddPendingRef = useRef(null)
 
   // State: Auto-Download
   const [showAutoDownload, setShowAutoDownload] = useState(false)
@@ -149,12 +154,16 @@ function App() {
     else if (selectedTorrent) setSelectedTorrent(null)
     else if (showSettings) setShowSettings(false)
     else if (showSearch) {
+      manualSearchAbortRef.current?.abort()
+      manualSearchAbortRef.current = null
       setShowSearch(false)
       setSearchOrigin('manual')
       setSearchResults([])
       setSearchProviders({})
       setSearchMeta(null)
       setSearchLoading(false)
+      setSearchAddPendingKey(null)
+      searchAddPendingRef.current = null
     }
     else if (showSidebar) setShowSidebar(false)
     else if (activeMovie) setActiveMovie(null)
@@ -315,11 +324,19 @@ function App() {
   }
 
   const deleteTorrent = async (hash) => {
-    if (!confirm('Удалить этот торрент и файлы?')) return
     try {
       const res = await fetch(`${serverUrl}/api/delete/${hash}`, { method: 'DELETE' })
-      if (res.ok) { setSelectedTorrent(null); fetchStatus() }
-    } catch { alert('Error deleting') }
+      if (res.ok) {
+        setSelectedTorrent(null)
+        fetchStatus()
+        return true
+      }
+      alert('Не удалось удалить торрент')
+      return false
+    } catch {
+      alert('Error deleting')
+      return false
+    }
   }
 
   const handlePlay = useCallback(async (hash, index, fileName) => {
@@ -399,6 +416,22 @@ function App() {
     })
   }, [resolveServerRequest])
 
+  const cancelManualSearch = useCallback(() => {
+    manualSearchAbortRef.current?.abort()
+    manualSearchAbortRef.current = null
+  }, [])
+
+  const resetSearchPanelState = useCallback(() => {
+    cancelManualSearch()
+    setSearchOrigin('manual')
+    setSearchResults([])
+    setSearchProviders({})
+    setSearchMeta(null)
+    setSearchLoading(false)
+    setSearchAddPendingKey(null)
+    searchAddPendingRef.current = null
+  }, [cancelManualSearch])
+
   const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false, signal } = {}) => {
     const params = new URLSearchParams({
       query,
@@ -472,17 +505,27 @@ function App() {
       forceFresh = true
     }
 
+    cancelManualSearch()
+    const controller = new AbortController()
+    manualSearchAbortRef.current = controller
+    const requestId = ++manualSearchRequestIdRef.current
+
     setSearchOrigin('manual')
     setSearchLoading(true)
     setSearchResults([])
     setSearchProviders({})
     setSearchMeta(null)
+    setSearchAddPendingKey(null)
 
     try {
       const data = await performTorrentSearch(normalizedQuery, {
         forceFresh,
-        limit: 100
+        limit: 100,
+        signal: controller.signal
       })
+      if (controller.signal.aborted || requestId !== manualSearchRequestIdRef.current) {
+        return null
+      }
       setSearchResults(data.items || [])
       setSearchProviders(data.meta?.providers || {})
       setSearchMeta({
@@ -493,8 +536,18 @@ function App() {
       })
       lastSearchRef.current.query = normalizedQuery
       return data
-    } catch (e) { console.error('Search error:', e) }
-    finally { setSearchLoading(false) }
+    } catch (e) {
+      if (e?.name !== 'AbortError') {
+        console.error('Search error:', e)
+      }
+    } finally {
+      if (manualSearchAbortRef.current === controller) {
+        manualSearchAbortRef.current = null
+      }
+      if (requestId === manualSearchRequestIdRef.current) {
+        setSearchLoading(false)
+      }
+    }
   }
 
   const openMovieTorrentSearch = useCallback(() => {
@@ -512,21 +565,45 @@ function App() {
     hydrateSearchFromMovieSession(movieTorrentSession)
   }, [showSearch, searchOrigin, movieTorrentSession, hydrateSearchFromMovieSession])
 
-  const addFromSearch = async (magnet, title) => {
+  const addFromSearch = async (item) => {
+    const actionKey = getSearchResultActionKey(item)
+    if (!item || searchAddPendingRef.current) return
+
+    searchAddPendingRef.current = actionKey || '__search-add__'
+    setSearchAddPendingKey(searchAddPendingRef.current)
     setLoading(true)
     try {
+      const magnet = await resolveSearchResultMagnet(item, (requestPath) => fetchSearchJson(requestPath))
+      await verifySearchResultBeforeAdd(item, magnet, async (magnetToProbe) => {
+        const res = await fetch(`${serverUrl}/api/v2/probe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ magnet: magnetToProbe })
+        })
+
+        const payload = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(payload?.error || `Probe failed: HTTP ${res.status}`)
+        }
+
+        return payload
+      })
+
       const res = await fetch(`${serverUrl}/api/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ magnet })
       })
       if (res.ok) {
+        cancelManualSearch()
         // 1. Clear search state to unmount SearchResultItem components
         setSearchResults([])
         setSearchProviders({})
+        setSearchMeta(null)
         // 2. Close panel AFTER clearing (allows React to complete unmount)
         requestAnimationFrame(() => {
           setShowSearch(false)
+          setSearchOrigin('manual')
           setActiveView('list')
           fetchStatus()
           // 3. Recover focus after DOM settles - BUG-1 fix: use timeout instead of rAF
@@ -536,9 +613,17 @@ function App() {
             SpatialEngine.recoverFocus()
           }, 150)
         })
+      } else {
+        throw new Error(`Add torrent failed: HTTP ${res.status}`)
       }
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
+    } catch (e) {
+      console.error(e)
+      alert(`Не удалось добавить торрент: ${e.message || 'unknown error'}`)
+    } finally {
+      searchAddPendingRef.current = null
+      setSearchAddPendingKey(null)
+      setLoading(false)
+    }
   }
 
   const saveSortBy = (val) => {
@@ -630,7 +715,7 @@ function App() {
         <div className="flex gap-3 items-center">
           <div className="flex bg-gray-800 rounded-full p-1">
             <button ref={homeTabRef} tabIndex="0" onClick={() => { setActiveView('home'); setActiveMovie(null); setActivePerson(null); setActiveCategory(null); }} className={`focusable px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'home' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>🏠</button>
-            <button ref={listTabRef} tabIndex="0" onClick={() => { setActiveView('list'); setShowSearch(false); }} className={`focusable px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>📚</button>
+            <button ref={listTabRef} tabIndex="0" onClick={() => { setActiveView('list'); setShowSearch(false); resetSearchPanelState(); }} className={`focusable px-3 py-1.5 rounded-full text-sm font-medium transition-all ${activeView === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>📚</button>
           </div>
           <ServerStatusBar ref={diagnosticsRef} status={serverStatus} onDiagnosticsClick={() => { setSettingsTab('status'); setShowSettings(true); }} />
           <button ref={autoDownloadRef} tabIndex="0" onClick={() => setShowAutoDownload(true)} className="focusable p-2 hover:bg-gray-800 rounded-full transition-colors" title="Авто-загрузка">📺</button>
@@ -708,8 +793,13 @@ function App() {
                   ref={mainSearchBtnRef}
                   tabIndex="0"
                   onClick={() => {
-                    setSearchOrigin('manual')
-                    setShowSearch(!showSearch)
+                    if (showSearch) {
+                      setShowSearch(false)
+                      resetSearchPanelState()
+                    } else {
+                      setSearchOrigin('manual')
+                      setShowSearch(true)
+                    }
                   }}
                   className="focusable bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-full text-sm font-bold transition-transform hover:scale-105 focus:ring-4 focus:ring-purple-400"
                 >
@@ -747,15 +837,12 @@ function App() {
                 }}
                 onClose={() => {
                   setShowSearch(false)
-                  setSearchOrigin('manual')
-                  setSearchResults([])
-                  setSearchProviders({})
-                  setSearchMeta(null)
-                  setSearchLoading(false)
+                  resetSearchPanelState()
                 }}
                 onAddTorrent={addFromSearch}
                 searchResults={searchResults}
                 searchLoading={searchLoading}
+                addingItemKey={searchAddPendingKey}
                 providers={searchProviders}
                 searchMeta={searchMeta}
               />

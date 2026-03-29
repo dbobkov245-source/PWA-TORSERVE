@@ -21,6 +21,8 @@ await import('./stream-source.test.js')
 await import('./request-meta.test.js')
 await import('./file-path.test.js')
 await import('./db-torrent-delete.test.js')
+await import('./search-magnet.test.js')
+await import('./magnet-preflight.test.js')
 
 // Run all registered tests
 await runTests()

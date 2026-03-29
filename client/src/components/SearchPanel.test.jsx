@@ -11,15 +11,18 @@ const src = fs.readFileSync(
 )
 
 describe('SearchPanel', () => {
-    it('uses stable magnet-based key for result list items, not array index fallback', () => {
-        // key={r.id || i} relies on index when id is missing — breaks on sort/reorder
-        // key={r.magnet || r.id} is stable across re-sorts
+    it('uses a stable result action key for result list items, not array index fallback', () => {
         expect(src).not.toContain('key={r.id || i}')
-        expect(src).toContain('key={r.magnet')
+        expect(src).toContain('key={getSearchResultActionKey(r) || i}')
     })
 
     it('renders search results as keyboard-focusable controls for TV OK/Enter', () => {
-        expect(src).toContain('tabIndex={0}')
-        expect(src).toContain("role=\"button\"")
+        expect(src).toContain('<button')
+        expect(src).toContain('type="button"')
+    })
+
+    it('passes the whole search result object to the add handler instead of raw id fallback', () => {
+        expect(src).not.toContain('onAdd(item.magnet || item.id, item.title)')
+        expect(src).toContain('onAdd(item)')
     })
 })

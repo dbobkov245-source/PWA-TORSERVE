@@ -1,7 +1,7 @@
 {
-    "version": "3.11.2",
-    "versionCode": 22,
+    "version": "3.11.4",
+    "versionCode": 24,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.2/app-debug.apk",
-    "notes": "v3.11.2:\n- 🎮 Исправлена TV-навигация в результатах поиска: OK снова добавляет найденный торрент\n- ❤️ Кнопка «Избранное» возвращена в основной action-row карточки фильма\n- 🖼️ APK использует домашний /api/proxy для постеров, чтобы Amsterdam upstream работал и на Android TV"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.4/app-debug.apk",
+    "notes": "v3.11.4:\n- ❤️ Исправлен API для «Избранного» и истории в Android APK: запросы больше не уходят в localhost webview\n- 🔎 Для выбора торрента добавлен быстрый probe перед /api/add: мертвые unchecked-магниты теперь отваливаются быстро, а не зависают на долгом добавлении\n- ⚡ Ускорен server-side preflight поиска"
 }

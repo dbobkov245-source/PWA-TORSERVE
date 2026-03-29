@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { searchTorrents, getAIPicks } from './serverApi.js'
+
+const { isNativePlatformMock } = vi.hoisted(() => ({
+    isNativePlatformMock: vi.fn(() => false)
+}))
+
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => isNativePlatformMock()
+    }
+}))
+
+import { searchTorrents, getAIPicks, getFavorites } from './serverApi.js'
 
 describe('searchTorrents', () => {
     beforeEach(() => {
@@ -90,5 +101,43 @@ describe('getAIPicks', () => {
 
         const result = await getAIPicks()
         expect(result).toEqual([])
+    })
+})
+
+describe('favorites base URL', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        isNativePlatformMock.mockReturnValue(false)
+    })
+
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it('does not use window.location.origin for favorites on native builds', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+        isNativePlatformMock.mockReturnValue(true)
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ([])
+        })
+
+        await getFavorites()
+
+        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.1.70:3000/api/favorites')
+    })
+
+    it('falls back to the native default server URL when no server is stored yet', async () => {
+        isNativePlatformMock.mockReturnValue(true)
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ([])
+        })
+
+        await getFavorites()
+
+        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.1.70:3000/api/favorites')
     })
 })

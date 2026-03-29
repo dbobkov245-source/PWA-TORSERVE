@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useVoiceSearch } from '../hooks/useVoiceSearch.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { getSearchResultActionKey } from '../utils/searchResultActions.js'
 
 // ─── Sub-Components ─────────────────────────────────────────
 
@@ -38,17 +39,20 @@ const getPlayabilityMeta = (status, preflightPeers) => {
     }
 }
 
-const SearchResultItem = ({ item, index, onAdd }) => {
+const SearchResultItem = ({ item, onAdd, addingItemKey }) => {
     const rowRef = useSpatialItem('search')
     const playability = getPlayabilityMeta(item.playabilityStatus, item.preflight?.peers || 0)
+    const actionKey = getSearchResultActionKey(item)
+    const isPending = Boolean(addingItemKey)
+    const isActivePending = addingItemKey === actionKey
 
     return (
-        <div
+        <button
+            type="button"
             ref={rowRef}
-            tabIndex={0}
-            role="button"
-            className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors"
-            onClick={() => onAdd(item.magnet || item.id, item.title)}
+            disabled={isPending}
+            className={`focusable w-full flex items-start justify-between p-3 bg-gray-800 rounded-lg text-left focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors ${isPending ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
+            onClick={() => onAdd(item)}
         >
             <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-white truncate">{item.title}</div>
@@ -61,8 +65,8 @@ const SearchResultItem = ({ item, index, onAdd }) => {
                 </div>
             </div>
             {/* Visual hint that Enter/OK will add */}
-            <span className="ml-2 text-gray-500 group-focus:text-green-400 text-lg transition-colors">➕</span>
-        </div>
+            <span className="ml-2 text-gray-500 group-focus:text-green-400 text-lg transition-colors">{isActivePending ? '⏳' : '➕'}</span>
+        </button>
     )
 }
 
@@ -111,6 +115,7 @@ const SearchPanel = ({
     onAddTorrent,
     searchResults,
     searchLoading,
+    addingItemKey = null,
     providers = {},
     searchMeta = null
 }) => {
@@ -298,9 +303,10 @@ const SearchPanel = ({
                 <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                     {sortedResults.map((r, i) => (
                         <SearchResultItem
-                            key={r.magnet || r.id || i}
+                            key={getSearchResultActionKey(r) || i}
                             item={r}
                             onAdd={onAddTorrent}
+                            addingItemKey={addingItemKey}
                         />
                     ))}
                 </div>

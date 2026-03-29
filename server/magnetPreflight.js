@@ -17,6 +17,7 @@ const log = logger.child('Preflight')
 const PROBE_TIMEOUT_MS = parseInt(process.env.PREFLIGHT_TIMEOUT_MS || '8000', 10)
 const MAX_CONCURRENCY = parseInt(process.env.PREFLIGHT_CONCURRENCY || '3', 10)
 const TOP_N = parseInt(process.env.PREFLIGHT_TOP_N || '8', 10)
+const PREFLIGHT_TOTAL_BUDGET_MS = parseInt(process.env.PREFLIGHT_TOTAL_BUDGET_MS || '3000', 10)
 const CACHE_TTL_MS = parseInt(process.env.PREFLIGHT_CACHE_TTL_MS || '60000', 10) // default 60s
 
 // Same public trackers as torrent.js for consistency
@@ -84,7 +85,7 @@ function enrichMagnet(magnet) {
  * @param {string} magnet - Magnet URI
  * @returns {Promise<{status: string, peers: number, durationMs: number}>}
  */
-function probeMagnet(magnet) {
+export function probeMagnet(magnet) {
     return new Promise((resolve) => {
         const start = Date.now()
         const enriched = enrichMagnet(magnet)
@@ -186,10 +187,10 @@ async function runWithConcurrency(tasks, concurrency) {
  * @param {Array} results - Search results from aggregator
  * @returns {Promise<Array>} Results enriched with preflight data, sorted by playability
  */
-export async function preflightResults(results) {
+export async function preflightResults(results, options = {}) {
     if (!results || results.length === 0) return results
 
-    const enabled = process.env.MAGNET_PREFLIGHT_ENABLED !== '0'
+    const enabled = options.enabled ?? (process.env.MAGNET_PREFLIGHT_ENABLED !== '0')
     if (!enabled) {
         // Feature disabled — return as-is with unknown status
         return results.map(r => ({
@@ -201,52 +202,88 @@ export async function preflightResults(results) {
     }
 
     // Preflight top-N by seeders (not by provider arrival order)
+    const topN = Number.isFinite(options.topN) ? options.topN : TOP_N
+    const concurrency = Number.isFinite(options.concurrency) ? options.concurrency : MAX_CONCURRENCY
+    const totalBudgetMs = Number.isFinite(options.totalBudgetMs) ? options.totalBudgetMs : PREFLIGHT_TOTAL_BUDGET_MS
+    const probe = options.probe || probeMagnet
+
     const magnetCandidates = results
         .map((result, index) => ({ index, result }))
         .filter(({ result }) => !!result.magnet)
         .sort((a, b) => (b.result.seeders || 0) - (a.result.seeders || 0))
 
-    const withMagnet = magnetCandidates.slice(0, TOP_N)
+    const withMagnet = magnetCandidates.slice(0, topN)
     const probeIndexes = new Set(withMagnet.map(x => x.index))
     const withoutMagnet = []
     for (let i = 0; i < results.length; i++) {
         if (!probeIndexes.has(i)) withoutMagnet.push(i)
     }
 
-    log.info('Starting preflight', { total: results.length, probing: withMagnet.length, topN: TOP_N })
+    log.info('Starting preflight', { total: results.length, probing: withMagnet.length, topN: topN, budgetMs: totalBudgetMs })
     const probeStart = Date.now()
+    const probeResults = new Array(withMagnet.length).fill(null)
 
     // Build probe tasks (using cache where possible)
-    const tasks = withMagnet.map(({ result }) => {
+    const tasks = withMagnet.map(({ result }, idx) => {
         const infoHash = extractInfoHash(result.magnet)
         const cached = infoHash ? getCached(infoHash) : null
         if (cached) {
-            return () => Promise.resolve({ ...cached, source: 'cache' })
+            return async () => {
+                const entry = { ...cached, source: 'cache' }
+                probeResults[idx] = entry
+                return entry
+            }
         }
-        return () => probeMagnet(result.magnet).then(probe => {
+        return () => probe(result.magnet).then(probeResult => {
             const entry = {
-                status: probe.status,
-                peers: probe.peers,
+                status: probeResult.status,
+                peers: probeResult.peers,
                 checkedAt: Date.now(),
-                durationMs: probe.durationMs,
+                durationMs: probeResult.durationMs,
                 source: 'probe'
             }
             if (infoHash) setCache(infoHash, entry)
+            probeResults[idx] = entry
             return entry
         })
     })
 
-    // Run with limited concurrency
-    const probeResults = await runWithConcurrency(tasks, MAX_CONCURRENCY)
+    // Best-effort probing: keep partial results if the batch exceeds the search budget.
+    let timedOut = false
+    const guardedRun = runWithConcurrency(tasks, concurrency).catch((error) => {
+        log.warn('Preflight worker failed', { error: error?.message || String(error) })
+        return null
+    })
+
+    if (totalBudgetMs > 0) {
+        await Promise.race([
+            guardedRun,
+            new Promise((resolve) => setTimeout(() => {
+                timedOut = true
+                resolve()
+            }, totalBudgetMs))
+        ])
+    } else {
+        await guardedRun
+    }
+
     const totalDurationMs = Date.now() - probeStart
+    const completedProbeResults = probeResults.filter(Boolean)
 
     log.info('Preflight complete', {
-        probed: probeResults.length,
+        probed: completedProbeResults.length,
         totalMs: totalDurationMs,
-        playable: probeResults.filter(r => r.status === 'playable').length,
-        risky: probeResults.filter(r => r.status === 'risky').length,
-        dead: probeResults.filter(r => r.status === 'dead').length
+        playable: completedProbeResults.filter(r => r.status === 'playable').length,
+        risky: completedProbeResults.filter(r => r.status === 'risky').length,
+        dead: completedProbeResults.filter(r => r.status === 'dead').length
     })
+    if (timedOut) {
+        log.warn('Preflight budget exceeded', {
+            budgetMs: totalBudgetMs,
+            completed: completedProbeResults.length,
+            requested: withMagnet.length
+        })
+    }
 
     // Enrich results with preflight data
     const enriched = results.map((result, idx) => ({ ...result }))
@@ -254,6 +291,12 @@ export async function preflightResults(results) {
     for (let i = 0; i < withMagnet.length; i++) {
         const { index } = withMagnet[i]
         const probe = probeResults[i]
+        if (!probe) {
+            enriched[index].playabilityStatus = enriched[index].magnet ? 'unchecked' : 'unknown'
+            enriched[index].playabilityScore = enriched[index].magnet ? calcScore(enriched[index], null) : -1
+            enriched[index].preflight = null
+            continue
+        }
         enriched[index].playabilityStatus = probe.status
         enriched[index].playabilityScore = calcScore(enriched[index], probe)
         enriched[index].preflight = {

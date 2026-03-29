@@ -3,13 +3,23 @@
  *
  * Uses the same serverUrl from localStorage as the rest of the app.
  */
+import { Capacitor } from '@capacitor/core'
+import { resolveInitialServerUrl, resolveServerBaseUrl } from './helpers'
 
 function getServerBase() {
     if (typeof window === 'undefined') return ''
     const stored = localStorage.getItem('serverUrl')
-    if (stored && stored.includes('://')) return stored.replace(/\/$/, '')
-    if (window.location.protocol.startsWith('http')) return window.location.origin
-    return ''
+    const isNative = Capacitor.isNativePlatform()
+    const effectiveServerUrl = stored || resolveInitialServerUrl({
+        isNative,
+        storedUrl: stored || ''
+    })
+
+    return resolveServerBaseUrl({
+        isNative,
+        serverUrl: effectiveServerUrl,
+        browserOrigin: window.location.origin
+    })
 }
 
 /**

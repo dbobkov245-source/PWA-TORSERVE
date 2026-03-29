@@ -21,6 +21,7 @@ import { getAllocatedSizeBytes, shouldServeFileFromDisk } from './streamSource.j
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
 import { isMagnetHashMatch } from './utils/magnetHash.js'
+import { probeMagnet } from './magnetPreflight.js'
 
 // ────────────────────────────────────────────────────────
 // 📊 Lag Monitor v2.3: Detect event loop blocking
@@ -342,8 +343,9 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 // Stage 5: Client/PWA Improvements
 // ─────────────────────────────────────────────────────────────
 
-import { search as aggregatorSearch, getProvidersStatus, getProvidersDiagnostics, getPreflightStats } from './aggregator.js'
+import { search as aggregatorSearch, getMagnet as aggregatorGetMagnet, getProvidersStatus, getProvidersDiagnostics, getPreflightStats } from './aggregator.js'
 import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
+import { parseMagnetLookupQuery } from './utils/searchMagnet.js'
 
 /**
  * POST /api/quality-badges — Batch discover available quality for movies
@@ -426,6 +428,45 @@ app.get('/api/v2/search', async (req, res) => {
             meta: { query, ms: Date.now() - startTime, providers: {} },
             items: []
         })
+    }
+})
+
+app.get('/api/v2/magnet', async (req, res) => {
+    let provider
+    let id
+
+    try {
+        ({ provider, id } = parseMagnetLookupQuery(req.query))
+    } catch (err) {
+        return res.status(400).json({ error: err.message })
+    }
+
+    try {
+        const result = await aggregatorGetMagnet(provider, id)
+        if (result?.magnet?.startsWith('magnet:')) {
+            return res.json({ magnet: result.magnet })
+        }
+
+        return res.status(404).json({ error: result?.error || 'Magnet not found' })
+    } catch (err) {
+        console.error('[API v2] Magnet lookup failed:', err)
+        return res.status(502).json({ error: err.message || 'Magnet lookup failed' })
+    }
+})
+
+app.post('/api/v2/probe', async (req, res) => {
+    const magnet = req.body?.magnet
+
+    if (!magnet || typeof magnet !== 'string' || !magnet.startsWith('magnet:')) {
+        return res.status(400).json({ error: 'magnet is required' })
+    }
+
+    try {
+        const result = await probeMagnet(magnet)
+        return res.json(result)
+    } catch (err) {
+        console.error('[API v2] Magnet probe failed:', err)
+        return res.status(502).json({ error: err.message || 'Magnet probe failed' })
     }
 })
 
