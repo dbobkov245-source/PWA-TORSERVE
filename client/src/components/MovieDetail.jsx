@@ -291,7 +291,7 @@ const MovieDetail = ({
                         <div className="flex flex-wrap items-start gap-4">
                             <div
                                 data-testid="movie-primary-actions"
-                                className="grid w-full max-w-4xl grid-cols-1 items-stretch gap-4 sm:grid-cols-3"
+                                className="grid w-full max-w-4xl grid-cols-1 items-stretch gap-4 sm:grid-cols-4"
                             >
                                 <MovieTorrentAction
                                     session={torrentSession}
@@ -303,6 +303,14 @@ const MovieDetail = ({
                                     onClick={() => allowInteraction && onSearch?.(getSearchQuery(item))}
                                     className={`focusable w-full h-full min-h-[56px] px-2 py-2 flex items-center justify-center bg-blue-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all ${!allowInteraction ? 'opacity-50' : ''}`}
                                 >🔍 Найти торренты</button>
+                                <button
+                                    ref={favBtnRef}
+                                    onClick={() => allowInteraction && handleToggleFavorite()}
+                                    className={`focusable w-full h-full min-h-[56px] px-2 py-2 flex items-center justify-center font-bold rounded-xl transition-all focus:ring-4 ${isFavorite
+                                        ? 'bg-pink-600 focus:bg-pink-400 focus:ring-pink-300 text-white'
+                                        : 'bg-gray-800 focus:bg-pink-600 focus:ring-pink-300 text-white'
+                                        } ${favLoading ? 'opacity-50' : ''}`}
+                                >{isFavorite ? '❤️ В избранном' : '🤍 Избранное'}</button>
                                 <button
                                     ref={backBtnRef}
                                     onClick={onBack}
@@ -323,15 +331,6 @@ const MovieDetail = ({
                                     className="focusable px-6 py-3 bg-red-600 focus:bg-red-400 focus:ring-4 focus:ring-red-300 text-white font-bold rounded-xl transition-all"
                                 >{showTrailerInline ? '✕ Закрыть' : '▶️ Трейлер'}</button>
                             )}
-                            {/* FAV-01: Favorite button */}
-                            <button
-                                ref={favBtnRef}
-                                onClick={() => allowInteraction && handleToggleFavorite()}
-                                className={`focusable px-6 py-3 font-bold rounded-xl transition-all focus:ring-4 ${isFavorite
-                                        ? 'bg-pink-600 focus:bg-pink-400 focus:ring-pink-300 text-white'
-                                        : 'bg-gray-800 focus:bg-pink-600 focus:ring-pink-300 text-white'
-                                    } ${favLoading ? 'opacity-50' : ''}`}
-                            >{isFavorite ? '❤️ В избранном' : '🤍 Избранное'}</button>
                         </div>
 
                         {/* Genres */}

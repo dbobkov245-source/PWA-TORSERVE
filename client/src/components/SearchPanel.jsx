@@ -45,6 +45,8 @@ const SearchResultItem = ({ item, index, onAdd }) => {
     return (
         <div
             ref={rowRef}
+            tabIndex={0}
+            role="button"
             className="focusable flex items-start justify-between p-3 bg-gray-800 rounded-lg cursor-pointer focus:bg-purple-700 focus:ring-2 focus:ring-purple-500 group transition-colors"
             onClick={() => onAdd(item.magnet || item.id, item.title)}
         >

@@ -1,6 +1,10 @@
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import MovieDetail from './MovieDetail.jsx'
+
+const { addFavoriteMock } = vi.hoisted(() => ({
+    addFavoriteMock: vi.fn(async () => ({}))
+}))
 
 vi.mock('@capacitor/app', () => ({
     App: {
@@ -51,7 +55,7 @@ vi.mock('../utils/tmdbClient', () => ({
 
 vi.mock('../utils/serverApi', () => ({
     getFavorites: vi.fn(async () => []),
-    addFavorite: vi.fn(async () => ({})),
+    addFavorite: addFavoriteMock,
     removeFavorite: vi.fn(async () => ({})),
     recordHistory: vi.fn(async () => ({}))
 }))
@@ -98,14 +102,14 @@ describe('MovieDetail action row', () => {
             await Promise.resolve()
         })
 
-        fireEvent.click(screen.getByRole('button', { name: 'Торренты · 1' }))
+        fireEvent.click(screen.getByRole('button', { name: /Торренты · 1/ }))
         fireEvent.click(screen.getByRole('button', { name: '🔍 Найти торренты' }))
 
         expect(onOpenMovieTorrents).toHaveBeenCalledTimes(1)
         expect(onSearch).toHaveBeenCalledWith('The Matrix')
     })
 
-    it('renders primary actions with equal-width button layout hooks', async () => {
+    it('renders primary actions with favorite inside the main TV action row', async () => {
         render(
             <MovieDetail
                 item={{
@@ -135,11 +139,51 @@ describe('MovieDetail action row', () => {
         })
 
         const primaryActions = screen.getByTestId('movie-primary-actions')
+        const favoriteButton = screen.getByRole('button', { name: '🤍 Избранное' })
 
         expect(primaryActions.className).toContain('grid')
-        expect(primaryActions.className).toContain('sm:grid-cols-3')
-        expect(screen.getByRole('button', { name: 'Торренты · 1' }).className).toContain('w-full')
+        expect(primaryActions.className).toContain('sm:grid-cols-4')
+        expect(screen.getByRole('button', { name: /Торренты · 1/ }).className).toContain('w-full')
         expect(screen.getByRole('button', { name: '🔍 Найти торренты' }).className).toContain('w-full')
         expect(screen.getByRole('button', { name: '⬅️ Назад' }).className).toContain('w-full')
+        expect(favoriteButton.className).toContain('w-full')
+        expect(within(primaryActions).getByRole('button', { name: '🤍 Избранное' })).toBe(favoriteButton)
+    })
+
+    it('toggles favorite from the primary action row after interaction delay', async () => {
+        render(
+            <MovieDetail
+                item={{
+                    id: 603,
+                    title: 'The Matrix',
+                    release_date: '1999-03-31',
+                    media_type: 'movie',
+                    vote_average: 8.7,
+                    overview: 'Neo chooses.'
+                }}
+                torrentSession={{
+                    status: 'ready',
+                    items: [{ id: 'one', seeders: 12, tags: ['1080p'] }]
+                }}
+                onOpenMovieTorrents={() => {}}
+                onSearch={() => {}}
+                onBack={() => {}}
+                onSelect={() => {}}
+                onSelectPerson={() => {}}
+                onSelectGenre={() => {}}
+            />
+        )
+
+        await act(async () => {
+            vi.advanceTimersByTime(600)
+            await Promise.resolve()
+        })
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: '🤍 Избранное' }))
+            await Promise.resolve()
+        })
+
+        expect(addFavoriteMock).toHaveBeenCalledTimes(1)
     })
 })

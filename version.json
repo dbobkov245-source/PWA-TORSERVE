@@ -1,7 +1,7 @@
 {
-    "version": "3.11.0",
-    "versionCode": 20,
+    "version": "3.11.2",
+    "versionCode": 22,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.0/app-debug.apk",
-    "notes": "v3.11.0:\n- ⚡️ Виртуализация списка поиска (react-window) — до 100 результатов без тормозов\n- 🟡 Предупреждение при добавлении мёртвых/рискованных торрентов\n- 🔄 SSE вместо polling — обновления статуса в реальном времени\n- 🔧 Исправлена деградация статуса при переподключении SSE"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.2/app-debug.apk",
+    "notes": "v3.11.2:\n- 🎮 Исправлена TV-навигация в результатах поиска: OK снова добавляет найденный торрент\n- ❤️ Кнопка «Избранное» возвращена в основной action-row карточки фильма\n- 🖼️ APK использует домашний /api/proxy для постеров, чтобы Amsterdam upstream работал и на Android TV"
 }

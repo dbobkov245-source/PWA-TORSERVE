@@ -278,12 +278,13 @@ export function getImageUrl(path, size = 'w342') {
     const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
     const apiBase = getApiBase()
 
-    // 1. For Browser (Localhost): Server Proxy is fine and reliable
-    if (!Capacitor.isNativePlatform() && apiBase) {
+    // 1. Prefer the home server proxy whenever a reachable API base is configured.
+    // On Android TV this lets poster traffic reuse the NAS -> Amsterdam upstream path.
+    if (apiBase) {
         return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
     }
 
-    // 2. For APK (TV): Use Dynamic Mirror System
+    // 2. For APK (TV) without a configured server: Use Dynamic Mirror System
     // ARC-01: Check if Proxy Mode (WSRV) is forcibly enabled (due to all mirrors banned)
     const proxyMode = localStorage.getItem(PROXY_MODE_KEY) === 'true'
 

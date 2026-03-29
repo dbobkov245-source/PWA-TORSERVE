@@ -17,4 +17,9 @@ describe('SearchPanel', () => {
         expect(src).not.toContain('key={r.id || i}')
         expect(src).toContain('key={r.magnet')
     })
+
+    it('renders search results as keyboard-focusable controls for TV OK/Enter', () => {
+        expect(src).toContain('tabIndex={0}')
+        expect(src).toContain("role=\"button\"")
+    })
 })
