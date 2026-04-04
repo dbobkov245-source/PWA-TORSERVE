@@ -16,6 +16,10 @@ export function serializeStatusItems(items = []) {
         totalSize: item.totalSize,
         downloadSpeed: item.downloadSpeed,
         numPeers: item.numPeers,
+        connectedPeers: item.connectedPeers,
+        activePeers: item.activePeers,
+        knownPeers: item.knownPeers,
+        queuedPeers: item.queuedPeers,
         eta: item.eta,
         files: (item.files || []).map((file) => ({
             name: file.name,

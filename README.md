@@ -1,15 +1,22 @@
-# 🍿 PWA-TorServe v4.0
-**The Ultimate Self-Hosted Streaming Gateway**
+# 🍿 PWA-TorServe
+**Self-hosted torrent streaming gateway for Android TV and home NAS**
 
-> *Turns your NAS into a private Netflix-class streaming service.*
+> Turns your NAS into a TV-first streaming box with native player handoff, resilient metadata loading, and a cleaner experience than a raw TorServe web UI.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![React](https://img.shields.io/badge/React-19-blue)](https://react.dev) [![Status](https://img.shields.io/badge/Status-Stable-green)](https://github.com/bobmark/pwa-torserve)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![React](https://img.shields.io/badge/React-19-blue)](https://react.dev) [![Status](https://img.shields.io/badge/Status-Stable-green)](https://github.com/dbobkov245-source/PWA-TORSERVE)
 
-PWA-TorServe is a **middleware** that bridges the gap between torrent networks and your TV. It aggregates search results, bypasses censorship, and streams content directly to your favorite player (Vimu, MX Player, VLC) with a **premium cinematic interface**.
+PWA-TorServe is a self-hosted streaming stack built for Android TV, home NAS, and native external players like Vimu, MX Player, and VLC. It searches torrent sources, routes around blocked metadata endpoints, and starts playback from a TV-friendly interface instead of a bare utility panel.
+
+## Why PWA-TorServe?
+
+- **TV-first UX**: D-Pad navigation, focused layouts, deep external-player integration.
+- **Resilient metadata**: Multi-layer fallback cascade for TMDB and related sources.
+- **Self-hosted workflow**: Run it on your NAS or home server and keep playback under your control.
+- **Better than a raw torrent panel**: Product-style interface on top of a torrent streaming backend.
 
 ---
 
-## ✨ What's New in v4.0?
+## ✨ Highlights
 
 🚀 **Cinematic Experience**
 - **Infinite Scroll**: Endless feed of movies and TV shows.
@@ -68,7 +75,7 @@ mkdir -p pwa-torserve/downloads
 cd pwa-torserve
 
 # 2. Download docker-compose.yml
-curl -o docker-compose.yml https://raw.githubusercontent.com/bobmark/pwa-torserve/main/docker-compose.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/docker-compose.yml
 
 # 3. Start
 docker-compose up -d
@@ -77,16 +84,19 @@ docker-compose up -d
 Access at: `http://your-nas-ip:3000`
 
 ### Option 2: Android TV Client (APK)
-To get the full experience (Voice Search, Deep Player Integration), install the APK.
+To get the full experience, install the Android TV client.
 
-1. **Build it yourself**:
+1. **Download the latest APK from GitHub Releases**:
+   [PWA-TorServe Releases](https://github.com/dbobkov245-source/PWA-TORSERVE/releases)
+
+2. **Or build it yourself**:
    ```bash
    cd client
    npm install && npm run build
    npx cap sync
    cd android && ./gradlew assembleDebug
    ```
-2. **Install**: Copy `app-debug.apk` to your TV and install.
+3. **Install**: Copy the built APK to your TV and install it.
 
 ### 🔄 Release Process
 For developers maintaining the project, please refer to the [Release Process Guide](docs/RELEASE_PROCESS.md) for detailed instructions on versioning and publishing updates.

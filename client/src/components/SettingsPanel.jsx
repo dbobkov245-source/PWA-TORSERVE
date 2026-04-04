@@ -282,7 +282,7 @@ const SettingsPanel = ({
                             <section>
                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 block">⚡ Скорость загрузки</label>
                                 <div className="flex gap-2">
-                                    {[{ id: 'eco', name: '🌱 Eco', desc: '20 peers' }, { id: 'balanced', name: '⚖️ Balance', desc: '40 peers' }, { id: 'turbo', name: '🚀 Turbo', desc: '65 peers' }].map(m => (
+                                    {[{ id: 'eco', name: '🌱 Eco', desc: '30 peers' }, { id: 'balanced', name: '⚖️ Balance', desc: '55 peers' }, { id: 'turbo', name: '🚀 Turbo', desc: '100 peers' }].map(m => (
                                         <SpeedButton
                                             key={m.id}
                                             mode={m}

@@ -4,9 +4,13 @@ node_modules
 dist
 db.json
 *.log
+.idea/
+.vscode/
+.claude/
 
 generate_code_doc.py
 *.tar
+.tmp-*
 
 # Private folders (not for public GitHub)
 docs/

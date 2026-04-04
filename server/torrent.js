@@ -1,10 +1,10 @@
-import torrentStream from 'torrent-stream'
 import process from 'process'
 import fs from 'fs'
 import fsPromises from 'fs/promises'
 import path from 'path'
 import { createRequire } from 'module'
 import { db, safeWrite } from './db.js'
+import { getTorrentStream } from './torrentStreamRuntime.js'
 
 // ────────────────────────────────────────────────────────
 // Shared DHT Instance — bootstrap once, reuse across all engines
@@ -34,7 +34,24 @@ try {
     DHTClient = _require(path.join(tsDir, 'node_modules/bittorrent-dht/client'))
 }
 
-const DHT_UDP_PORT = parseInt(process.env.TORRENT_PORT || '6881', 10)
+export function getTorrentUtpEnabled(env = process.env) {
+    const raw = String(env.TORRENT_UTP || '').trim().toLowerCase()
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
+}
+
+export function getTorrentDhtListenPort(env = process.env) {
+    const explicit = parseInt(env.TORRENT_DHT_PORT || '0', 10)
+    if (Number.isFinite(explicit) && explicit > 0) return explicit
+
+    const torrentPort = getTorrentListenPort(env)
+    if (getTorrentUtpEnabled(env) && getTorrentDhtMode(env) === 'shared' && torrentPort > 0) {
+        return torrentPort + 1
+    }
+
+    return torrentPort
+}
+
+const DHT_UDP_PORT = getTorrentDhtListenPort(process.env)
 export const sharedDHT = new DHTClient()
 
 sharedDHT.listen(DHT_UDP_PORT, () => {
@@ -72,6 +89,7 @@ const PUBLIC_TRACKERS = [
 // Metadata bootstrap timeout policy (can be tuned via env without rebuild)
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
+const SAFE_TORRENT_CONNECTIONS = 55
 
 export function getTorrentListenPort(env = process.env) {
     const parsed = parseInt(env.TORRENT_PORT || '0', 10)
@@ -87,16 +105,82 @@ export function getTorrentUploadSlots(env = process.env) {
     return parsed
 }
 
-export function buildTorrentEngineOptions({ path, connections }) {
+export function getTorrentConnections(env = process.env) {
+    const raw = env.TORRENT_CONNECTIONS
+    if (raw === undefined) return SAFE_TORRENT_CONNECTIONS
+
+    const parsed = parseInt(raw, 10)
+    if (!Number.isFinite(parsed) || parsed <= 0) return SAFE_TORRENT_CONNECTIONS
+    return Math.max(parsed, SAFE_TORRENT_CONNECTIONS)
+}
+
+export function getTorrentDhtMode(env = process.env) {
+    const mode = String(env.TORRENT_DHT_MODE || 'shared').trim().toLowerCase()
+    return mode === 'internal' ? 'internal' : 'shared'
+}
+
+export function resolveTorrentDhtOption(env = process.env) {
+    return getTorrentDhtMode(env) === 'internal' ? true : sharedDHT
+}
+
+export function buildTorrentEngineOptions({ path, connections, env = process.env }) {
     return {
         path,
         connections,
-        uploads: getTorrentUploadSlots(),
-        dht: sharedDHT,
+        uploads: getTorrentUploadSlots(env),
+        utp: getTorrentUtpEnabled(env),
+        dht: resolveTorrentDhtOption(env),
         verify: false,
         tracker: true,
         trackers: PUBLIC_TRACKERS,
     }
+}
+
+export function getSwarmPeerSnapshot(swarm) {
+    const wires = swarm?.wires || []
+    const connectedPeers = wires.length
+    const activePeers = wires.filter((wire) => wire?.peerChoking === false).length
+    const knownPeers = Object.keys(swarm?._peers || {}).length
+    const queuedPeers = swarm?.queued || 0
+
+    return {
+        connectedPeers,
+        activePeers,
+        knownPeers,
+        queuedPeers,
+        displayPeers: Math.max(connectedPeers, knownPeers)
+    }
+}
+
+export function getSwarmConnectionLimit(swarm) {
+    const parsed = parseInt(swarm?.size || '0', 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+export function setSwarmConnectionLimit(swarm, connections) {
+    const parsed = parseInt(connections, 10)
+    if (!swarm || !Number.isFinite(parsed) || parsed <= 0) {
+        return getSwarmConnectionLimit(swarm)
+    }
+
+    swarm.size = parsed
+    return parsed
+}
+
+export function recoverSwarm(engine) {
+    if (!engine) return false
+
+    let recovered = false
+    if (engine.discover) {
+        engine.discover()
+        recovered = true
+    }
+    if (engine.swarm?.resume) {
+        engine.swarm.resume()
+        recovered = true
+    }
+
+    return recovered
 }
 
 // ────────────────────────────────────────────────────────
@@ -364,13 +448,14 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
         let engine
         try {
-            // 🔥 STRATEGY 2: Eco Mode (20 connections) by default
+            const torrentStream = getTorrentStream()
+            // Start wide enough to avoid choke-timeout churn on sparse swarms.
             // NOTE: trackers: PUBLIC_TRACKERS is CRITICAL — torrent-stream loads cached
             // .torrent files which have announce=[] (metadata info-dict has no trackers).
             // Only opts.trackers → discovery.announce persists across cache loads.
             engine = torrentStream(enrichedMagnet, buildTorrentEngineOptions({
                 path,
-                connections: 20
+                connections: getTorrentConnections()
             }))
         } catch (err) {
             console.error('[Torrent] Failed to create engine:', err.message)
@@ -749,6 +834,7 @@ const formatEngine = (engine) => {
 
     // Get download speed
     const downloadSpeed = engine.swarm?.downloadSpeed() || 0
+    const peerSnapshot = getSwarmPeerSnapshot(engine.swarm)
 
     // Calculate ETA (seconds remaining)
     let eta = null
@@ -770,7 +856,11 @@ const formatEngine = (engine) => {
         totalSize: totalSize,
         downloadSpeed: downloadSpeed,
         uploadSpeed: engine.swarm?.uploadSpeed() || 0,
-        numPeers: engine.swarm?.wires?.length || 0,
+        numPeers: peerSnapshot.displayPeers,
+        connectedPeers: peerSnapshot.connectedPeers,
+        activePeers: peerSnapshot.activePeers,
+        knownPeers: peerSnapshot.knownPeers,
+        queuedPeers: peerSnapshot.queuedPeers,
         eta: eta, // seconds remaining
         newFilesCount: newFilesCount, // 📺 Watchlist: new episodes since last check
         // 🔥 Memory fix: only include file count, not full array
@@ -868,17 +958,26 @@ export const boostTorrent = (infoHash) => {
         return
     }
 
-    const currentMax = engine.swarm.maxConnections || 0
+    const currentMax = getSwarmConnectionLimit(engine.swarm)
+    const peerSnapshot = getSwarmPeerSnapshot(engine.swarm)
     console.log(`[Turbo] Current connections: ${engine.swarm.wires?.length || 0}/${currentMax}`)
 
-    // If still in Eco Mode (< 65), boost it!
-    if (currentMax < 65) {
-        console.log(`[Turbo] 🚀 Boosting connections for ${infoHash}: ${currentMax} -> 65`)
-        engine.swarm.maxConnections = 65
-        if (engine.discover) engine.discover()
-        engine.swarm.resume()
+    let shouldRecover = false
+    if (currentMax < SPEED_MODES.turbo) {
+        console.log(`[Turbo] 🚀 Boosting connections for ${infoHash}: ${currentMax} -> ${SPEED_MODES.turbo}`)
+        setSwarmConnectionLimit(engine.swarm, SPEED_MODES.turbo)
+        shouldRecover = true
     } else {
         console.log(`[Turbo] Already boosted (${currentMax}), skipping`)
+    }
+
+    if (peerSnapshot.activePeers === 0) {
+        console.log(`[Turbo] ♻️ Recovering stalled swarm for ${infoHash}: ${peerSnapshot.connectedPeers} connected / ${peerSnapshot.knownPeers} known / ${peerSnapshot.activePeers} active`)
+        shouldRecover = true
+    }
+
+    if (shouldRecover) {
+        recoverSwarm(engine)
     }
 }
 
@@ -886,9 +985,9 @@ export const boostTorrent = (infoHash) => {
 // ⚡ Speed Mode: Eco / Balanced / Turbo
 // ────────────────────────────────────────────────────────
 const SPEED_MODES = {
-    eco: 20,
-    balanced: 40,
-    turbo: 65
+    eco: 30,
+    balanced: SAFE_TORRENT_CONNECTIONS,
+    turbo: 100
 }
 
 export const setSpeedMode = (mode) => {
@@ -897,7 +996,7 @@ export const setSpeedMode = (mode) => {
 
     for (const engine of uniqueEngines) {
         if (engine.swarm) {
-            engine.swarm.maxConnections = connections
+            setSwarmConnectionLimit(engine.swarm, connections)
             console.log(`[SpeedMode] Set ${engine.infoHash?.slice(0, 8)} to ${mode} (${connections} connections)`)
         }
     }
@@ -984,7 +1083,7 @@ export const enterDegradedMode = () => {
     const uniqueEngines = new Set(engines.values())
     for (const engine of uniqueEngines) {
         if (engine.swarm) {
-            engine.swarm.maxConnections = 30 // Minimal connections
+            setSwarmConnectionLimit(engine.swarm, SPEED_MODES.eco)
         }
     }
     console.log(`[Degradation] Reduced connections on ${uniqueEngines.size} active torrents`)
@@ -1015,7 +1114,7 @@ export const exitDegradedMode = () => {
     const uniqueEngines = new Set(engines.values())
     for (const engine of uniqueEngines) {
         if (engine.swarm) {
-            engine.swarm.maxConnections = 55 // Balanced mode default
+            setSwarmConnectionLimit(engine.swarm, SPEED_MODES.balanced)
         }
     }
 
