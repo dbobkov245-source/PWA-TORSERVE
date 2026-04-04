@@ -15,7 +15,7 @@ import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules }
 import { parseRange } from './utils/range.js'
 import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
-import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary } from './localLibrary.js'
+import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary, evictLocalLibraryItemByName } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
 import { getAllocatedSizeBytes, shouldServeFileFromDisk } from './streamSource.js'
 import { describeRequestSource } from './requestMeta.js'
@@ -918,10 +918,20 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
                 return res.status(400).json({ error: 'Invalid torrent path' })
             }
 
+            // Remove the matching local-library card immediately so the client
+            // does not need a second delete while file cleanup is still pending.
+            evictLocalLibraryItemByName(torrent.name)
+
             // Fire-and-forget async deletion to avoid blocking the server
             fsPromises.rm(fullPath, { recursive: true, force: true })
-                .then(() => console.log(`[File Hygiene] Successfully removed: ${fullPath}`))
-                .catch(e => console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`))
+                .then(async () => {
+                    console.log(`[File Hygiene] Successfully removed: ${fullPath}`)
+                    await refreshLocalLibrary(true)
+                })
+                .catch(async (e) => {
+                    console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`)
+                    await refreshLocalLibrary(true)
+                })
         }
         res.json({
             success: true,

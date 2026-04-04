@@ -8,6 +8,15 @@ import { getCachedImage, cacheImage } from '../imageCache.js';
 
 const router = express.Router();
 
+export function shouldSkipProxyWrite(res, settled = false) {
+    return Boolean(
+        settled ||
+        res?.headersSent ||
+        res?.writableEnded ||
+        res?.destroyed
+    );
+}
+
 // Allowlist for security (SSRF prevention)
 const ALLOWED_DOMAINS = [
     'api.themoviedb.org',
@@ -37,6 +46,14 @@ router.get('/', async (req, res) => {
     }
 
     try {
+        let settled = false;
+        const shouldSkipWrite = () => shouldSkipProxyWrite(res, settled);
+        const fail = (statusCode, payload) => {
+            if (shouldSkipWrite()) return;
+            settled = true;
+            res.status(statusCode).json(payload);
+        };
+
         const targetUrl = new URL(url);
 
         if (!ALLOWED_DOMAINS.includes(targetUrl.hostname)) {
@@ -83,7 +100,12 @@ router.get('/', async (req, res) => {
 
         const transport = isHttps ? https : http;
         const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
-            res.status(proxyRes.statusCode);
+            if (shouldSkipWrite()) {
+                proxyRes.resume();
+                return;
+            }
+
+            res.status(proxyRes.statusCode || 502);
 
             // Forward allowed headers
             const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
@@ -99,30 +121,45 @@ router.get('/', async (req, res) => {
             if (isImageRequest(url) && proxyRes.statusCode === 200) {
                 const chunks = [];
                 proxyRes.on('data', chunk => chunks.push(chunk));
+                proxyRes.on('error', (err) => {
+                    console.error('[Proxy] Upstream stream error:', err.message, url);
+                    fail(502, { error: 'Proxy stream failed', details: err.message });
+                });
+                proxyRes.on('aborted', () => {
+                    console.error('[Proxy] Upstream aborted:', url);
+                    fail(502, { error: 'Proxy upstream aborted' });
+                });
                 proxyRes.on('end', () => {
+                    if (shouldSkipWrite()) return;
                     const buffer = Buffer.concat(chunks);
                     // Save to cache async (fire-and-forget)
                     cacheImage(url, buffer).catch(() => { });
+                    settled = true;
                     res.end(buffer);
                 });
             } else {
+                proxyRes.on('error', (err) => {
+                    console.error('[Proxy] Pipe error:', err.message, url);
+                    fail(502, { error: 'Proxy stream failed', details: err.message });
+                });
                 proxyRes.pipe(res);
             }
         });
 
         proxyReq.on('error', (err) => {
             console.error('[Proxy] Request Error:', err.message, url);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'Proxy request failed', details: err.message });
-            }
+            fail(502, { error: 'Proxy request failed', details: err.message });
         });
 
         proxyReq.on('timeout', () => {
             console.error('[Proxy] Timeout:', url);
             proxyReq.destroy();
-            if (!res.headersSent) {
-                res.status(504).json({ error: 'Proxy timeout' });
-            }
+            fail(504, { error: 'Proxy timeout' });
+        });
+
+        res.on('close', () => {
+            settled = true;
+            try { proxyReq.destroy(); } catch (_) { /* ignore */ }
         });
 
         proxyReq.end();

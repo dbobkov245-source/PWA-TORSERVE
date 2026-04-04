@@ -22,19 +22,6 @@ function normalizeLibraryName(name = '') {
     return String(name).trim().toLowerCase()
 }
 
-function hasPlayableVideoFiles(item) {
-    if (!Array.isArray(item?.files) || item.files.length === 0) return false
-    return item.isReady === true || Number(item?.progress || 0) >= 0.99
-}
-
-function shouldPreferLocalItem(torrentItem, localItem) {
-    const localPlayable = hasPlayableVideoFiles(localItem)
-    if (!localPlayable) return false
-
-    const torrentPlayable = hasPlayableVideoFiles(torrentItem)
-    return !torrentPlayable
-}
-
 function getDownloadPath() {
     return path.resolve(process.env.DOWNLOAD_PATH || './downloads')
 }
@@ -190,27 +177,23 @@ export function getLocalLibrarySnapshot() {
     return cache.items
 }
 
+export function evictLocalLibraryItemByName(name) {
+    const normalizedName = normalizeLibraryName(name)
+    if (!normalizedName) return false
+
+    const nextItems = cache.items.filter(item => normalizeLibraryName(item?.name) !== normalizedName)
+    if (nextItems.length === cache.items.length) return false
+
+    cache.items = nextItems
+    cache.byHash = new Map(nextItems.map(item => [item.infoHash, item]))
+    cache.scannedAt = Date.now()
+    return true
+}
+
 export function mergeTorrentAndLocalLibrary(torrents = [], localItems = []) {
     const merged = []
-    const usedLocalHashes = new Set()
-    const localByName = new Map()
-
-    for (const item of localItems) {
-        const normalizedName = normalizeLibraryName(item?.name)
-        if (!normalizedName || localByName.has(normalizedName)) continue
-        localByName.set(normalizedName, item)
-    }
 
     for (const torrent of torrents) {
-        const normalizedName = normalizeLibraryName(torrent?.name)
-        const localMatch = normalizedName ? localByName.get(normalizedName) : null
-
-        if (localMatch && shouldPreferLocalItem(torrent, localMatch)) {
-            merged.push(localMatch)
-            usedLocalHashes.add(localMatch.infoHash)
-            continue
-        }
-
         merged.push(torrent)
     }
 
@@ -224,7 +207,6 @@ export function mergeTorrentAndLocalLibrary(torrents = [], localItems = []) {
     for (const item of localItems) {
         const normalizedName = normalizeLibraryName(item?.name)
         if (seenHashes.has(item.infoHash)) continue
-        if (usedLocalHashes.has(item.infoHash)) continue
         if (normalizedName && seenNames.has(normalizedName)) continue
 
         merged.push(item)

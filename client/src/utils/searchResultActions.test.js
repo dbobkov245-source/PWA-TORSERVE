@@ -99,4 +99,12 @@ describe('verifySearchResultBeforeAdd', () => {
             playabilityStatus: 'unchecked'
         }, 'magnet:?xt=urn:btih:dead', vi.fn(async () => ({ status: 'dead', peers: 0 })))).rejects.toThrow('Торрент сейчас недоступен')
     })
+
+    it('rejects restricted bare magnets when the live probe cannot prove playback', async () => {
+        await expect(verifySearchResultBeforeAdd({
+            playabilityStatus: 'unchecked',
+            tracker: 'nnmclub, kinozal',
+            magnet: 'magnet:?xt=urn:btih:3B3D300F79252A6BD9C8E9548EFABC136815F935'
+        }, 'magnet:?xt=urn:btih:3B3D300F79252A6BD9C8E9548EFABC136815F935', vi.fn(async () => ({ status: 'risky', peers: 0 })))).rejects.toThrow('без announce-адресов')
+    })
 })

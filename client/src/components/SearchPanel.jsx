@@ -33,6 +33,7 @@ const getPlayabilityMeta = (status, preflightPeers) => {
     switch (status) {
         case 'playable': return { icon: '🟢', label: preflightPeers > 0 ? `live ${preflightPeers}` : 'live' }
         case 'risky': return { icon: '🟡', label: preflightPeers > 0 ? `risky ${preflightPeers}` : 'risky' }
+        case 'stalled': return { icon: '🟠', label: preflightPeers > 0 ? `stalled ${preflightPeers}` : 'stalled' }
         case 'dead': return { icon: '🔴', label: 'dead' }
         case 'unchecked': return { icon: '⚪', label: 'unchecked' }
         default: return { icon: '⚪', label: 'unknown' }
@@ -155,10 +156,11 @@ const SearchPanel = ({
                     const statusRank = (item) => {
                         const s = item?.playabilityStatus
                         const peers = item?.preflight?.peers || 0
-                        if (s === 'playable') return 4
-                        if (s === 'risky') return peers > 0 ? 3 : 1
-                        if (s === 'unchecked') return 2
-                        if (s === 'unknown') return 1
+                        if (s === 'playable') return 5
+                        if (s === 'risky') return peers > 0 ? 4 : 2
+                        if (s === 'unchecked') return 3
+                        if (s === 'unknown') return 2
+                        if (s === 'stalled') return 1
                         return 0 // dead
                     }
 

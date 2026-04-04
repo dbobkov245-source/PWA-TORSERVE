@@ -71,4 +71,24 @@ describe('TorrentModal delete confirmation', () => {
 
         expect(onDelete).toHaveBeenCalledWith('abc123')
     })
+
+    it('opens delete confirmation immediately without waiting for the interaction unlock timer', () => {
+        render(
+            <TorrentModal
+                torrent={{
+                    infoHash: 'abc123',
+                    name: 'Test Torrent',
+                    files: [{ index: 0, name: 'Episode 1.mkv', length: 1024 }]
+                }}
+                onClose={() => {}}
+                onPlay={() => {}}
+                onPlayAll={() => {}}
+                onCopyUrl={() => {}}
+                onDelete={vi.fn(async () => {})}
+            />
+        )
+
+        fireEvent.click(screen.getByRole('button', { name: '🗑 Delete' }))
+        expect(screen.getByText('Удалить торрент?')).toBeTruthy()
+    })
 })

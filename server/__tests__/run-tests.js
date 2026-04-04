@@ -23,6 +23,7 @@ await import('./file-path.test.js')
 await import('./db-torrent-delete.test.js')
 await import('./search-magnet.test.js')
 await import('./magnet-preflight.test.js')
+await import('./proxy.test.js')
 
 // Run all registered tests
 await runTests()

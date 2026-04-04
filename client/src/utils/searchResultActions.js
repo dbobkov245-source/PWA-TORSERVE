@@ -1,3 +1,5 @@
+import { isRestrictedTrackerCandidate } from './trackerAccess.js'
+
 export function getSearchResultActionKey(item) {
     if (item?.magnet) return item.magnet
     if (item?.provider && item?.id) return `${item.provider}:${item.id}`
@@ -46,6 +48,12 @@ export async function verifySearchResultBeforeAdd(item, magnet, probeJson) {
 
     if (probeStatus === 'dead') {
         throw new Error('Торрент сейчас недоступен: у магнита нет активных пиров')
+    }
+    if (probeStatus === 'stalled') {
+        throw new Error('Торрент отвечает, но не отдаёт данные: пиры есть, полезная раздача не начинается')
+    }
+    if (isRestrictedTrackerCandidate(item) && probeStatus !== 'playable') {
+        throw new Error('Индекс показывает сиды закрытого трекера, но магнит пришёл без announce-адресов. Этот релиз в PWA-TorServe, вероятно, не скачивается')
     }
 
     return {

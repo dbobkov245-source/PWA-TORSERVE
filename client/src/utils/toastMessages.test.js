@@ -24,4 +24,10 @@ describe('getAddToastMessage', () => {
         expect(result.type).toBe('error')
         expect(result.message).toContain('мёртв')
     })
+    it('returns error for stalled', () => {
+        const result = getAddToastMessage('stalled')
+        expect(result).not.toBeNull()
+        expect(result.type).toBe('error')
+        expect(result.message).toContain('данные')
+    })
 })
