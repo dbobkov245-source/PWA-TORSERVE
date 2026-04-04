@@ -31,6 +31,18 @@ const RECOVERY_TIMEOUT = 5 * 60000 // 5 minutes before retry
 const circuitBreakers = new Map() // provider -> { failures, openedAt }
 const providerDiagnostics = new Map()
 
+export function selectSearchProviders(providers, {
+    isCircuitOpen: isCircuitOpenFn = isCircuitOpen,
+    allowCircuitProbeOnExhaustion = true
+} = {}) {
+    const available = providers.filter((provider) => !isCircuitOpenFn(provider.name))
+    if (available.length > 0) {
+        return available
+    }
+
+    return allowCircuitProbeOnExhaustion ? providers : []
+}
+
 function getDiagnosticsState(providerName) {
     if (!providerDiagnostics.has(providerName)) {
         providerDiagnostics.set(providerName, {
@@ -146,12 +158,21 @@ export async function search(query, options = {}) {
         }
     }
 
-    const providers = providerManager.getEnabled()
-        .filter(p => !isCircuitOpen(p.name))
+    const enabledProviders = providerManager.getEnabled()
+    const providers = selectSearchProviders(enabledProviders, {
+        allowCircuitProbeOnExhaustion: !options.background
+    })
 
     if (providers.length === 0) {
         log.warn('No available providers')
         return { results: [], errors: ['No available providers'], providers: {}, cached: false }
+    }
+
+    if (enabledProviders.length > 0 && providers.length === enabledProviders.length && providers.every((provider) => isCircuitOpen(provider.name))) {
+        log.warn('All enabled providers are circuit-open; probing anyway for interactive search', {
+            query,
+            providers: providers.map((provider) => provider.name)
+        })
     }
 
     log.info('🔍 Aggregated search', { query, providersCount: providers.length })
