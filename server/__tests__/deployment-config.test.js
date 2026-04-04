@@ -31,6 +31,11 @@ test('synology compose keeps torrent networking reachable', () => {
 
     if (usesHostMode) {
         expect(synologyCompose).toContain('TORRENT_PORT=6881')
+        expect(synologyCompose).toContain('TORRENT_DHT_PORT=6882')
+        expect(synologyCompose).toContain('TORRENT_UTP=0')
+        expect(synologyCompose).toContain('TORRENT_DHT_MODE=internal')
+        expect(synologyCompose).toContain('TORRENT_CONNECTIONS=55')
+        expect(synologyCompose).toContain('TORRENT_MAX_REQUESTS=32')
         return
     }
 

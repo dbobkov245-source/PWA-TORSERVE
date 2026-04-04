@@ -42,6 +42,10 @@ test('serializeStatusItems preserves the public /api/status payload shape', asyn
         totalSize: 1000,
         downloadSpeed: 128,
         numPeers: 7,
+        connectedPeers: 2,
+        activePeers: 1,
+        knownPeers: 7,
+        queuedPeers: 5,
         eta: 4,
         files: [{
             name: 'video.mkv',
@@ -60,6 +64,10 @@ test('serializeStatusItems preserves the public /api/status payload shape', asyn
         totalSize: 1000,
         downloadSpeed: 128,
         numPeers: 7,
+        connectedPeers: 2,
+        activePeers: 1,
+        knownPeers: 7,
+        queuedPeers: 5,
         eta: 4,
         files: [{
             name: 'video.mkv',

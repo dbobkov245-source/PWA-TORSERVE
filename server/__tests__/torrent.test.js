@@ -88,12 +88,14 @@ test('buildTorrentEngineOptions keeps discovery config aligned across torrent en
 
     const options = buildTorrentEngineOptions({
         path: '/tmp/test-downloads',
-        connections: 12
+        connections: 12,
+        env: { TORRENT_DHT_MODE: 'shared' }
     })
 
     expect(options.path).toBe('/tmp/test-downloads')
     expect(options.connections).toBe(12)
     expect(options.uploads).toBe(10)
+    expect(options.utp).toBe(false)
     expect(options.verify).toBe(false)
     expect(options.tracker).toBe(true)
     expect(options.dht).toBe(sharedDHT)
@@ -101,12 +103,46 @@ test('buildTorrentEngineOptions keeps discovery config aligned across torrent en
     expect(options.trackers.length).toBeGreaterThan(0)
 })
 
+test('buildTorrentEngineOptions can switch to internal DHT mode for host-network deployments', async () => {
+    const { buildTorrentEngineOptions } = await import('../torrent.js')
+
+    const options = buildTorrentEngineOptions({
+        path: '/tmp/test-downloads',
+        connections: 30,
+        env: { TORRENT_DHT_MODE: 'internal' }
+    })
+
+    expect(options.path).toBe('/tmp/test-downloads')
+    expect(options.connections).toBe(30)
+    expect(options.utp).toBe(false)
+    expect(options.dht).toBe(true)
+})
+
+test('buildTorrentEngineOptions can enable uTP without changing the shared-DHT contract', async () => {
+    const { buildTorrentEngineOptions } = await import('../torrent.js')
+
+    const options = buildTorrentEngineOptions({
+        path: '/tmp/test-downloads',
+        connections: 55,
+        env: { TORRENT_UTP: '1', TORRENT_DHT_MODE: 'shared' }
+    })
+
+    expect(options.utp).toBe(true)
+    expect(options.dht).toBeTruthy()
+})
+
 test('getTorrentListenPort returns the configured fixed port for every engine', async () => {
-    const { getTorrentListenPort } = await import('../torrent.js')
+    const { getTorrentListenPort, getTorrentDhtListenPort, getTorrentUtpEnabled } = await import('../torrent.js')
 
     expect(getTorrentListenPort({ TORRENT_PORT: '6881' })).toBe(6881)
     expect(getTorrentListenPort({ TORRENT_PORT: '6881' })).toBe(6881)
     expect(getTorrentListenPort({ TORRENT_PORT: '0' })).toBe(0)
+    expect(getTorrentUtpEnabled({ TORRENT_UTP: '1' })).toBe(true)
+    expect(getTorrentUtpEnabled({ TORRENT_UTP: 'true' })).toBe(true)
+    expect(getTorrentUtpEnabled({})).toBe(false)
+    expect(getTorrentDhtListenPort({ TORRENT_PORT: '6881' })).toBe(6881)
+    expect(getTorrentDhtListenPort({ TORRENT_PORT: '6881', TORRENT_UTP: '1', TORRENT_DHT_MODE: 'shared' })).toBe(6882)
+    expect(getTorrentDhtListenPort({ TORRENT_PORT: '6881', TORRENT_DHT_PORT: '6999', TORRENT_UTP: '1', TORRENT_DHT_MODE: 'shared' })).toBe(6999)
 })
 
 test('getTorrentUploadSlots uses protocol-friendly default and respects env override', async () => {
@@ -115,6 +151,78 @@ test('getTorrentUploadSlots uses protocol-friendly default and respects env over
     expect(getTorrentUploadSlots({})).toBe(10)
     expect(getTorrentUploadSlots({ TORRENT_UPLOAD_SLOTS: '12' })).toBe(12)
     expect(getTorrentUploadSlots({ TORRENT_UPLOAD_SLOTS: '0' })).toBe(0)
+})
+
+test('getTorrentConnections uses a safe startup floor and respects higher overrides', async () => {
+    const { getTorrentConnections } = await import('../torrent.js')
+
+    expect(getTorrentConnections({})).toBe(55)
+    expect(getTorrentConnections({ TORRENT_CONNECTIONS: '30' })).toBe(55)
+    expect(getTorrentConnections({ TORRENT_CONNECTIONS: '65' })).toBe(65)
+    expect(getTorrentConnections({ TORRENT_CONNECTIONS: 'bad' })).toBe(55)
+})
+
+test('swarm connection limit helpers use swarm.size rather than phantom maxConnections', async () => {
+    const { getSwarmConnectionLimit, setSwarmConnectionLimit } = await import('../torrent.js')
+
+    const swarm = { size: 20, maxConnections: 999 }
+
+    expect(getSwarmConnectionLimit(swarm)).toBe(20)
+    expect(setSwarmConnectionLimit(swarm, 65)).toBe(65)
+    expect(swarm.size).toBe(65)
+    expect(swarm.maxConnections).toBe(999)
+})
+
+test('torrent runtime no longer writes to phantom swarm.maxConnections', async () => {
+    const fs = await import('fs')
+    const path = await import('path')
+    const { fileURLToPath } = await import('url')
+
+    const thisFile = fileURLToPath(import.meta.url)
+    const testsDir = path.dirname(thisFile)
+    const source = fs.readFileSync(path.join(testsDir, '../torrent.js'), 'utf8')
+
+    expect(source).not.toContain('swarm.maxConnections =')
+})
+
+test('recoverSwarm kicks discovery and resumes the swarm when recovery is needed', async () => {
+    const { recoverSwarm } = await import('../torrent.js')
+
+    let discoverCalls = 0
+    let resumeCalls = 0
+    const engine = {
+        discover: () => { discoverCalls += 1 },
+        swarm: {
+            resume: () => { resumeCalls += 1 }
+        }
+    }
+
+    expect(recoverSwarm(engine)).toBe(true)
+    expect(discoverCalls).toBe(1)
+    expect(resumeCalls).toBe(1)
+})
+
+test('getSwarmPeerSnapshot exposes connected, active and known peer counts for status UI', async () => {
+    const { getSwarmPeerSnapshot } = await import('../torrent.js')
+
+    const snapshot = getSwarmPeerSnapshot({
+        wires: [{ peerChoking: false }, { peerChoking: true }],
+        queued: 4,
+        _peers: {
+            '1.1.1.1:1111': {},
+            '2.2.2.2:2222': {},
+            '3.3.3.3:3333': {},
+            '4.4.4.4:4444': {},
+        }
+    })
+
+    expect(snapshot).toEqual({
+        connectedPeers: 2,
+        activePeers: 1,
+        knownPeers: 4,
+        queuedPeers: 4,
+        displayPeers: 4
+    })
 })
 
 test('status cache ttl uses env override with a safe default', async () => {

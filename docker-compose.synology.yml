@@ -18,6 +18,17 @@ services:
       - DB_PATH=/app/data/db.json
       # 🔌 FIX: Port announced to trackers/DHT for inbound connections
       - TORRENT_PORT=6881
+      # Shared DHT must not fight with uTP for the same UDP socket.
+      - TORRENT_DHT_PORT=6882
+      # Keep uTP off on Synology for now: peer-wire-swarm prefers uTP first
+      # and current fallback behavior regresses throughput on these swarms.
+      - TORRENT_UTP=0
+      # Host network on Synology does not need the shared-DHT workaround used for bridge mode.
+      - TORRENT_DHT_MODE=internal
+      # Keep the startup swarm wide enough to avoid torrent-stream choke-timeout churn.
+      - TORRENT_CONNECTIONS=55
+      # Deeper request pipeline materially improves throughput for large sparse swarms.
+      - TORRENT_MAX_REQUESTS=32
       # NAS tuning: keep preflight ranking, but probe fewer magnets at once.
       - PREFLIGHT_TOP_N=4
       - PREFLIGHT_CONCURRENCY=2
