@@ -73,13 +73,31 @@ const PUBLIC_TRACKERS = [
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
 
-// Torrent TCP listen port — must match docker-compose port mapping
-// Set TORRENT_PORT=6881 in env and expose 6881:6881/tcp in docker-compose
-// Without a real listen port, peers cannot make inbound connections to us.
-const TORRENT_LISTEN_PORT = parseInt(process.env.TORRENT_PORT || '0', 10)
-// 0 = OS picks a random ephemeral port (no-listen fallback; outbound-only mode)
-// Only the FIRST engine claims the fixed port; subsequent engines get port=0.
-let fixedPortClaimed = false
+export function getTorrentListenPort(env = process.env) {
+    const parsed = parseInt(env.TORRENT_PORT || '0', 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+export function getTorrentUploadSlots(env = process.env) {
+    const raw = env.TORRENT_UPLOAD_SLOTS
+    if (raw === undefined) return 10
+
+    const parsed = parseInt(raw, 10)
+    if (!Number.isFinite(parsed) || parsed < 0) return 10
+    return parsed
+}
+
+export function buildTorrentEngineOptions({ path, connections }) {
+    return {
+        path,
+        connections,
+        uploads: getTorrentUploadSlots(),
+        dht: sharedDHT,
+        verify: false,
+        tracker: true,
+        trackers: PUBLIC_TRACKERS,
+    }
+}
 
 // ────────────────────────────────────────────────────────
 // Keep-Alive: Frozen torrents for instant resume (5 min TTL)
@@ -350,29 +368,18 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             // NOTE: trackers: PUBLIC_TRACKERS is CRITICAL — torrent-stream loads cached
             // .torrent files which have announce=[] (metadata info-dict has no trackers).
             // Only opts.trackers → discovery.announce persists across cache loads.
-            engine = torrentStream(enrichedMagnet, {
-                path: path,
-                connections: 20,       // Eco Mode: RAM-safe limit
-                uploads: 0,
-                dht: sharedDHT,        // ✅ Shared DHT — pre-bootstrapped, fixed UDP port
-                verify: false,
-                tracker: true,
-                trackers: PUBLIC_TRACKERS, // ✅ CRITICAL: survives .torrent cache reload
-            })
+            engine = torrentStream(enrichedMagnet, buildTorrentEngineOptions({
+                path,
+                connections: 20
+            }))
         } catch (err) {
             console.error('[Torrent] Failed to create engine:', err.message)
             return reject(err)
         }
 
-        // 🔌 FIX: Open inbound TCP socket so remote peers can connect back to us.
-        // Without listen(), torrent-stream announces port 6881 to trackers/DHT but
-        // no real socket is bound → inbound connections are silently dropped.
-        // Only the first engine claims the fixed TORRENT_PORT; subsequent engines
-        // get port=0 so they don't crash with "port already in use".
-        const claimingFixedPort = (!fixedPortClaimed && TORRENT_LISTEN_PORT > 0)
-        if (claimingFixedPort) fixedPortClaimed = true
-        const listenPort = claimingFixedPort ? TORRENT_LISTEN_PORT : 0
-        engine._holdsFixedPort = claimingFixedPort
+        // peer-wire-swarm pools multiple infoHashes behind one listening port,
+        // so every engine should reuse the mapped TORRENT_PORT for inbound peers.
+        const listenPort = getTorrentListenPort()
         engine.listen(listenPort, () => {
             console.log(`[Torrent] Listening on port ${engine.port} (inbound TCP enabled)`)
         })
@@ -442,7 +449,6 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }
 
             console.error('[Torrent] Engine error:', err.message)
-            if (engine._holdsFixedPort) fixedPortClaimed = false
             engine.destroy()
             reject(err)
         })
@@ -511,9 +517,6 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
             break
         }
     }
-
-    // Release fixed port claim so next engine can claim 6881
-    if (engine._holdsFixedPort) fixedPortClaimed = false
 
     // Remove from active map
     engines.delete(infoHash)
@@ -631,6 +634,24 @@ export function evictDiskCacheOldestEntry(cache, maxSize) {
     }
 }
 
+export function resolveDisplayedDownloaded({
+    wasCompleted,
+    totalSize,
+    diskDownloaded,
+    swarmDownloaded,
+    resumeBaseline = 0
+}) {
+    if (wasCompleted) {
+        return totalSize
+    }
+
+    const diskBytes = Number.isFinite(diskDownloaded) ? diskDownloaded : 0
+    const swarmBytes = Number.isFinite(swarmDownloaded) ? swarmDownloaded : 0
+    const baselineBytes = Number.isFinite(resumeBaseline) ? resumeBaseline : 0
+
+    return Math.max(diskBytes, baselineBytes + swarmBytes)
+}
+
 // Non-blocking: returns cached value, schedules background update
 function getDownloadedFromDisk(engine) {
     const infoHash = engine.infoHash
@@ -704,18 +725,17 @@ const formatEngine = (engine) => {
     // 🔥 Check if already marked as completed in DB (survives restart)
     const wasCompleted = isTorrentCompleted(engine.infoHash)
 
-    // Determine downloaded bytes:
-    // 1. If marked completed in DB → use totalSize
-    // 2. If swarm has data → use swarm (active download)
-    // 3. Otherwise → use disk (restart scenario, partial download)
-    let downloaded
-    if (wasCompleted) {
-        downloaded = totalSize
-    } else if (swarmDownloaded > 0) {
-        downloaded = swarmDownloaded
-    } else {
-        downloaded = diskDownloaded
+    if (!Number.isFinite(engine._resumeDownloadedBaseline) && (diskDownloaded > 0 || swarmDownloaded > 0)) {
+        engine._resumeDownloadedBaseline = Math.max(diskDownloaded - swarmDownloaded, 0)
     }
+
+    const downloaded = resolveDisplayedDownloaded({
+        wasCompleted,
+        totalSize,
+        diskDownloaded,
+        swarmDownloaded,
+        resumeBaseline: engine._resumeDownloadedBaseline
+    })
 
     // Calculate progress (0-1)
     const progress = totalSize > 0 ? Math.min(downloaded / totalSize, 1) : 0

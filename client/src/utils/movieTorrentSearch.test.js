@@ -76,13 +76,13 @@ describe('buildMovieTorrentQueries', () => {
 })
 
 describe('shouldStopMovieTorrentPreload', () => {
-    it('stops when there are enough total results', () => {
+    it('does not stop on many empty results without viable candidates', () => {
         const items = Array.from({ length: 5 }, (_, index) => ({
             id: `result-${index}`,
             seeders: 0
         }))
 
-        expect(shouldStopMovieTorrentPreload(items)).toBe(true)
+        expect(shouldStopMovieTorrentPreload(items)).toBe(false)
     })
 
     it('stops when there are at least two seeded results', () => {
@@ -100,6 +100,17 @@ describe('shouldStopMovieTorrentPreload', () => {
             { id: 'b', seeders: 0 },
             { id: 'c', seeders: 0 }
         ]
+
+        expect(shouldStopMovieTorrentPreload(items)).toBe(false)
+    })
+
+    it('does not stop on bare private-tracker results with index seeders only', () => {
+        const items = Array.from({ length: 5 }, (_, index) => ({
+            id: `restricted-${index}`,
+            seeders: 50 - index,
+            tracker: 'nnmclub, kinozal',
+            magnet: `magnet:?xt=urn:btih:${String(index + 1).repeat(40)}`
+        }))
 
         expect(shouldStopMovieTorrentPreload(items)).toBe(false)
     })

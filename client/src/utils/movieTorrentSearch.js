@@ -1,4 +1,5 @@
 import { getYear } from './discover.js'
+import { isLikelyAccessibleCandidate } from './trackerAccess.js'
 
 function getMediaType(item) {
     return item?.media_type === 'tv' || item?.name || item?.original_name ? 'tv' : 'movie'
@@ -62,8 +63,8 @@ export function buildMovieTorrentQueries(item) {
 }
 
 export function shouldStopMovieTorrentPreload(items = []) {
-    const seededCount = items.filter((item) => (item?.seeders || 0) > 0).length
-    return items.length >= 5 || seededCount >= 2
+    const accessibleCount = items.filter(isLikelyAccessibleCandidate).length
+    return accessibleCount >= 2
 }
 
 export function getMovieTorrentSummary(items = []) {
@@ -76,7 +77,9 @@ export function getMovieTorrentSummary(items = []) {
         }
     }
 
-    const bestItem = [...items].sort((a, b) => (b?.seeders || 0) - (a?.seeders || 0))[0]
+    const accessibleItems = items.filter(isLikelyAccessibleCandidate)
+    const rankingPool = accessibleItems.length > 0 ? accessibleItems : items
+    const bestItem = [...rankingPool].sort((a, b) => (b?.seeders || 0) - (a?.seeders || 0))[0]
     const bestSeeders = bestItem?.seeders || 0
     const bestQuality = getTopQualityTag(bestItem?.tags || [])
     const label = bestQuality

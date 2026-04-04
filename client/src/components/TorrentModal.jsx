@@ -126,7 +126,7 @@ const TorrentModal = ({
     const hasMoreEpisodes = mainList.length > INITIAL_EPISODES && !episodesExpanded
 
     const handleDeleteRequest = () => {
-        if (!allowInteraction || deletePending) return
+        if (deletePending) return
         setShowDeleteConfirm(true)
     }
 

@@ -10,32 +10,45 @@
 
 import torrentStream from 'torrent-stream'
 import { logger } from './utils/logger.js'
+import { buildTorrentEngineOptions } from './torrent.js'
 
 const log = logger.child('Preflight')
 
 // --- Configuration ---
 const PROBE_TIMEOUT_MS = parseInt(process.env.PREFLIGHT_TIMEOUT_MS || '8000', 10)
+const READY_DATA_TIMEOUT_MS = parseInt(process.env.PREFLIGHT_READY_DATA_TIMEOUT_MS || '2000', 10)
 const MAX_CONCURRENCY = parseInt(process.env.PREFLIGHT_CONCURRENCY || '3', 10)
 const TOP_N = parseInt(process.env.PREFLIGHT_TOP_N || '8', 10)
 const PREFLIGHT_TOTAL_BUDGET_MS = parseInt(process.env.PREFLIGHT_TOTAL_BUDGET_MS || '3000', 10)
 const CACHE_TTL_MS = parseInt(process.env.PREFLIGHT_CACHE_TTL_MS || '60000', 10) // default 60s
 
-// Same public trackers as torrent.js for consistency
-const PUBLIC_TRACKERS = [
-    'udp://tracker.opentrackr.org:1337/announce',
-    'udp://open.stealth.si:80/announce',
-    'udp://tracker.torrent.eu.org:451/announce',
-    'udp://tracker.tiny-vps.com:6969/announce',
-    'udp://tracker.cyberia.is:6969/announce',
-    'udp://tracker.moeking.me:6969/announce',
-    'udp://p4p.arenabg.com:1337/announce',
-    'udp://explodie.org:6969/announce',
-    'http://tracker.gbitt.info:80/announce'
-]
-
 // --- Preflight cache ---
 const preflightCache = new Map() // infoHash -> { status, peers, checkedAt, durationMs }
 const MAX_CACHE_SIZE = 200
+
+export function getProbeTimeoutStatus(peers = 0) {
+    return peers > 0 ? 'playable' : 'unchecked'
+}
+
+export function getReadyProbeStatus({ downloaded = 0, speed = 0, peers = 0 } = {}) {
+    if (downloaded > 0 || speed > 0) return 'playable'
+    if (peers > 0) return 'stalled'
+    return 'risky'
+}
+
+function magnetHasExplicitTrackers(magnet) {
+    return typeof magnet === 'string' && /(?:\?|&)tr=/i.test(magnet)
+}
+
+function trackerLabelSuggestsRestrictedSwarm(trackerLabel = '') {
+    return /(?:^|[\s,])(kinozal|nnmclub|rutracker)(?:$|[\s,])/i.test(trackerLabel)
+}
+
+function getTrackerAccessPenalty(result) {
+    if (!result?.magnet || magnetHasExplicitTrackers(result.magnet)) return 0
+    if (!trackerLabelSuggestsRestrictedSwarm(result.tracker || '')) return 0
+    return 120
+}
 
 function getCached(infoHash) {
     const entry = preflightCache.get(infoHash)
@@ -70,16 +83,6 @@ function extractInfoHash(magnet) {
     return null
 }
 
-// --- Enrich magnet with public trackers ---
-function enrichMagnet(magnet) {
-    if (!magnet || !magnet.startsWith('magnet:?')) return magnet
-    const extra = PUBLIC_TRACKERS
-        .filter(tr => !magnet.includes(encodeURIComponent(tr)))
-        .map(tr => `&tr=${encodeURIComponent(tr)}`)
-        .join('')
-    return magnet + extra
-}
-
 /**
  * Probe a single magnet for peer availability
  * @param {string} magnet - Magnet URI
@@ -88,73 +91,79 @@ function enrichMagnet(magnet) {
 export function probeMagnet(magnet) {
     return new Promise((resolve) => {
         const start = Date.now()
-        const enriched = enrichMagnet(magnet)
 
         let engine
         let resolved = false
+        let timeoutId = null
+        let readyWindowId = null
+        let readyPollId = null
 
         function finish(status, peers) {
             if (resolved) return
             resolved = true
+            if (timeoutId) clearTimeout(timeoutId)
+            if (readyWindowId) clearTimeout(readyWindowId)
+            if (readyPollId) clearInterval(readyPollId)
             const durationMs = Date.now() - start
             try { engine?.destroy() } catch (_) { /* ignore */ }
             resolve({ status, peers, durationMs })
         }
 
         try {
-            engine = torrentStream(enriched, {
-                path: '/tmp/preflight-probe', // Temp, no real download
-                connections: 10,              // Lightweight
-                uploads: 0,
-                dht: true,
-                verify: false,
-                tracker: true
-            })
+            engine = torrentStream(magnet, buildTorrentEngineOptions({
+                path: '/tmp/preflight-probe',
+                connections: 10
+            }))
         } catch (err) {
             log.debug('Engine create failed', { error: err.message })
             return finish('dead', 0)
         }
 
         // Timeout
-        const timeoutId = setTimeout(() => {
+        timeoutId = setTimeout(() => {
             const peers = engine?.swarm?.wires?.length || 0
-            if (peers > 0) {
-                finish('playable', peers)
-            } else {
-                finish('dead', 0)
-            }
+            finish(getProbeTimeoutStatus(peers), peers)
         }, PROBE_TIMEOUT_MS)
 
-        // On ready (metadata received = good sign, but check peers)
+        // On ready: metadata is not enough, require a short data-transfer proof.
         engine.on('ready', () => {
-            clearTimeout(timeoutId)
-            const peers = engine.swarm?.wires?.length || 0
-            log.debug('Probe ready', { magnet: magnet.slice(0, 40), peers }) // Log ready state
-            if (peers > 0) {
-                finish('playable', peers)
-            } else {
-                // Metadata received but no download peers yet — risky
-                finish('risky', 0)
-            }
-        })
+            if (timeoutId) clearTimeout(timeoutId)
 
-        // Check periodically for early peer detection
-        const checkInterval = setInterval(() => {
-            if (resolved) {
-                clearInterval(checkInterval)
+            const firstFile = engine.files?.find(file => file?.length > 0) || engine.files?.[0]
+            if (firstFile) firstFile.select()
+
+            const getSnapshot = () => ({
+                downloaded: engine?.swarm?.downloaded || 0,
+                speed: engine?.swarm?.downloadSpeed?.() || 0,
+                peers: engine?.swarm?.wires?.length || 0
+            })
+
+            const readySnapshot = getSnapshot()
+            log.debug('Probe ready', {
+                magnet: magnet.slice(0, 40),
+                peers: readySnapshot.peers,
+                downloaded: readySnapshot.downloaded
+            })
+
+            if (readySnapshot.downloaded > 0 || readySnapshot.speed > 0) {
+                finish('playable', readySnapshot.peers)
                 return
             }
-            const peers = engine?.swarm?.wires?.length || 0
-            if (peers >= 2) {
-                clearTimeout(timeoutId)
-                clearInterval(checkInterval)
-                finish('playable', peers)
-            }
-        }, 1500)
+
+            readyPollId = setInterval(() => {
+                const snapshot = getSnapshot()
+                if (snapshot.downloaded > 0 || snapshot.speed > 0) {
+                    finish('playable', snapshot.peers)
+                }
+            }, 250)
+
+            readyWindowId = setTimeout(() => {
+                const snapshot = getSnapshot()
+                finish(getReadyProbeStatus(snapshot), snapshot.peers)
+            }, READY_DATA_TIMEOUT_MS)
+        })
 
         engine.on('error', () => {
-            clearTimeout(timeoutId)
-            clearInterval(checkInterval)
             finish('dead', 0)
         })
     })
@@ -333,6 +342,7 @@ function calcScore(result, probe) {
         // risky with 0 peers is often stale index data; rank below unchecked
         score += (probe?.peers || 0) > 0 ? 450 : 120
     }
+    else if (probe?.status === 'stalled') score += 50
     else if (probe?.status === 'dead') score += 0
     else score += 200 // unchecked — neutral
 
@@ -351,6 +361,8 @@ function calcScore(result, probe) {
     const sizeGB = (result.sizeBytes || 0) / (1024 ** 3)
     if (sizeGB >= 5) score += 30   // 4K-sized
     else if (sizeGB >= 1) score += 15
+
+    score -= getTrackerAccessPenalty(result)
 
     return score
 }

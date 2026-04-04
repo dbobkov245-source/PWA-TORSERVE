@@ -82,6 +82,41 @@ test('metadata timeout policy: connected peers should get grace before timeout',
     expect(second).toBe('timeout')
 })
 
+test('buildTorrentEngineOptions keeps discovery config aligned across torrent engines', async () => {
+    const torrentModule = await import('../torrent.js')
+    const { buildTorrentEngineOptions, sharedDHT } = torrentModule
+
+    const options = buildTorrentEngineOptions({
+        path: '/tmp/test-downloads',
+        connections: 12
+    })
+
+    expect(options.path).toBe('/tmp/test-downloads')
+    expect(options.connections).toBe(12)
+    expect(options.uploads).toBe(10)
+    expect(options.verify).toBe(false)
+    expect(options.tracker).toBe(true)
+    expect(options.dht).toBe(sharedDHT)
+    expect(Array.isArray(options.trackers)).toBe(true)
+    expect(options.trackers.length).toBeGreaterThan(0)
+})
+
+test('getTorrentListenPort returns the configured fixed port for every engine', async () => {
+    const { getTorrentListenPort } = await import('../torrent.js')
+
+    expect(getTorrentListenPort({ TORRENT_PORT: '6881' })).toBe(6881)
+    expect(getTorrentListenPort({ TORRENT_PORT: '6881' })).toBe(6881)
+    expect(getTorrentListenPort({ TORRENT_PORT: '0' })).toBe(0)
+})
+
+test('getTorrentUploadSlots uses protocol-friendly default and respects env override', async () => {
+    const { getTorrentUploadSlots } = await import('../torrent.js')
+
+    expect(getTorrentUploadSlots({})).toBe(10)
+    expect(getTorrentUploadSlots({ TORRENT_UPLOAD_SLOTS: '12' })).toBe(12)
+    expect(getTorrentUploadSlots({ TORRENT_UPLOAD_SLOTS: '0' })).toBe(0)
+})
+
 test('status cache ttl uses env override with a safe default', async () => {
     const { getStatusCacheTtlMs } = await import('../torrent.js')
 
@@ -115,6 +150,40 @@ test('diskDownloadCache does not evict when under size limit', async () => {
 
     expect(cache.size).toBe(1)
     expect(cache.has('hash1')).toBe(true)
+})
+
+test('resolveDisplayedDownloaded keeps already-downloaded disk bytes after restart', async () => {
+    const { resolveDisplayedDownloaded } = await import('../torrent.js')
+
+    expect(resolveDisplayedDownloaded({
+        wasCompleted: false,
+        totalSize: 22406401162,
+        diskDownloaded: 996147200,
+        swarmDownloaded: 3653632
+    })).toBe(996147200)
+
+    expect(resolveDisplayedDownloaded({
+        wasCompleted: false,
+        totalSize: 22406401162,
+        diskDownloaded: 996147200,
+        swarmDownloaded: 1200000000,
+        resumeBaseline: 0
+    })).toBe(1200000000)
+
+    expect(resolveDisplayedDownloaded({
+        wasCompleted: true,
+        totalSize: 22406401162,
+        diskDownloaded: 996147200,
+        swarmDownloaded: 3653632
+    })).toBe(22406401162)
+
+    expect(resolveDisplayedDownloaded({
+        wasCompleted: false,
+        totalSize: 22406401162,
+        diskDownloaded: 996147200,
+        swarmDownloaded: 5046272,
+        resumeBaseline: 996147200
+    })).toBe(1001193472)
 })
 
 test('restore selection skips completed persisted torrents', async () => {
