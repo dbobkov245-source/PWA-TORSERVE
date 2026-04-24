@@ -103,7 +103,7 @@ export const formatEta = (seconds) => {
  */
 export const resolveInitialServerUrl = ({ isNative, storedUrl }) => {
     if (!isNative) return ''
-    return storedUrl || 'http://192.168.1.79:5000'
+    return storedUrl || 'http://192.168.1.79:3000'
 }
 
 const normalizeServerUrl = (serverUrl) => {

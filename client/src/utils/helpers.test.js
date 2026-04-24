@@ -82,7 +82,7 @@ describe('resolveInitialServerUrl', () => {
         expect(resolveInitialServerUrl({
             isNative: true,
             storedUrl: ''
-        })).toBe('http://192.168.1.79:5000')
+        })).toBe('http://192.168.1.79:3000')
     })
 
     it('returns stored server URL for native app', () => {

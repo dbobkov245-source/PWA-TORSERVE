@@ -1,7 +1,7 @@
 {
-    "version": "3.11.6",
-    "versionCode": 26,
+    "version": "3.11.7",
+    "versionCode": 27,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.6/pwa-torserve-v3.11.6.apk",
-    "notes": "v3.11.6:\n- 📦 Авто-апдейт теперь идёт через локальный сервер по HTTP (без TLS), GitHub — fallback. Работает на старых Android TV (Sony KDH9505 и др.) и при сбитой системной дате\n- 🛠️ Сервер: новые эндпоинты /api/updater/version.json и /api/updater/apk"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.7/pwa-torserve-v3.11.7.apk",
+    "notes": "v3.11.7:\n- 🛠️ Дефолтный адрес сервера откачен на 192.168.1.79:3000 (реальный порт контейнера)\n- 📦 Авто-апдейт через локальный сервер по HTTP теперь работает корректно"
 }
