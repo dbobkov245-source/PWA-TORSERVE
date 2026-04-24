@@ -14,6 +14,15 @@ const TVPlayer = registerPlugin('TVPlayer');
 // URL to raw version.json in your GitHub repo (main branch)
 const VERSION_URL = 'https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/version.json';
 const PENDING_INSTALL_KEY = 'app_update_pending_install';
+const SERVER_URL_KEY = 'server_url';
+
+function getLocalUpdaterBase() {
+    try {
+        const raw = (localStorage.getItem(SERVER_URL_KEY) || '').trim().replace(/\/+$/, '');
+        if (!raw) return '';
+        return /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    } catch { return ''; }
+}
 
 // Fallback version if native call fails (web mode)
 const FALLBACK_VERSION = { versionName: '0.0.0', versionCode: 0 };
@@ -127,11 +136,30 @@ export async function checkForUpdate() {
     }
 
     try {
-        // Use CapacitorHttp for the version check too (bypasses CORS)
-        const remoteRes = await CapacitorHttp.get({
-            url: VERSION_URL,
-            headers: { 'Cache-Control': 'no-cache' }
-        });
+        // Try local server first (HTTP, no TLS) — saves devices with broken CA trust
+        // or skewed clock. Fallback to GitHub raw if local server unreachable.
+        const localBase = getLocalUpdaterBase();
+        let remoteRes = null;
+        if (localBase) {
+            try {
+                remoteRes = await CapacitorHttp.get({
+                    url: `${localBase}/api/updater/version.json`,
+                    headers: { 'Cache-Control': 'no-cache' },
+                    connectTimeout: 5000,
+                    readTimeout: 5000
+                });
+                if (remoteRes.status !== 200) remoteRes = null;
+            } catch (e) {
+                console.warn('[Updater] Local version.json failed, falling back to GitHub:', e?.message || e);
+                remoteRes = null;
+            }
+        }
+        if (!remoteRes) {
+            remoteRes = await CapacitorHttp.get({
+                url: VERSION_URL,
+                headers: { 'Cache-Control': 'no-cache' }
+            });
+        }
         const local = await getCurrentVersion();
 
         if (remoteRes.status !== 200) {
@@ -203,14 +231,33 @@ export async function downloadAndInstall(url, onProgress, options = {}) {
 
         if (onProgress) onProgress(5);
 
-        // Use CapacitorHttp.get with responseType blob
-        // This runs natively and handles redirects (GitHub → objects.githubusercontent.com)
-        const response = await CapacitorHttp.get({
-            url: url,
-            responseType: 'blob',  // Get as base64 data
-            readTimeout: 120000,   // 2 minutes for large APK
-            connectTimeout: 30000
-        });
+        // Prefer local LAN server to avoid TLS issues on old Android / skewed clocks.
+        const localBase = getLocalUpdaterBase();
+        const downloadCandidates = [];
+        if (localBase) {
+            downloadCandidates.push(`${localBase}/api/updater/apk?url=${encodeURIComponent(url)}`);
+        }
+        downloadCandidates.push(url);
+
+        let response = null;
+        let lastError = null;
+        for (const candidate of downloadCandidates) {
+            try {
+                response = await CapacitorHttp.get({
+                    url: candidate,
+                    responseType: 'blob',
+                    readTimeout: 120000,
+                    connectTimeout: 30000
+                });
+                if (response.status >= 200 && response.status < 300) break;
+                lastError = new Error(`HTTP ${response.status} from ${candidate}`);
+                response = null;
+            } catch (e) {
+                lastError = e;
+                response = null;
+            }
+        }
+        if (!response) throw lastError || new Error('Download failed');
 
         if (response.status < 200 || response.status >= 300) {
             throw new Error(`Download failed: HTTP ${response.status}`);

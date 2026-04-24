@@ -17,7 +17,7 @@ import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary, evictLocalLibraryItemByName } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
-import { getAllocatedSizeBytes, shouldServeFileFromDisk } from './streamSource.js'
+import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex } from './streamSource.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
 import { isMagnetHashMatch } from './utils/magnetHash.js'
@@ -304,6 +304,62 @@ import { smartFetch, insecureAgent } from './utils/doh.js'
 import proxyRouter from './routes/proxy.js'
 
 app.use('/api/proxy', proxyRouter)
+
+// ────────────────────────────────────────────────────────
+// 📦 Updater proxy: lets clients with broken TLS (old Android,
+// skewed system clock) fetch release metadata and APK over the
+// LAN via plain HTTP. Server itself has a fresh CA store.
+// ────────────────────────────────────────────────────────
+const UPDATER_VERSION_URL = 'https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/version.json'
+const UPDATER_CACHE_TTL_MS = 5 * 60 * 1000
+let updaterVersionCache = { ts: 0, body: null }
+
+app.get('/api/updater/version.json', async (req, res) => {
+    try {
+        const now = Date.now()
+        if (!updaterVersionCache.body || now - updaterVersionCache.ts > UPDATER_CACHE_TTL_MS) {
+            const response = await fetch(UPDATER_VERSION_URL, { headers: { 'Cache-Control': 'no-cache' } })
+            if (!response.ok) return res.status(502).json({ error: `Upstream ${response.status}` })
+            const text = await response.text()
+            updaterVersionCache = { ts: now, body: text }
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.send(updaterVersionCache.body)
+    } catch (err) {
+        res.status(502).json({ error: err.message })
+    }
+})
+
+app.get('/api/updater/apk', async (req, res) => {
+    try {
+        const targetUrl = typeof req.query.url === 'string' ? req.query.url : ''
+        if (!/^https:\/\/github\.com\/dbobkov245-source\/PWA-TORSERVE\/releases\/download\//i.test(targetUrl)) {
+            return res.status(400).json({ error: 'Invalid or disallowed APK url' })
+        }
+
+        const upstream = await fetch(targetUrl, { redirect: 'follow' })
+        if (!upstream.ok || !upstream.body) return res.status(502).json({ error: `Upstream ${upstream.status}` })
+
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive')
+        const len = upstream.headers.get('content-length')
+        if (len) res.setHeader('Content-Length', len)
+        res.setHeader('Cache-Control', 'no-store')
+
+        const reader = upstream.body.getReader()
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (!res.write(Buffer.from(value))) {
+                await new Promise(resolve => res.once('drain', resolve))
+            }
+        }
+        res.end()
+    } catch (err) {
+        if (!res.headersSent) res.status(502).json({ error: err.message })
+        else res.end()
+    }
+})
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY || ''
 
@@ -1043,6 +1099,21 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             readahead(infoHash, index, start)
         }
 
+        // 🔥 BITFIELD CHECK: Before sending any headers, verify the starting piece
+        // is already downloaded. If not, return 503 Retry-After so the player
+        // gets a clean retry signal instead of an empty 206 body (which most
+        // players treat as a fatal error rather than a transient network issue).
+        if (engine && !servingFromDisk && engine.bitfield) {
+            const pieceLength = engine.torrent?.pieceLength || 262144
+            const startPiece = getStartPieceIndex(file.offset, start, pieceLength)
+            if (!engine.bitfield.get(startPiece)) {
+                console.log(`[Stream] ⏳ Piece ${startPiece} not ready for ${infoHash.slice(0, 8)} byte=${start}, returning 503`)
+                res.setHeader('Retry-After', '3')
+                res.setHeader('Accept-Ranges', 'bytes')
+                return res.status(503).send('Piece not yet downloaded')
+            }
+        }
+
         // Smart Progress Tracking
         const duration = parseFloat(req.query.duration) || 0
         const progressTime = duration > 0 ? (start / file.length) * duration : 0
@@ -1100,10 +1171,12 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         if (!servingFromDisk) {
             stallTimer = setTimeout(() => {
                 if (bytesEmitted === 0) {
-                    console.warn(`[Stream] ⚠️ Stall detected for ${infoHash.slice(0,8)} byte=${start}: no data in ${STALL_TIMEOUT_MS}ms, aborting (pieces not ready)`)
+                    console.warn(`[Stream] ⚠️ Stall detected for ${infoHash.slice(0,8)} byte=${start}: no data in ${STALL_TIMEOUT_MS}ms, resetting connection`)
                     cleanup()
-                    // res уже имеет writeHead(206) — закрываем без тела чтобы плеер сделал retry
-                    if (!res.writableEnded) res.end()
+                    // Destroy the socket (TCP reset) so the player sees a network error
+                    // and retries. res.end() after writeHead(206) with no body sends an
+                    // "empty complete response" which most players treat as fatal.
+                    res.destroy()
                 }
             }, STALL_TIMEOUT_MS)
         }
