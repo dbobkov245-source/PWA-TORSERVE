@@ -154,7 +154,7 @@ export async function discoverQuality(title) {
             if (fastProviderFailed) {
                 // Keep quality discovery isolated from user-facing search cache.
                 const aggregated = await withTimeout(
-                    search(title, { skipCache: true, skipCacheWrite: true }),
+                    search(title, { skipCache: true, skipCacheWrite: true, background: true }),
                     DISCOVERY_TIMEOUT_MS,
                     'Quality discovery timeout'
                 )

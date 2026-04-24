@@ -46,6 +46,26 @@ export const DegradedBanner = ({ lastStateChange }) => {
  */
 export const ErrorScreen = ({ status, retryAfter, onRetry, onSettings }) => {
     const [countdown, setCountdown] = useState(retryAfter || 300)
+    const settingsBtnRef = React.useRef(null)
+    const retryBtnRef = React.useRef(null)
+
+    useEffect(() => {
+        const target = settingsBtnRef.current || retryBtnRef.current
+        target?.focus()
+    }, [])
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            if (document.activeElement === settingsBtnRef.current) {
+                retryBtnRef.current?.focus()
+            } else {
+                settingsBtnRef.current?.focus() || retryBtnRef.current?.focus()
+            }
+        } else if (e.key === 'Enter' || e.key === 'OK') {
+            document.activeElement?.click?.()
+        }
+    }
 
     useEffect(() => {
         if (countdown <= 0) {
@@ -64,7 +84,7 @@ export const ErrorScreen = ({ status, retryAfter, onRetry, onSettings }) => {
         : 'Не удалось подключиться к серверу. Проверьте адрес в настройках.'
 
     return (
-        <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6">
+        <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6" onKeyDown={handleKeyDown}>
             <div className="bg-red-900/30 border border-red-700 rounded-2xl p-8 max-w-md text-center">
                 <div className="text-6xl mb-4">{icon}</div>
                 <h1 className="text-2xl font-bold text-red-400 mb-2">{title}</h1>
@@ -74,16 +94,20 @@ export const ErrorScreen = ({ status, retryAfter, onRetry, onSettings }) => {
                     {/* Settings button - critical for mobile users */}
                     {onSettings && (
                         <button
+                            ref={settingsBtnRef}
                             onClick={onSettings}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                            tabIndex={0}
+                            className="bg-blue-600 hover:bg-blue-700 focus:bg-blue-500 focus:ring-4 focus:ring-blue-300 text-white px-6 py-3 rounded-lg font-bold transition-colors outline-none"
                         >
                             ⚙️ Настройки сервера
                         </button>
                     )}
 
                     <button
+                        ref={retryBtnRef}
                         onClick={onRetry}
-                        className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-bold transition-colors"
+                        tabIndex={0}
+                        className="bg-gray-700 hover:bg-gray-600 focus:bg-gray-500 focus:ring-4 focus:ring-gray-300 text-white px-6 py-3 rounded-lg font-bold transition-colors outline-none"
                     >
                         🔄 Повторить
                     </button>
