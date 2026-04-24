@@ -82,7 +82,7 @@ describe('resolveInitialServerUrl', () => {
         expect(resolveInitialServerUrl({
             isNative: true,
             storedUrl: ''
-        })).toBe('http://192.168.1.70:3000')
+        })).toBe('http://192.168.1.79:5000')
     })
 
     it('returns stored server URL for native app', () => {
@@ -104,9 +104,9 @@ describe('buildServerRequestUrl', () => {
     it('uses the stored native server URL for relative API paths', () => {
         expect(buildServerRequestUrl('/api/v2/search?query=Primate', {
             isNative: true,
-            serverUrl: 'http://192.168.1.70:3000',
+            serverUrl: 'http://192.168.1.79:3000',
             browserOrigin: 'https://localhost'
-        })).toBe('http://192.168.1.70:3000/api/v2/search?query=Primate')
+        })).toBe('http://192.168.1.79:3000/api/v2/search?query=Primate')
     })
 
     it('uses browser origin for web when no server URL is stored', () => {
@@ -126,19 +126,19 @@ describe('buildServerRequestUrl', () => {
     })
 
     it('keeps absolute URLs unchanged', () => {
-        expect(buildServerRequestUrl('http://192.168.1.70:3000/api/status', {
+        expect(buildServerRequestUrl('http://192.168.1.79:3000/api/status', {
             isNative: true,
             serverUrl: '',
             browserOrigin: 'https://localhost'
-        })).toBe('http://192.168.1.70:3000/api/status')
+        })).toBe('http://192.168.1.79:3000/api/status')
     })
 
     it('normalizes http URLs missing double slash', () => {
         expect(buildServerRequestUrl('/api/status', {
             isNative: true,
-            serverUrl: 'http:192.168.1.70:3000',
+            serverUrl: 'http:192.168.1.79:3000',
             browserOrigin: 'https://localhost'
-        })).toBe('http://192.168.1.70:3000/api/status')
+        })).toBe('http://192.168.1.79:3000/api/status')
     })
 })
 

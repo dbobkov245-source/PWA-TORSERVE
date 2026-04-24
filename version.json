@@ -1,7 +1,7 @@
 {
-    "version": "3.11.4",
-    "versionCode": 24,
+    "version": "3.11.5",
+    "versionCode": 25,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.4/app-debug.apk",
-    "notes": "v3.11.4:\n- ❤️ Исправлен API для «Избранного» и истории в Android APK: запросы больше не уходят в localhost webview\n- 🔎 Для выбора торрента добавлен быстрый probe перед /api/add: мертвые unchecked-магниты теперь отваливаются быстро, а не зависают на долгом добавлении\n- ⚡ Ускорен server-side preflight поиска"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.5/app-debug.apk",
+    "notes": "v3.11.5:\n- 🛠️ Дефолтный адрес сервера в APK обновлён на 192.168.1.79:5000\n- 🎮 ErrorScreen при ошибке подключения теперь управляется с пульта D-pad: автофокус на «Настройки сервера», навигация ↑/↓, Enter\n- 🖥️ Теперь с экрана ошибки можно зайти в настройки и сменить URL сервера без внешней клавиатуры"
 }
