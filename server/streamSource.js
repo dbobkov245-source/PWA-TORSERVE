@@ -34,3 +34,18 @@ export function shouldServeFileFromDisk(stat, expectedLength) {
     if (!Number.isFinite(expectedLength) || expectedLength <= 0) return false
     return getAllocatedSizeBytes(stat) >= expectedLength
 }
+
+/**
+ * Map a (fileOffset, byteWithinFile) pair to its containing torrent piece index.
+ *
+ * @param {number} fileOffset - Byte offset of the file inside the torrent.
+ * @param {number} byteWithinFile - Byte position within the file (e.g. Range start).
+ * @param {number} pieceLength - Torrent piece length in bytes.
+ * @returns {number}
+ */
+export function getStartPieceIndex(fileOffset, byteWithinFile, pieceLength) {
+    const offset = Number.isFinite(fileOffset) ? fileOffset : 0
+    const within = Number.isFinite(byteWithinFile) ? byteWithinFile : 0
+    const len = Number.isFinite(pieceLength) && pieceLength > 0 ? pieceLength : 1
+    return Math.floor((offset + within) / len)
+}

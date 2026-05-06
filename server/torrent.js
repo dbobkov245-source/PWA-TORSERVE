@@ -194,6 +194,53 @@ const MAX_FROZEN_TORRENTS = 3    // 🔥 Limit frozen count
 // ✅ FIX: Сохраняем ID интервала для очистки при shutdown
 let frozenCleanupIntervalId = null
 
+// ────────────────────────────────────────────────────────
+// Stalled-swarm recovery: kick engines with activePeers===0
+// outside of Turbo. Throttled per-engine to avoid tracker spam.
+// ────────────────────────────────────────────────────────
+const STALL_CHECK_INTERVAL_MS = 60 * 1000
+const STALL_RECOVER_THROTTLE_MS = 60 * 1000
+let stallRecoveryIntervalId = null
+
+function startStallRecovery() {
+    if (stallRecoveryIntervalId) return
+
+    stallRecoveryIntervalId = setInterval(() => {
+        const now = Date.now()
+        const seen = new Set()
+
+        for (const engine of engines.values()) {
+            if (!engine || seen.has(engine)) continue
+            seen.add(engine)
+            if (!engine.swarm) continue
+
+            const snap = getSwarmPeerSnapshot(engine.swarm)
+            if (snap.activePeers > 0) continue
+
+            const lastAt = engine._lastRecoverAt || 0
+            if (now - lastAt < STALL_RECOVER_THROTTLE_MS) continue
+
+            engine._lastRecoverAt = now
+            console.log(`[StallRecovery] activePeers=0, recovering ${engine.infoHash?.slice(0, 8)}: connected=${snap.connectedPeers} known=${snap.knownPeers} queued=${snap.queuedPeers}`)
+            try {
+                recoverSwarm(engine)
+            } catch (err) {
+                console.warn(`[StallRecovery] recover failed for ${engine.infoHash?.slice(0, 8)}: ${err.message}`)
+            }
+        }
+    }, STALL_CHECK_INTERVAL_MS)
+
+    console.log('[StallRecovery] Interval started')
+}
+
+function stopStallRecovery() {
+    if (stallRecoveryIntervalId) {
+        clearInterval(stallRecoveryIntervalId)
+        stallRecoveryIntervalId = null
+        console.log('[StallRecovery] Interval stopped')
+    }
+}
+
 // Cleanup expired frozen torrents every 2 minutes
 function startFrozenCleanup() {
     if (frozenCleanupIntervalId) return // Уже запущен
@@ -235,6 +282,7 @@ function stopFrozenCleanup() {
 
 // Запускаем очистку при загрузке модуля
 startFrozenCleanup()
+startStallRecovery()
 
 // ────────────────────────────────────────────────────────
 // Persistence: Save/Remove torrents to db.json
@@ -1011,6 +1059,7 @@ export const setSpeedMode = (mode) => {
 export const destroyAllTorrents = () => {
     // ✅ FIX: Останавливаем интервал очистки frozen torrents
     stopFrozenCleanup()
+    stopStallRecovery()
 
     console.log(`[Shutdown] Destroying ${engines.size} active engines...`)
 
