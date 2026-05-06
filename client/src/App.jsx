@@ -664,7 +664,7 @@ function App() {
         const sizeB = b.files?.reduce((s, f) => s + (f.length || 0), 0) || 0
         return sizeB - sizeA
       }
-      if (sortBy === 'peers') return (b.numPeers || 0) - (a.numPeers || 0)
+      if (sortBy === 'peers') return (b.connectedPeers ?? b.numPeers ?? 0) - (a.connectedPeers ?? a.numPeers ?? 0)
       return 0
     })
   }, [filteredTorrents, sortBy])
@@ -912,7 +912,7 @@ function App() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayTorrents.map(t => (
                 <Poster
-                  key={t.infoHash} name={t.name} progress={t.progress || 0} peers={t.numPeers || 0}
+                  key={t.infoHash} name={t.name} progress={t.progress || 0} peers={t.connectedPeers ?? t.numPeers ?? 0}
                   isReady={t.isReady} size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
                   downloadSpeed={t.downloadSpeed || 0} downloaded={t.downloaded || 0} eta={t.eta || 0}
                   newFilesCount={t.newFilesCount || 0} onClick={() => setSelectedTorrent(t)}

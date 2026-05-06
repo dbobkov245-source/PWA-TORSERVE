@@ -635,7 +635,7 @@ export async function checkRules() {
 
             for (const variant of queryVariants) {
                 log.info('🔎 Trying query variant', { variant })
-                const searchResult = await aggregatorSearch(variant)
+                const searchResult = await aggregatorSearch(variant, { background: true })
 
                 if (searchResult.results && searchResult.results.length > 0) {
                     results = searchResult.results

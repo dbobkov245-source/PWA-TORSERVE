@@ -1,7 +1,7 @@
 {
-    "version": "3.11.7",
-    "versionCode": 27,
+    "version": "3.11.8",
+    "versionCode": 28,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.7/pwa-torserve-v3.11.7.apk",
-    "notes": "v3.11.7:\n- 🛠️ Дефолтный адрес сервера откачен на 192.168.1.79:3000 (реальный порт контейнера)\n- 📦 Авто-апдейт через локальный сервер по HTTP теперь работает корректно"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.11.8/pwa-torserve-v3.11.8.apk",
+    "notes": "v3.11.8:\n- 🐛 Fix: перемотка зависала на скачанном торренте (TypeError на getStartPieceIndex)\n- 🎯 Fix: UI показывает реальное число подключённых пиров (connectedPeers вместо max(connected, known))\n- ♻️ Auto-recovery зависших swarm-ов вне Turbo (interval 60s)\n- 🔁 Autodownloader не долбит circuit-open провайдеров (background:true)"
 }

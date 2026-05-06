@@ -38,3 +38,21 @@ test('shouldServeFileFromDisk falls back to logical size when blocks are unavail
 
     expect(shouldServeFileFromDisk(statWithoutBlocks, statWithoutBlocks.size)).toBe(true)
 })
+
+test('getStartPieceIndex maps file offset and seek position to piece number', async () => {
+    const { getStartPieceIndex } = await import('../streamSource.js')
+
+    expect(getStartPieceIndex(0, 0, 262144)).toBe(0)
+    expect(getStartPieceIndex(0, 262144, 262144)).toBe(1)
+    expect(getStartPieceIndex(0, 262143, 262144)).toBe(0)
+    expect(getStartPieceIndex(1_048_576, 524288, 262144)).toBe(6)
+})
+
+test('getStartPieceIndex is robust to invalid inputs', async () => {
+    const { getStartPieceIndex } = await import('../streamSource.js')
+
+    expect(getStartPieceIndex(undefined, 100, 262144)).toBe(0)
+    expect(getStartPieceIndex(0, undefined, 262144)).toBe(0)
+    expect(getStartPieceIndex(0, 100, 0)).toBe(100)
+    expect(getStartPieceIndex(NaN, NaN, 262144)).toBe(0)
+})
