@@ -214,6 +214,10 @@ function startStallRecovery() {
             seen.add(engine)
             if (!engine.swarm) continue
 
+            // Skip completed torrents — no need to find more peers, recoverSwarm
+            // calls engine.discover() which can stall event loop on large _peers maps.
+            if (engine.infoHash && isTorrentCompleted(engine.infoHash)) continue
+
             const snap = getSwarmPeerSnapshot(engine.swarm)
             if (snap.activePeers > 0) continue
 
@@ -1003,6 +1007,12 @@ export const boostTorrent = (infoHash) => {
     }
     if (!engine.swarm) {
         console.warn(`[Turbo] No swarm for: ${infoHash}`)
+        return
+    }
+
+    // Skip boost+recover for completed torrents — they stream from disk, no peers needed.
+    // Calling recoverSwarm() on engines with thousands of known peers stalls event loop.
+    if (isTorrentCompleted(infoHash)) {
         return
     }
 
