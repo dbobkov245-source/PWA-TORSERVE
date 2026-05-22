@@ -1,20 +1,102 @@
 import express from 'express';
-import { getSmartConfig } from '../utils/doh.js';
+import { getSmartConfig, smartFetch } from '../utils/doh.js';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import fs from 'fs';
 import { getCachedImage, cacheImage } from '../imageCache.js';
+import {
+    buildAmsterdamProxyRequest,
+    shouldTryAmsterdamProxy
+} from '../utils/amsterdamProxy.js';
 
 const router = express.Router();
 
-export function shouldSkipProxyWrite(res, settled = false) {
-    return Boolean(
-        settled ||
-        res?.headersSent ||
-        res?.writableEnded ||
-        res?.destroyed
-    );
+const AMSTERDAM_SECRET_HEADER = 'x-amsterdam-proxy-secret'
+const AMSTERDAM_PROXY_TIMEOUT_MS = parseInt(process.env.AMSTERDAM_PROXY_TIMEOUT_MS || '6000', 10)
+
+export function shouldUseAmsterdamProxy(targetUrl, options = {}) {
+    const amsterdamProxyUrl = options.amsterdamProxyUrl ?? process.env.AMSTERDAM_PROXY_URL ?? ''
+    const amsterdamProxySecret = options.amsterdamProxySecret ?? process.env.AMSTERDAM_PROXY_SECRET ?? ''
+
+    return Boolean(amsterdamProxyUrl && amsterdamProxySecret) && shouldTryAmsterdamProxy(targetUrl)
+}
+
+export function buildAmsterdamProxyPlan(targetUrl, options = {}) {
+    const amsterdamProxyUrl = options.amsterdamProxyUrl ?? process.env.AMSTERDAM_PROXY_URL ?? ''
+    const amsterdamProxySecret = options.amsterdamProxySecret ?? process.env.AMSTERDAM_PROXY_SECRET ?? ''
+
+    if (!amsterdamProxyUrl || !amsterdamProxySecret) return null
+
+    const request = buildAmsterdamProxyRequest(targetUrl, { upstreamBaseUrl: amsterdamProxyUrl })
+    if (!request) return null
+
+    return {
+        ...request,
+        upstreamHeaders: {
+            [AMSTERDAM_SECRET_HEADER]: amsterdamProxySecret
+        }
+    }
+}
+
+export function shouldFallbackFromAmsterdamStatus(statusCode) {
+    return Number.isInteger(statusCode) && statusCode >= 500
+}
+
+function getForwardHeaders(proxyRes) {
+    const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag']
+    return forwardHeaders.reduce((headers, key) => {
+        if (proxyRes.headers[key]) headers[key] = proxyRes.headers[key]
+        return headers
+    }, {})
+}
+
+async function attemptAmsterdamProxy({ targetUrl, url, req, res }) {
+    const plan = buildAmsterdamProxyPlan(targetUrl)
+    if (!plan || !shouldUseAmsterdamProxy(targetUrl)) return false
+
+    const upstream = new URL(plan.upstreamUrl)
+    const isHttps = upstream.protocol === 'https:'
+    const transport = isHttps ? https : http
+
+    return await new Promise((resolve) => {
+        const proxyReq = transport.request({
+            method: 'GET',
+            headers: {
+                ...plan.upstreamHeaders,
+                accept: req.headers.accept || '*/*'
+            },
+            hostname: upstream.hostname,
+            port: upstream.port || (isHttps ? 443 : 80),
+            path: upstream.pathname + upstream.search,
+            servername: isHttps ? upstream.hostname : undefined,
+            timeout: AMSTERDAM_PROXY_TIMEOUT_MS
+        }, (proxyRes) => {
+            if (shouldFallbackFromAmsterdamStatus(proxyRes.statusCode || 0)) {
+                proxyRes.resume()
+                resolve(false)
+                return
+            }
+
+            res.status(proxyRes.statusCode || 200)
+            for (const [key, value] of Object.entries(getForwardHeaders(proxyRes))) {
+                res.set(key, value)
+            }
+
+            res.set('X-Proxy-Source', 'amsterdam')
+            proxyRes.pipe(res)
+            proxyRes.on('end', () => resolve(true))
+            proxyRes.on('error', () => resolve(false))
+        })
+
+        proxyReq.on('timeout', () => {
+            proxyReq.destroy()
+            resolve(false)
+        })
+
+        proxyReq.on('error', () => resolve(false))
+        proxyReq.end()
+    })
 }
 
 // Allowlist for security (SSRF prevention)
@@ -29,6 +111,44 @@ const ALLOWED_DOMAINS = [
     'pl.imagetmdb.com',
     'lampa.byskaz.ru'
 ];
+
+// Bunny CDN (image.tmdb.org → tmdb-image-prod.b-cdn.net) GeoIP-blocks RU:
+// its authoritative DNS returns 127.0.0.1 for RU clients, so direct fetch and
+// even DoH-resolved fetch end up with ECONNREFUSED. Route through wsrv.nl
+// (Netherlands-based image proxy) which still resolves the real CDN IP.
+const WSRV_PROXIED_HOSTS = new Set(['image.tmdb.org']);
+
+function buildWsrvUrl(originalUrl) {
+    const u = new URL(originalUrl);
+    const sslPath = `ssl:${u.hostname}${u.pathname}${u.search}`;
+    return `https://wsrv.nl/?url=${encodeURIComponent(sslPath)}&output=webp`;
+}
+
+async function streamViaWsrv({ url, req, res }) {
+    const wsrvUrl = buildWsrvUrl(url);
+    const upstream = await fetch(wsrvUrl, {
+        method: 'GET',
+        headers: { accept: req.headers.accept || 'image/*' },
+        signal: AbortSignal.timeout(20000)
+    });
+
+    res.status(upstream.status);
+    const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
+    for (const h of forwardHeaders) {
+        const v = upstream.headers.get(h);
+        if (v) res.set(h, v);
+    }
+    res.set('X-Proxy-Source', 'wsrv');
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+
+    // Disk-cache successful image fetches (mirrors the direct branch)
+    if (upstream.status === 200 && isImageRequest(url)) {
+        cacheImage(url, buffer).catch(() => {});
+    }
+
+    res.end(buffer);
+}
 
 // O2: Check if URL is an image request (for disk caching)
 const isImageRequest = (url) => {
@@ -46,19 +166,16 @@ router.get('/', async (req, res) => {
     }
 
     try {
-        let settled = false;
-        const shouldSkipWrite = () => shouldSkipProxyWrite(res, settled);
-        const fail = (statusCode, payload) => {
-            if (shouldSkipWrite()) return;
-            settled = true;
-            res.status(statusCode).json(payload);
-        };
-
         const targetUrl = new URL(url);
 
         if (!ALLOWED_DOMAINS.includes(targetUrl.hostname)) {
             console.warn(`[Proxy] 🚫 Blocked domain: ${targetUrl.hostname}`);
             return res.status(403).json({ error: 'Domain not allowed' });
+        }
+
+        const amsterdamHandled = await attemptAmsterdamProxy({ targetUrl, url, req, res })
+        if (amsterdamHandled) {
+            return
         }
 
         // O2: Check disk cache for images
@@ -72,6 +189,20 @@ router.get('/', async (req, res) => {
                 res.set('X-Cache', 'HIT');
                 res.set('Cache-Control', 'public, max-age=604800'); // 7 days
                 return fs.createReadStream(cachedPath).pipe(res);
+            }
+        }
+
+        // Route GeoIP-blocked hosts through wsrv.nl (e.g. image.tmdb.org)
+        if (WSRV_PROXIED_HOSTS.has(targetUrl.hostname)) {
+            try {
+                await streamViaWsrv({ url, req, res });
+                return;
+            } catch (err) {
+                console.warn(`[Proxy] wsrv fallback failed for ${targetUrl.hostname}: ${err.message}`);
+                if (!res.headersSent) {
+                    return res.status(502).json({ error: 'wsrv proxy failed', details: err.message });
+                }
+                return;
             }
         }
 
@@ -100,12 +231,7 @@ router.get('/', async (req, res) => {
 
         const transport = isHttps ? https : http;
         const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
-            if (shouldSkipWrite()) {
-                proxyRes.resume();
-                return;
-            }
-
-            res.status(proxyRes.statusCode || 502);
+            res.status(proxyRes.statusCode);
 
             // Forward allowed headers
             const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
@@ -121,46 +247,61 @@ router.get('/', async (req, res) => {
             if (isImageRequest(url) && proxyRes.statusCode === 200) {
                 const chunks = [];
                 proxyRes.on('data', chunk => chunks.push(chunk));
-                proxyRes.on('error', (err) => {
-                    console.error('[Proxy] Upstream stream error:', err.message, url);
-                    fail(502, { error: 'Proxy stream failed', details: err.message });
-                });
-                proxyRes.on('aborted', () => {
-                    console.error('[Proxy] Upstream aborted:', url);
-                    fail(502, { error: 'Proxy upstream aborted' });
-                });
                 proxyRes.on('end', () => {
-                    if (shouldSkipWrite()) return;
                     const buffer = Buffer.concat(chunks);
                     // Save to cache async (fire-and-forget)
                     cacheImage(url, buffer).catch(() => { });
-                    settled = true;
                     res.end(buffer);
                 });
             } else {
-                proxyRes.on('error', (err) => {
-                    console.error('[Proxy] Pipe error:', err.message, url);
-                    fail(502, { error: 'Proxy stream failed', details: err.message });
-                });
                 proxyRes.pipe(res);
             }
         });
 
         proxyReq.on('error', (err) => {
             console.error('[Proxy] Request Error:', err.message, url);
-            fail(502, { error: 'Proxy request failed', details: err.message });
+            tryFallback(err.message);
         });
 
         proxyReq.on('timeout', () => {
             console.error('[Proxy] Timeout:', url);
             proxyReq.destroy();
-            fail(504, { error: 'Proxy timeout' });
+            tryFallback('timeout');
         });
 
-        res.on('close', () => {
-            settled = true;
-            try { proxyReq.destroy(); } catch (_) { /* ignore */ }
-        });
+        // Last-resort fallback: smartFetch races the Worker proxy when
+        // WORKER_PROXY_URL is set, so even a poisoned direct path recovers.
+        // Only runs when no bytes have been sent yet.
+        let fallbackTried = false;
+        async function tryFallback(reason) {
+            if (fallbackTried || res.headersSent) {
+                if (!res.headersSent) {
+                    res.status(502).json({ error: 'Proxy request failed', details: reason });
+                }
+                return;
+            }
+            fallbackTried = true;
+            try {
+                const result = await smartFetch(url, { timeout: 20000, responseType: 'arraybuffer' });
+                if (res.headersSent) return;
+                res.status(result.status || 200);
+                const ct = result.headers?.['content-type'];
+                if (ct) res.set('content-type', ct);
+                const cl = result.headers?.['content-length'];
+                if (cl) res.set('content-length', cl);
+                res.set('X-Proxy-Source', 'smartfetch-fallback');
+                const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
+                if (isImageRequest(url) && result.status === 200) {
+                    cacheImage(url, buffer).catch(() => {});
+                }
+                res.end(buffer);
+            } catch (fallErr) {
+                console.error('[Proxy] Fallback failed:', fallErr.message, url);
+                if (!res.headersSent) {
+                    res.status(502).json({ error: 'Proxy request failed', details: `${reason}; fallback: ${fallErr.message}` });
+                }
+            }
+        }
 
         proxyReq.end();
 
