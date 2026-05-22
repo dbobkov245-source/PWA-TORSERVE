@@ -29,11 +29,22 @@ const DEBUG = process.env.DOH_DEBUG === '1';
 const WORKER_PROXY_URL = process.env.WORKER_PROXY_URL || '';
 
 // --- DoH PROVIDERS ---
+// Cloudflare first: strips EDNS Client Subnet (ECS), so RU upstream
+// resolvers can't return GeoIP-poisoned A-records for CDN hosts.
+// Google sends ECS by default and is therefore easy to poison.
 const DOH_PROVIDERS = [
-    { name: 'Google', url: 'https://dns.google/resolve' },
     { name: 'Cloudflare', url: 'https://cloudflare-dns.com/dns-query' },
+    { name: 'Google', url: 'https://dns.google/resolve' },
     { name: 'Quad9', url: 'https://dns.quad9.net:5053/dns-query' }
 ];
+
+// Reject obviously poisoned/SSRF answers (RU ISP returns 127.0.0.1 for
+// blocked CDNs). resolveIP throws for these so race falls through to a
+// clean provider instead of caching the lie for 10 minutes.
+const POISONED_IP_RE = /^(127\.|0\.0\.0\.0$|0\.|169\.254\.|::1$|fe80:|::$)/;
+function isPoisonedIP(ip) {
+    return typeof ip !== 'string' || POISONED_IP_RE.test(ip);
+}
 
 // --- CIRCUIT BREAKER STATE ---
 const providerState = new Map();
@@ -114,6 +125,10 @@ async function resolveWithProvider(hostname, provider) {
     if (data.Answer && data.Answer.length > 0) {
         const record = data.Answer.find(r => r.type === 1);
         if (record) {
+            if (isPoisonedIP(record.data)) {
+                console.warn(`[DoH] 🧨 Poisoned answer from ${provider.name} for ${hostname}: ${record.data}${data.Comment ? ` (${data.Comment})` : ''}`);
+                throw new Error(`Poisoned IP: ${record.data}`);
+            }
             recordSuccess(provider);
             return { ip: record.data, provider: provider.name };
         }

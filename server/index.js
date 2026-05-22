@@ -9,7 +9,7 @@ import fs from 'fs'
 import fsPromises from 'fs/promises'
 import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen, onTorrentChange, offTorrentChange } from './torrent.js'
 import { db, safeWrite } from './db.js'
-import { startWatchdog, stopWatchdog, getServerState } from './watchdog.js'
+import { startWatchdog, stopWatchdog, getServerState, getImageProbeState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
 import { getRules, addRule, updateRule, deleteRule, updateSettings, checkRules } from './autodownloader.js'
 import { parseRange } from './utils/range.js'
@@ -207,7 +207,8 @@ app.get('/api/metrics', async (req, res) => {
         rssMB: Math.round(memUsage.rss / 1024 / 1024),
         uptimeSec: Math.round(process.uptime()),
         activeStreams,
-        imageCache
+        imageCache,
+        imageProxy: getImageProbeState()
     })
 })
 

@@ -38,6 +38,15 @@ let degradedSince = null              // Timestamp when RAM first exceeded thres
 let circuitOpenUntil = null           // Timestamp when circuit breaker will retry
 let isWatchdogRunning = false
 let lastAutoDownloadCheck = 0         // Timestamp of last auto-download check
+let lastImageProbeAt = 0              // Timestamp of last image-proxy probe
+const imageProbeState = {             // Exposed via getImageProbeState()
+    ok: null,                         // null = never run, true/false otherwise
+    lastCheckedAt: 0,
+    lastError: null,
+    consecutiveFailures: 0
+}
+const IMAGE_PROBE_INTERVAL_MS = 5 * 60 * 1000  // 5 minutes
+const IMAGE_PROBE_URL = 'https://image.tmdb.org/t/p/w92/eAJaqqIw27AYGomDl00cek7AQTM.jpg'
 
 // ─────────────────────────────────────────────────────────────
 // Helper Functions
@@ -215,9 +224,57 @@ const performCheck = async () => {
     // Log current state
     console.log(`[Watchdog] RAM: ${ramMB}MB | Status: ${db.data.serverStatus} | Storage Failures: ${db.data.storageFailures}`)
 
+    // ─── Image Proxy Probe ───
+    await runImageProbe()
+
     // ─── Auto-Downloader Check ───
     await runAutoDownloadCheck()
 }
+
+// ─────────────────────────────────────────────────────────────
+// Image Proxy Probe — guards against DNS-poisoning regressions
+// ─────────────────────────────────────────────────────────────
+
+const runImageProbe = async () => {
+    const now = Date.now()
+    if (now - lastImageProbeAt < IMAGE_PROBE_INTERVAL_MS) return
+    lastImageProbeAt = now
+
+    const port = process.env.PORT || 3000
+    const probeUrl = `http://127.0.0.1:${port}/api/proxy?url=${encodeURIComponent(IMAGE_PROBE_URL)}`
+
+    try {
+        const res = await fetch(probeUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(10000)
+        })
+        const ct = res.headers.get('content-type') || ''
+        const ok = res.ok && ct.startsWith('image/')
+
+        imageProbeState.ok = ok
+        imageProbeState.lastCheckedAt = now
+
+        if (ok) {
+            if (imageProbeState.consecutiveFailures > 0) {
+                console.log(`[Watchdog] Image proxy recovered after ${imageProbeState.consecutiveFailures} failures`)
+            }
+            imageProbeState.consecutiveFailures = 0
+            imageProbeState.lastError = null
+        } else {
+            imageProbeState.consecutiveFailures++
+            imageProbeState.lastError = `HTTP ${res.status} ct=${ct}`
+            console.warn(`[Watchdog] 🖼️  Image probe FAILED #${imageProbeState.consecutiveFailures}: ${imageProbeState.lastError}`)
+        }
+    } catch (err) {
+        imageProbeState.ok = false
+        imageProbeState.lastCheckedAt = now
+        imageProbeState.consecutiveFailures++
+        imageProbeState.lastError = err.message
+        console.warn(`[Watchdog] 🖼️  Image probe FAILED #${imageProbeState.consecutiveFailures}: ${err.message}`)
+    }
+}
+
+export const getImageProbeState = () => ({ ...imageProbeState })
 
 // ─────────────────────────────────────────────────────────────
 // 📺 Auto-Downloader Integration

@@ -18,6 +18,12 @@ const ALLOWED_HOSTS = [
   'nnmclub.to', 'nnm-club.me',
   'jacred.xyz',
   'torlook.info', 'torlook.cc',
+  // TMDB + Bunny CDN backend (image.tmdb.org CNAMEs to b-cdn.net).
+  // RU upstream resolvers poison both via ECS, so Worker is the resilient path.
+  'api.themoviedb.org',
+  'image.tmdb.org',
+  'tmdb-image-prod.b-cdn.net',
+  'wsrv.nl',
 ]
 
 export default {
