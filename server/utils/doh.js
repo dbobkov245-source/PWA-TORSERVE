@@ -34,8 +34,11 @@ const WORKER_PROXY_URL = process.env.WORKER_PROXY_URL || '';
 // Google sends ECS by default and is therefore easy to poison.
 const DOH_PROVIDERS = [
     { name: 'Cloudflare', url: 'https://cloudflare-dns.com/dns-query' },
-    { name: 'Google', url: 'https://dns.google/resolve' },
-    { name: 'Quad9', url: 'https://dns.quad9.net:5053/dns-query' }
+    { name: 'Google', url: 'https://dns.google/resolve' }
+    // Quad9 dropped: :5053 is filtered by RU ISPs and :443/dns-query enforces
+    // HTTP/2 (Node's fetch is HTTP/1.1 → 505). Cloudflare-first + poisoned-IP
+    // rejection on Google already covers the resilience need; race overhead
+    // for a third always-failing provider is pure latency.
 ];
 
 // Reject obviously poisoned/SSRF answers (RU ISP returns 127.0.0.1 for
@@ -413,6 +416,14 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
             });
 
         function handleResponse(res) {
+            // Surface socket-level aborts/resets on the response stream.
+            // Without this, an upstream RST mid-body emits an 'error' event
+            // on `res` with no listener attached → Node.js crash.
+            res.on('error', (err) => {
+                if (DEBUG) console.log(`[SmartFetch] response stream error: ${err.message}`);
+                reject(err);
+            });
+
             // FIX-2: Handle redirects
             if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
                 const redirectUrl = new URL(res.headers.location, urlStr).href;

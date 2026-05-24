@@ -231,6 +231,22 @@ router.get('/', async (req, res) => {
 
         const transport = isHttps ? https : http;
         const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
+            // Surface upstream socket aborts on the response stream so we can
+            // close `res` and free the client socket. Without this listener,
+            // an upstream RST mid-body either crashes Node ('error' event with
+            // no listener) or, in the buffered-image branch below, leaves the
+            // client request hanging forever because 'end' never fires.
+            proxyRes.on('error', (err) => {
+                console.warn(`[Proxy] upstream stream error: ${err.message} ${url}`);
+                if (!res.headersSent) {
+                    // Direct path failed before any bytes left our process —
+                    // hand off to the existing fallback chain.
+                    tryFallback(`upstream ${err.message}`);
+                } else if (!res.writableEnded) {
+                    res.destroy(err);
+                }
+            });
+
             res.status(proxyRes.statusCode);
 
             // Forward allowed headers
@@ -273,6 +289,11 @@ router.get('/', async (req, res) => {
         // WORKER_PROXY_URL is set, so even a poisoned direct path recovers.
         // Only runs when no bytes have been sent yet.
         let fallbackTried = false;
+        // Guard against a misbehaving upstream returning a huge payload via
+        // the buffered smartFetch path. /api/proxy only fronts TMDB/KP/wsrv
+        // (max ~5MB images), so anything beyond this cap is almost certainly
+        // a bug or hostile response.
+        const FALLBACK_MAX_BYTES = 25 * 1024 * 1024;
         async function tryFallback(reason) {
             if (fallbackTried || res.headersSent) {
                 if (!res.headersSent) {
@@ -284,13 +305,18 @@ router.get('/', async (req, res) => {
             try {
                 const result = await smartFetch(url, { timeout: 20000, responseType: 'arraybuffer' });
                 if (res.headersSent) return;
+                const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
+                if (buffer.length > FALLBACK_MAX_BYTES) {
+                    console.warn(`[Proxy] Fallback payload too large (${buffer.length} bytes), refusing: ${url}`);
+                    res.status(502).json({ error: 'Proxy fallback payload too large' });
+                    return;
+                }
                 res.status(result.status || 200);
                 const ct = result.headers?.['content-type'];
                 if (ct) res.set('content-type', ct);
                 const cl = result.headers?.['content-length'];
                 if (cl) res.set('content-length', cl);
                 res.set('X-Proxy-Source', 'smartfetch-fallback');
-                const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
                 if (isImageRequest(url) && result.status === 200) {
                     cacheImage(url, buffer).catch(() => {});
                 }

@@ -23,6 +23,10 @@ services:
       # Keep uTP off on Synology for now: peer-wire-swarm prefers uTP first
       # and current fallback behavior regresses throughput on these swarms.
       - TORRENT_UTP=0
+      # Bump libuv thread pool — Synology SMR/btrfs disks can stall fs ops
+      # for seconds, and the default pool of 4 threads starves DoH/DNS
+      # lookups (which run on the same pool) during heavy I/O.
+      - UV_THREADPOOL_SIZE=16
       # Host network on Synology does not need the shared-DHT workaround used for bridge mode.
       - TORRENT_DHT_MODE=internal
       # Keep the startup swarm wide enough to avoid torrent-stream choke-timeout churn.

@@ -958,6 +958,14 @@ export const boostTorrent = (infoHash) => {
         return
     }
 
+    // Skip boost for completed torrents. recoverSwarm calls engine.discover()
+    // which can stall the event loop on large _peers maps (mirrors the same
+    // gate already applied in startStallRecovery).
+    if (isTorrentCompleted(infoHash)) {
+        console.log(`[Turbo] Skip boost for completed torrent: ${infoHash}`)
+        return
+    }
+
     const currentMax = getSwarmConnectionLimit(engine.swarm)
     const peerSnapshot = getSwarmPeerSnapshot(engine.swarm)
     console.log(`[Turbo] Current connections: ${engine.swarm.wires?.length || 0}/${currentMax}`)
