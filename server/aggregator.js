@@ -189,7 +189,11 @@ export async function search(query, options = {}) {
                 provider.search(query),
                 timeoutPromise
             ])
-            recordSuccess(provider.name)
+            // Background queries (e.g. quality-badge discovery) must not
+            // alter the user-facing circuit state — otherwise a silent
+            // timeout in a hidden poll can open the circuit and starve
+            // the next interactive search of providers.
+            if (!options.background) recordSuccess(provider.name)
             return {
                 provider: provider.name,
                 results,
@@ -197,7 +201,7 @@ export async function search(query, options = {}) {
                 durationMs: Date.now() - startedAt
             }
         } catch (error) {
-            recordFailure(provider.name)
+            if (!options.background) recordFailure(provider.name)
             const message = error?.message || 'Unknown error'
             return {
                 provider: provider.name,
