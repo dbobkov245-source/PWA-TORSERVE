@@ -44,11 +44,19 @@ app.use(express.json())
 
 // ────────────────────────────────────────────────────────
 // 🛡️ Rate Limiting (Zero-Dependency)
-// 30 requests per minute per IP for /api/* routes
+// Separate buckets per IP: a general API window plus a dedicated
+// higher-volume window for /api/proxy/* image fetches.
+//
+// A single shared bucket either (a) blocks legit grid renders that
+// fan out 50+ poster requests at once, or (b) — if the proxy path is
+// exempted entirely (previous behaviour) — lets a LAN client hammer
+// the wsrv.nl relay and disk image cache without throttle.
 // ────────────────────────────────────────────────────────
-const rateLimitMap = new Map()
-const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 300 // 🔥 v2.4: increased from 60 to handle bulk poster loading
+const rateLimitMap = new Map()      // ip -> general window
+const proxyRateLimitMap = new Map() // ip -> /api/proxy window
+const RATE_LIMIT_WINDOW_MS = 60 * 1000
+const RATE_LIMIT_MAX = 300
+const PROXY_RATE_LIMIT_MAX = 600    // ~10 posters/sec sustained per client
 
 // O6: Use registerInterval for graceful shutdown
 let rateLimitCleanupId = null
@@ -56,44 +64,47 @@ let rateLimitCleanupId = null
 // Cleanup old entries every 5 minutes
 rateLimitCleanupId = registerInterval('rateLimitCleanup', () => {
     const now = Date.now()
-    for (const [ip, data] of rateLimitMap.entries()) {
-        if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
-            rateLimitMap.delete(ip)
+    for (const map of [rateLimitMap, proxyRateLimitMap]) {
+        for (const [ip, data] of map.entries()) {
+            if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+                map.delete(ip)
+            }
         }
     }
 }, 5 * 60 * 1000)
 
-app.use('/api/', (req, res, next) => {
-    // 🔥 Skip rate limiting for proxy requests (posters)
-    if (req.path.startsWith('/proxy')) {
-        return next()
-    }
-
-    const ip = req.ip || req.connection.remoteAddress || 'unknown'
+function applyWindowedLimit(map, ip, max, label, res) {
     const now = Date.now()
-
-    let entry = rateLimitMap.get(ip)
+    let entry = map.get(ip)
     if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
-        // New window
         entry = { windowStart: now, count: 1 }
-        rateLimitMap.set(ip, entry)
+        map.set(ip, entry)
     } else {
         entry.count++
     }
-
-    // Set rate limit headers
-    res.set('X-RateLimit-Limit', RATE_LIMIT_MAX)
-    res.set('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT_MAX - entry.count))
+    res.set('X-RateLimit-Limit', max)
+    res.set('X-RateLimit-Remaining', Math.max(0, max - entry.count))
     res.set('X-RateLimit-Reset', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS) / 1000))
-
-    if (entry.count > RATE_LIMIT_MAX) {
-        console.warn(`[RateLimit] Too many requests from ${ip}: ${entry.count}`)
-        return res.status(429).json({
+    if (entry.count > max) {
+        console.warn(`[RateLimit:${label}] Too many requests from ${ip}: ${entry.count}/${max}`)
+        res.status(429).json({
             error: 'Too many requests',
             retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000)
         })
+        return false
+    }
+    return true
+}
+
+app.use('/api/', (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown'
+
+    if (req.path.startsWith('/proxy')) {
+        if (!applyWindowedLimit(proxyRateLimitMap, ip, PROXY_RATE_LIMIT_MAX, 'proxy', res)) return
+        return next()
     }
 
+    if (!applyWindowedLimit(rateLimitMap, ip, RATE_LIMIT_MAX, 'api', res)) return
     next()
 })
 
