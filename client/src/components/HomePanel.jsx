@@ -14,7 +14,7 @@ import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
-import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
+import { DISCOVERY_CATEGORIES, fetchCategoryWithPages, getBackdropUrl } from '../utils/discover'
 import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -29,7 +29,9 @@ const HomePanel = ({
     onOpenMovieTorrents,
     onSearch, onClose
 }) => {
-    const MAX_HOME_QUALITY_TITLES = 60
+    // 12 ≈ first visible row. 60 used to trigger ~40s of background jacred
+    // searches on the NAS right after home load, starving poster requests.
+    const MAX_HOME_QUALITY_TITLES = 12
     const [categories, setCategories] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -72,24 +74,53 @@ const HomePanel = ({
 
     const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
 
-    // Data Loading
+    // Data Loading — progressive: each row renders as soon as its category
+    // arrives instead of waiting for all 12 (first paint = fastest category,
+    // not the slowest chain).
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                setLoading(true)
-                const results = await fetchAllDiscovery()
-                setCategories(results)
-                const nonEmptyRows = Object.values(results).filter(row => row.items?.length > 0)
-                setVisibleRows(nonEmptyRows)
-                if (nonEmptyRows[0]?.items?.[0]) setFocusedItem(nonEmptyRows[0].items[0])
-            } catch (err) {
-                console.error(err)
-                setError(err.message || 'Failed to load content')
-            } finally {
-                setLoading(false)
+        let cancelled = false
+        const seenIds = new Set()
+        const rowsById = {}
+
+        const applyRows = () => {
+            const ordered = DISCOVERY_CATEGORIES
+                .map(c => rowsById[c.id])
+                .filter(row => row?.items?.length > 0)
+            setVisibleRows(ordered)
+            setCategories(prev => ({ ...prev, ...rowsById }))
+            setLoading(false)
+            if (ordered[0]?.items?.[0]) {
+                setFocusedItem(prev => prev || ordered[0].items[0])
             }
         }
-        loadData()
+
+        const loadRow = async (category) => {
+            try {
+                const row = await fetchCategoryWithPages(category)
+                if (cancelled) return
+                const uniqueItems = (row.items || []).filter(item => {
+                    if (seenIds.has(item.id)) return false
+                    seenIds.add(item.id)
+                    return true
+                })
+                if (uniqueItems.length === 0) return
+                rowsById[category.id] = { ...row, items: uniqueItems }
+                applyRows()
+            } catch (err) {
+                console.error(`[HomePanel] Failed to load ${category.id}:`, err)
+            }
+        }
+
+        setLoading(true)
+        Promise.allSettled(DISCOVERY_CATEGORIES.map(loadRow)).then(() => {
+            if (cancelled) return
+            setLoading(false)
+            if (Object.keys(rowsById).length === 0) {
+                setError('Failed to load content')
+            }
+        })
+
+        return () => { cancelled = true }
     }, [])
 
     // ANTI-06: Prefetch Discovery - warm up bypass layers cache after initial load

@@ -275,29 +275,28 @@ export function getImageUrl(path, size = 'w342') {
     if (!path) return ''
     if (path.startsWith('http')) return path
 
+    // 1. Default: direct CDN mirror (e.g. imagetmdb.com), one network hop.
+    // Routing posters through the NAS /api/proxy looked attractive (shared
+    // disk cache) but measured 6-150s per uncached poster: wsrv.nl is slow
+    // from the NAS and the torrent engine stalls the server event loop.
+    // Mirrors stay fast and resilient in RU; auto-ban handles dead ones.
+    const proxyMode = localStorage.getItem(PROXY_MODE_KEY) === 'true'
+
+    if (!proxyMode) {
+        const mirror = getCurrentImageMirror()
+        return `https://${mirror}/t/p/${size}${path}`
+    }
+
+    // 2. All mirrors banned: prefer the home server proxy (disk cache +
+    // wsrv fallback chain) when an API base is configured.
     const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
     const apiBase = getApiBase()
-
-    // 1. Prefer the home server proxy whenever a reachable API base is configured.
-    // On Android TV this lets poster traffic reuse the NAS -> Amsterdam upstream path.
     if (apiBase) {
         return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
     }
 
-    // 2. For APK (TV) without a configured server: Use Dynamic Mirror System
-    // ARC-01: Check if Proxy Mode (WSRV) is forcibly enabled (due to all mirrors banned)
-    const proxyMode = localStorage.getItem(PROXY_MODE_KEY) === 'true'
-
-    if (proxyMode) {
-        // Fallback: WSRV Global Proxy
-        // Handles "ssl:" for TMDB bypassing
-        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
-    }
-
-    // Default: Use active CDN mirror (e.g. imagetmdb.com)
-    // This connects to Lampa's mirror system which is fast and resilient in RU
-    const mirror = getCurrentImageMirror()
-    return `https://${mirror}/t/p/${size}${path}`
+    // 3. Last resort: WSRV Global Proxy ("ssl:" bypasses TMDB GeoIP block)
+    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
 }
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────

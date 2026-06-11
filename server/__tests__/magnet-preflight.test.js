@@ -136,3 +136,21 @@ test('preflightResults keeps bare private-tracker magnets below public results w
     expect(publicIndex).toBe(0)
     expect(bareIndex).toBeGreaterThan(publicIndex)
 })
+
+test('rankWithoutProbe returns instant seeders-based ranking without probing', async () => {
+    const { rankWithoutProbe } = await import('../magnetPreflight.js')
+
+    const ranked = rankWithoutProbe([
+        makeResult('1111111111111111111111111111111111111111', 5),
+        makeResult('2222222222222222222222222222222222222222', 500),
+        { id: 'no-magnet', title: 'RuTracker item', seeders: 999, sizeBytes: 0 }
+    ])
+
+    expect(ranked[0].id).toBe('2222222222222222222222222222222222222222')
+    expect(ranked[0].playabilityStatus).toBe('unchecked')
+    expect(ranked[0].preflight).toBe(null)
+
+    const noMagnet = ranked.find((item) => item.id === 'no-magnet')
+    expect(noMagnet.playabilityStatus).toBe('unknown')
+    expect(noMagnet.playabilityScore).toBe(-1)
+})
