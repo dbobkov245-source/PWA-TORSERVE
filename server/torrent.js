@@ -76,6 +76,10 @@ export function _notifyTorrentChangeForTest() { _changeListeners.forEach(cb => c
 
 function notifyTorrentChange() { _changeListeners.forEach(cb => cb()) }
 
+// Public trigger for external backends (e.g. TorrServer failover jobs)
+// so their progress flows into the same SSE pipeline.
+export function notifyTorrentsChanged() { notifyTorrentChange() }
+
 // 🔥 Best Public Trackers — verified working (tested 2026-02-23)
 // Tested from Russian ISP: open.stealth.si:80 and torrent.eu.org:451 respond reliably.
 // opentrackr.org:1337 is ISP-blocked from Russia.

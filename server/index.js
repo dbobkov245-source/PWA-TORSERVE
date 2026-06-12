@@ -20,6 +20,17 @@ import { scheduleBackgroundRefresh, serializeStatusItems } from './statusRespons
 import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex } from './streamSource.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
+import {
+    initTsFailover,
+    getTsDownloadStatusItems,
+    getActiveTsJob,
+    removeTsJob,
+    getTsJobsMetrics,
+    isTsAvailable,
+    buildTsStreamUrl,
+    getTsConfig,
+    startDirectTsDownload
+} from './tsDownload.js'
 import { isMagnetHashMatch } from './utils/magnetHash.js'
 import { probeMagnet } from './magnetPreflight.js'
 
@@ -219,7 +230,11 @@ app.get('/api/metrics', async (req, res) => {
         uptimeSec: Math.round(process.uptime()),
         activeStreams,
         imageCache,
-        imageProxy: getImageProbeState()
+        imageProxy: getImageProbeState(),
+        torrServer: {
+            available: isTsAvailable(),
+            jobs: getTsJobsMetrics()
+        }
     })
 })
 
@@ -238,7 +253,7 @@ function buildStatusPayload() {
     if (state.serverStatus === 'circuit_open' || state.serverStatus === 'error') {
         return { serverStatus: state.serverStatus, lastStateChange: state.lastStateChange, torrents: [] }
     }
-    const torrents = getAllTorrents()
+    const torrents = [...getAllTorrents(), ...getTsDownloadStatusItems()]
     const localItems = getLocalLibrarySnapshot()
     const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
     return {
@@ -281,6 +296,7 @@ app.get('/api/status/stream', (req, res) => {
     // Push progress updates every 3s while active downloads exist
     const progressTimer = setInterval(() => {
         const isDownloading = getAllTorrents().some(t => (t.progress || 0) < 1 && (t.downloadSpeed || 0) > 0)
+            || getTsDownloadStatusItems().some(t => (t.progress || 0) < 1 && !t.error)
         if (isDownloading) {
             scheduleBackgroundRefresh(
                 () => refreshLocalLibrary(),
@@ -946,6 +962,19 @@ app.post('/api/add', async (req, res) => {
         const torrent = await addTorrent(magnet)
         res.json({ infoHash: torrent.infoHash, name: torrent.name })
     } catch (err) {
+        // Native engine can't reach DHT-only swarms (RU-blocked bootstrap,
+        // no MSE encryption). TorrServer resolves the same magnets in
+        // seconds — hand the download over instead of failing.
+        if (/metadata unavailable/i.test(err.message)) {
+            try {
+                const job = await startDirectTsDownload(magnet)
+                if (job) {
+                    return res.json({ infoHash: job.infoHash, name: job.name || 'Resolving…', backend: 'torrserve' })
+                }
+            } catch (tsErr) {
+                console.warn('[Add] TorrServer fallback failed:', tsErr.message)
+            }
+        }
         res.status(500).json({ error: err.message })
     }
 })
@@ -972,7 +1001,8 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
 
     // Default behavior is hard delete (destroy engine + delete files).
     // soft=1 keeps engine in frozen keep-alive cache without disk cleanup.
-    const success = removeTorrent(infoHash, !softDelete)
+    const tsJobRemoved = removeTsJob(infoHash)
+    const success = removeTorrent(infoHash, !softDelete) || tsJobRemoved
 
     if (success) {
         // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
@@ -1026,6 +1056,15 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const index = Number.parseInt(fileIndex, 10)
     if (!Number.isInteger(index) || index < 0) {
         return res.status(400).send('Invalid file index')
+    }
+
+    // Torrent migrated to TorrServer? Let the player pull bytes from it
+    // directly — keeps the Node event loop out of the video data path.
+    const tsJob = getActiveTsJob(infoHash)
+    if (tsJob) {
+        const file = tsJob.files?.[index]
+        if (!file) return res.status(404).send('File not found')
+        return res.redirect(302, buildTsStreamUrl(getTsConfig().url, tsJob.infoHash, file.tsId))
     }
 
     const engine = getRawTorrent(infoHash)
@@ -1251,6 +1290,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     startWatchdog().catch(err => {
         console.error('[Server] Watchdog failed:', err.message)
     })
+
+    // Hybrid backend: migrate crawling downloads to TorrServer sidecar
+    // (also resumes interrupted TorrServer downloads from db.tsDownloads)
+    initTsFailover()
 })
 
 // ────────────────────────────────────────────────────────

@@ -20,7 +20,9 @@ const defaultData = {
     // Favorites (FAV-01)
     favorites: [],             // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, addedAt }]
     // View History (HIST-01)
-    viewHistory: []            // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, lastWatched, genreIds }]
+    viewHistory: [],           // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, lastWatched, genreIds }]
+    // TorrServer failover downloads in progress (resumed on restart)
+    tsDownloads: []            // [{ infoHash, magnet, name }]
 }
 const dbPath = process.env.DB_PATH || 'db.json'
 const adapter = new JSONFile(dbPath)
@@ -43,6 +45,7 @@ db.data.autoDownloadRules ||= []
 db.data.autoDownloadHistory ||= []
 db.data.favorites ||= []
 db.data.viewHistory ||= []
+db.data.tsDownloads ||= []
 
 await db.write()
 
