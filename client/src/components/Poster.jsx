@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient, extractQualityBadges } from '../utils/helpers'
-import { getMetadata, resolveMetadata } from '../utils/tmdbClient'
+import { getMetadata, resolveMetadata, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount }) => {
@@ -57,7 +57,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                     className="w-full h-full object-cover transition-opacity duration-500"
                     loading="lazy"
                     decoding="async"
-                    onError={() => setBgImage(null)}
+                    onError={() => setBgImage(getNextImageUrl(bgImage))}
                 />
             ) : (
                 <>

@@ -224,8 +224,10 @@ export function getCurrentImageMirror() {
         return freeMirrors[0]
     }
 
-    // All mirrors banned - reset and try first
-    IMAGE_MIRRORS.forEach(m => { mirrorStats[m].banned = false })
+    // All mirrors banned → switch to proxy mode permanently (until reload).
+    // The old "reset bans and retry first mirror" looped forever against a
+    // dead DNS and fought the proxy-mode switch in reportBrokenImage.
+    localStorage.setItem(PROXY_MODE_KEY, 'true')
     return IMAGE_MIRRORS[0]
 }
 
@@ -297,6 +299,57 @@ export function getImageUrl(path, size = 'w342') {
 
     // 3. Last resort: WSRV Global Proxy ("ssl:" bypasses TMDB GeoIP block)
     return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
+}
+
+// Matches /t/p/<size>/<file> in any mirror / tmdb / proxied poster URL
+const IMAGE_PATH_RE = /\/t\/p\/(w\d+|original)(\/[^/?&]+)/
+
+/**
+ * Per-image fallback chain for <img onError>.
+ * Mirror (DNS-dependent) → home server proxy (LAN IP, works with dead DNS)
+ * → wsrv.nl → null. The global mirror auto-ban (20 errors/10s) is too slow
+ * when every mirror fails at once (e.g. TV's DNS outage) — each image must
+ * recover on its own first error instead.
+ *
+ * @param {string} failedSrc - src that just fired onError
+ * @returns {string|null} next URL to try, or null when out of options
+ */
+export function getNextImageUrl(failedSrc) {
+    if (!failedSrc || typeof failedSrc !== 'string') return null
+    if (failedSrc.includes('wsrv.nl')) return null
+
+    // Proxied URLs carry the image path percent-encoded inside ?url=
+    let match = failedSrc.match(IMAGE_PATH_RE)
+    if (!match) {
+        try { match = decodeURIComponent(failedSrc).match(IMAGE_PATH_RE) } catch { /* malformed */ }
+    }
+    if (!match) return null
+    const [, size, file] = match
+
+    const originalUrl = `https://image.tmdb.org/t/p/${size}${file}`
+
+    if (failedSrc.includes('/api/proxy')) {
+        // Server proxy failed too → wsrv direct
+        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${file}&output=webp`
+    }
+
+    const apiBase = getApiBase()
+    if (apiBase) {
+        return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
+    }
+
+    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${file}&output=webp`
+}
+
+/**
+ * Drop-in <img onError> handler: advances the element's src through the
+ * fallback chain in place, no component state required.
+ */
+export function handleImageErrorFallback(e) {
+    const img = e?.currentTarget
+    if (!img?.src) return
+    const next = getNextImageUrl(img.src)
+    if (next && next !== img.src) img.src = next
 }
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────

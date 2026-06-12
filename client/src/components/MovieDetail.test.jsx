@@ -43,6 +43,7 @@ vi.mock('../utils/discover', () => ({
 
 vi.mock('../utils/tmdbClient', () => ({
     reportBrokenImage: vi.fn(),
+    handleImageErrorFallback: vi.fn(),
     getCredits: vi.fn(async () => ({ crew: [], cast: [] })),
     getVideos: vi.fn(async () => ({ results: [] })),
     getDetails: vi.fn(async () => ({ seasons: [] })),

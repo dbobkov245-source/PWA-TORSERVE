@@ -45,3 +45,35 @@ describe('getImageUrl poster routing', () => {
         expect(url).toBe('https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w342/abc123.jpg&output=webp')
     })
 })
+
+describe('getNextImageUrl fallback chain', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        localStorage.setItem('serverUrl', 'http://192.168.1.79:3000')
+    })
+
+    it('mirror failure falls back to the server proxy', async () => {
+        const { getNextImageUrl } = await import('./tmdbClient.js')
+        const next = getNextImageUrl('https://imagetmdb.com/t/p/w342/abc.jpg')
+        expect(next).toBe(
+            'http://192.168.1.79:3000/api/proxy?url=' +
+            encodeURIComponent('https://image.tmdb.org/t/p/w342/abc.jpg')
+        )
+    })
+
+    it('server proxy failure falls back to wsrv', async () => {
+        const { getNextImageUrl } = await import('./tmdbClient.js')
+        const next = getNextImageUrl(
+            'http://192.168.1.79:3000/api/proxy?url=' +
+            encodeURIComponent('https://image.tmdb.org/t/p/w342/abc.jpg')
+        )
+        expect(next).toBe('https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w342/abc.jpg&output=webp')
+    })
+
+    it('wsrv failure ends the chain', async () => {
+        const { getNextImageUrl } = await import('./tmdbClient.js')
+        expect(getNextImageUrl('https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w342/abc.jpg&output=webp')).toBe(null)
+        expect(getNextImageUrl(null)).toBe(null)
+        expect(getNextImageUrl('https://example.com/nopath.png')).toBe(null)
+    })
+})

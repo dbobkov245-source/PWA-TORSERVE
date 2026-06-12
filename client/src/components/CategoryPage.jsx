@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { getPosterUrl, getTitle, getYear, DISCOVERY_CATEGORIES } from '../utils/discover'
-import { reportBrokenImage, filterDiscoveryResults } from '../utils/tmdbClient'
+import { reportBrokenImage, filterDiscoveryResults, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const CategoryPage = ({
@@ -130,8 +130,9 @@ const CategoryPage = ({
 
 const CategoryItem = ({ item, onClick }) => {
     const spatialRef = useSpatialItem('category')
-    const [imgErr, setImgErr] = useState(false)
     const posterUrl = getPosterUrl(item)
+    // Per-image fallback chain: mirror → server proxy → wsrv → title card
+    const [imgSrc, setImgSrc] = useState(posterUrl)
     const title = getTitle(item)
 
     return (
@@ -140,11 +141,11 @@ const CategoryItem = ({ item, onClick }) => {
             onClick={onClick}
             className="focusable rounded-lg transition-all duration-200 relative overflow-hidden focus:outline-none focus:ring-4 focus:ring-blue-500 focus:scale-105 focus:z-10 aspect-[2/3]"
         >
-            {posterUrl && !imgErr ? (
+            {imgSrc ? (
                 <img
-                    src={posterUrl}
+                    src={imgSrc}
                     className="w-full h-full object-cover"
-                    onError={() => setImgErr(true)}
+                    onError={() => setImgSrc(getNextImageUrl(imgSrc))}
                 />
             ) : (
                 <div className="w-full h-full bg-gray-800 flex items-center justify-center p-2 text-white text-xs text-center">{title}</div>

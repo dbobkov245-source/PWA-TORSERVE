@@ -1,6 +1,6 @@
 import React, { useRef, useState, forwardRef } from 'react'
 import { getPosterUrl, getTitle } from '../utils/discover'
-import { reportBrokenImage } from '../utils/tmdbClient'
+import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getBadgeStyle } from '../hooks/useQualityBadges'
 
@@ -9,16 +9,22 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }
     const spatialRef = useSpatialItem('main')
     const posterUrl = getPosterUrl(item)
     const title = getTitle(item)
+    // Per-image fallback chain: mirror → server proxy → wsrv → broken
+    const [imgSrc, setImgSrc] = useState(posterUrl)
     const [isBroken, setIsBroken] = useState(() => imageErrorsRef.current.has(posterUrl))
     const originalTitle = item?.original_title || item?.original_name
     const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
 
     const handleImageError = () => {
-        if (posterUrl) {
-            imageErrorsRef.current.add(posterUrl)
-            reportBrokenImage?.(posterUrl)
-            setIsBroken(true)
+        if (!imgSrc) return
+        reportBrokenImage?.(imgSrc)
+        const next = getNextImageUrl(imgSrc)
+        if (next) {
+            setImgSrc(next)
+            return
         }
+        imageErrorsRef.current.add(posterUrl)
+        setIsBroken(true)
     }
 
     return (
@@ -33,9 +39,9 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }
             onKeyDown={(e) => { if (e.key === 'Enter') onItemClick?.(item) }}
             onFocus={onFocus}
         >
-            {posterUrl && !isBroken ? (
+            {imgSrc && !isBroken ? (
                 <img
-                    src={posterUrl}
+                    src={imgSrc}
                     alt={title}
                     className="w-full h-full object-cover pointer-events-none"
                     loading="lazy"
