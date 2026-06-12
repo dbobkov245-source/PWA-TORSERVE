@@ -27,7 +27,7 @@ import {
     removeTsJob,
     getTsJobsMetrics,
     isTsAvailable,
-    buildTsStreamUrl,
+    buildPublicTsStreamUrl,
     getTsConfig,
     startDirectTsDownload
 } from './tsDownload.js'
@@ -1060,11 +1060,12 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
     // Torrent migrated to TorrServer? Let the player pull bytes from it
     // directly — keeps the Node event loop out of the video data path.
+    // The redirect must use a client-reachable host, not the docker bridge.
     const tsJob = getActiveTsJob(infoHash)
     if (tsJob) {
         const file = tsJob.files?.[index]
         if (!file) return res.status(404).send('File not found')
-        return res.redirect(302, buildTsStreamUrl(getTsConfig().url, tsJob.infoHash, file.tsId))
+        return res.redirect(302, buildPublicTsStreamUrl(req, tsJob.infoHash, file.tsId))
     }
 
     const engine = getRawTorrent(infoHash)

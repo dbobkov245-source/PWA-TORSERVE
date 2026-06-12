@@ -125,3 +125,11 @@ test('extractMagnetHash extracts lowercase hex hash', async () => {
     expect(extractMagnetHash('magnet:?xt=urn:btih:notahash')).toBe(null)
     expect(extractMagnetHash(null)).toBe(null)
 })
+
+test('buildPublicTsStreamUrl uses client-reachable host, not docker bridge', async () => {
+    const { buildPublicTsStreamUrl } = await import('../tsDownload.js')
+    const url = buildPublicTsStreamUrl({ hostname: '192.168.1.79' }, 'deadbeef', 2, {})
+    expect(url).toBe('http://192.168.1.79:8090/stream/file?link=deadbeef&index=2&play')
+    const custom = buildPublicTsStreamUrl({ hostname: 'nas.local' }, 'abc', 1, { TS_PUBLIC_PORT: '9999' })
+    expect(custom).toBe('http://nas.local:9999/stream/file?link=abc&index=1&play')
+})

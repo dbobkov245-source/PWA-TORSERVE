@@ -63,6 +63,18 @@ export function buildTsStreamUrl(tsUrl, infoHash, tsFileId) {
     return `${tsUrl.replace(/\/$/, '')}/stream/file?link=${infoHash}&index=${tsFileId}&play`
 }
 
+/**
+ * Stream URL reachable by the CLIENT (player on the TV). TS_URL points at
+ * the docker bridge (172.17.0.1) which only resolves inside the NAS —
+ * redirecting a player there yields "cannot play content". Rebuild the URL
+ * on the host the client itself used, with TorrServer's published port.
+ */
+export function buildPublicTsStreamUrl(req, infoHash, tsFileId, env = process.env) {
+    const host = req.hostname || req.headers?.host?.split(':')[0] || '127.0.0.1'
+    const port = env.TS_PUBLIC_PORT || '8090'
+    return `http://${host}:${port}/stream/file?link=${infoHash}&index=${tsFileId}&play`
+}
+
 export function pickVideoFiles(fileStats = []) {
     return fileStats.filter((f) => {
         const ext = path.extname(f?.path || '').toLowerCase()
