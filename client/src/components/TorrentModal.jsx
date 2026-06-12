@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { App } from '@capacitor/app'
+import { pushBackHandler } from '../utils/backButton.js'
 import { cleanTitle, formatSize, organizeFiles } from '../utils/helpers'
 import { getMetadata } from '../utils/tmdbClient'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -74,22 +74,17 @@ const TorrentModal = ({
         }
     }, [])
 
+    // Registry instead of a raw Capacitor listener: Capacitor fires every
+    // listener at once, which would double-trigger against the global chain.
     useEffect(() => {
-        let backListener
-        const setupListener = async () => {
-            backListener = await App.addListener('backButton', () => {
-                if (showDeleteConfirm) {
-                    setShowDeleteConfirm(false)
-                    return
-                }
-                onClose()
-            })
-        }
-        setupListener()
-
-        return () => {
-            if (backListener) backListener.remove()
-        }
+        return pushBackHandler(() => {
+            if (showDeleteConfirm) {
+                setShowDeleteConfirm(false)
+                return true
+            }
+            onClose()
+            return true
+        })
     }, [onClose, showDeleteConfirm])
 
     useEffect(() => {

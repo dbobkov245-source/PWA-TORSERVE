@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { App as CapacitorApp } from '@capacitor/app'
+import { pushBackHandler } from '../utils/backButton.js'
 import { getImageUrl, getPersonDetails, getPersonCredits, getPersonImages , handleImageErrorFallback } from '../utils/tmdbClient'
 import { getPosterUrl } from '../utils/discover'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -69,14 +69,12 @@ const PersonDetail = ({
         backBtnSpatialRef(node)
     }, [backBtnSpatialRef])
 
-    // Handle Hardware Back Button
+    // Hardware Back via shared registry (single Capacitor listener app-wide)
     useEffect(() => {
-        const handleHardwareBack = async () => {
+        return pushBackHandler(() => {
             onBack()
-        }
-
-        const listener = CapacitorApp.addListener('backButton', handleHardwareBack)
-        return () => { listener.then(h => h.remove()) }
+            return true
+        })
     }, [onBack])
 
     // Load Data

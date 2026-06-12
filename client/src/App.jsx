@@ -8,6 +8,7 @@ import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
+import { dispatchSystemBack } from './utils/backButton.js'
 
 // Components
 import Poster from './components/Poster'
@@ -286,6 +287,24 @@ function App() {
       listenerPromise.then(handle => handle.remove())
     }
   }, [serverUrl, fetchStatus])
+
+  // ─── System Back (TV remote) ───
+  // The remote's Back key is an Android system event — it never reaches the
+  // DOM keydown path that useSpatialArbiter handles. Route it through the
+  // back-handler registry (modal-level handlers first), with the same
+  // central handleBack chain as fallback. Listener registers once; the ref
+  // always points at the latest handleBack closure.
+  const handleBackRef = useRef(handleBack)
+  useEffect(() => { handleBackRef.current = handleBack }, [handleBack])
+
+  useEffect(() => {
+    const listenerPromise = CapacitorApp.addListener('backButton', () => {
+      dispatchSystemBack(() => handleBackRef.current())
+    })
+    return () => {
+      listenerPromise.then(handle => handle.remove())
+    }
+  }, [])
 
   const handleVoiceSearch = useCallback(async () => {
     const query = await startListening()
