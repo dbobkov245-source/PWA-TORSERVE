@@ -3,7 +3,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery, getImageUrl } from '../utils/discover'
 import { getGenreObjectsForItem } from '../utils/genres'
-import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations, getCollection, getKeywords, getDiscoverByKeywords } from '../utils/tmdbClient'
+import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations, getCollection, getKeywords, getDiscoverByKeywords, handleImageErrorFallback } from '../utils/tmdbClient'
 import { getFavorites, addFavorite, removeFavorite, recordHistory } from '../utils/serverApi'
 import { Capacitor } from '@capacitor/core'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -30,7 +30,7 @@ const CastButton = ({ actor, onClick, subtitle }) => {
             onClick={() => onClick?.(actor)}
             className="focusable relative flex-shrink-0 w-24 h-36 bg-gray-800 rounded-lg overflow-hidden focus:ring-4 focus:ring-blue-500 shadow-xl"
         >
-            <img src={getImageUrl(actor.profile_path, 'w185')} className="w-full h-full object-cover" />
+            <img onError={handleImageErrorFallback} src={getImageUrl(actor.profile_path, 'w185')} className="w-full h-full object-cover" />
             <div className="absolute bottom-0 inset-x-0 bg-black/60 p-1">
                 <p className="text-[10px] text-white font-bold truncate">{actor.name}</p>
                 {subtitle && <p className="text-[9px] text-gray-400 truncate">{subtitle}</p>}
@@ -47,7 +47,7 @@ const SeasonButton = ({ season, active, onClick, posterUrl }) => {
             onClick={() => onClick?.(season)}
             className={`focusable relative flex-shrink-0 w-32 aspect-[2/3] rounded-xl overflow-hidden focus:ring-4 focus:ring-blue-500 transition-all ${active ? 'ring-2 ring-green-500' : ''}`}
         >
-            <img src={getPosterUrl(season, 'w342') || posterUrl} className="w-full h-full object-cover" />
+            <img onError={handleImageErrorFallback} src={getPosterUrl(season, 'w342') || posterUrl} className="w-full h-full object-cover" />
             <div className="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-xs text-white font-bold">
                 Сезон {season.season_number}
             </div>
@@ -64,7 +64,7 @@ const EpisodeRow = ({ ep, onClick }) => {
             className="focusable w-full flex items-center gap-4 p-3 bg-gray-800/40 focus:bg-blue-600 text-left rounded-xl transition-all"
         >
             <div className="w-24 aspect-video bg-black rounded overflow-hidden flex-shrink-0">
-                <img src={getImageUrl(ep.still_path, 'w300')} className="w-full h-full object-cover" />
+                <img onError={handleImageErrorFallback} src={getImageUrl(ep.still_path, 'w300')} className="w-full h-full object-cover" />
             </div>
             <div className="flex-1">
                 <div className="text-sm font-bold text-white">E{ep.episode_number}. {ep.name}</div>
@@ -82,7 +82,7 @@ const RecButton = ({ rec, onClick }) => {
             onClick={() => onClick?.(rec)}
             className="focusable relative flex-shrink-0 w-32 aspect-[2/3] rounded-xl shadow-lg focus:ring-4 focus:ring-blue-500 transition-all overflow-hidden"
         >
-            <img src={getPosterUrl(rec, 'w342')} className="w-full h-full object-cover" />
+            <img onError={handleImageErrorFallback} src={getPosterUrl(rec, 'w342')} className="w-full h-full object-cover" />
         </button>
     )
 }
@@ -274,7 +274,7 @@ const MovieDetail = ({
                 <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-10 max-w-7xl mx-auto">
                     {/* Poster */}
                     <div className="hidden md:block">
-                        <img src={posterUrl} className="w-[220px] aspect-[2/3] rounded-xl shadow-2xl object-cover border border-gray-700" />
+                        <img onError={handleImageErrorFallback} src={posterUrl} className="w-[220px] aspect-[2/3] rounded-xl shadow-2xl object-cover border border-gray-700" />
                     </div>
 
                     {/* Info */}

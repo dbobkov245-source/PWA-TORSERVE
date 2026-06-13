@@ -69,6 +69,8 @@ test('serializeStatusItems preserves the public /api/status payload shape', asyn
         knownPeers: 7,
         queuedPeers: 5,
         eta: 4,
+        backend: 'native',
+        error: null,
         files: [{
             name: 'video.mkv',
             length: 1000,

@@ -34,14 +34,33 @@ const WORKER_PROXY_URL = process.env.WORKER_PROXY_URL || '';
 // Google sends ECS by default and is therefore easy to poison.
 const DOH_PROVIDERS = [
     { name: 'Cloudflare', url: 'https://cloudflare-dns.com/dns-query' },
-    { name: 'Google', url: 'https://dns.google/resolve' },
-    { name: 'Quad9', url: 'https://dns.quad9.net:5053/dns-query' }
+    { name: 'Google', url: 'https://dns.google/resolve' }
+    // Quad9 dropped: :5053 is filtered by RU ISPs and :443/dns-query enforces
+    // HTTP/2 (Node's fetch is HTTP/1.1 → 505). Cloudflare-first + poisoned-IP
+    // rejection on Google already covers the resilience need; race overhead
+    // for a third always-failing provider is pure latency.
 ];
 
 // Reject obviously poisoned/SSRF answers (RU ISP returns 127.0.0.1 for
 // blocked CDNs). resolveIP throws for these so race falls through to a
 // clean provider instead of caching the lie for 10 minutes.
-const POISONED_IP_RE = /^(127\.|0\.0\.0\.0$|0\.|169\.254\.|::1$|fe80:|::$)/;
+// Also reject any RFC-1918 / CGNAT / link-local target — DoH for a public
+// CDN must never resolve into the LAN; if it does, an upstream resolver
+// is lying or the answer would enable an SSRF pivot through our server.
+const POISONED_IP_RE = new RegExp([
+    '^127\\.',                          // 127.0.0.0/8 loopback
+    '^0\\.',                            // 0.0.0.0/8 "this network"
+    '^10\\.',                           // 10.0.0.0/8 RFC1918
+    '^172\\.(1[6-9]|2\\d|3[01])\\.',    // 172.16.0.0/12 RFC1918
+    '^192\\.168\\.',                    // 192.168.0.0/16 RFC1918
+    '^100\\.(6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])\\.', // 100.64.0.0/10 CGNAT
+    '^169\\.254\\.',                    // 169.254.0.0/16 link-local
+    '^::1$',                            // IPv6 loopback
+    '^fe80:',                           // IPv6 link-local
+    '^fc[0-9a-f][0-9a-f]?:',            // IPv6 ULA fc00::/7 (fc00–fdff)
+    '^fd[0-9a-f][0-9a-f]?:',
+    '^::$'                              // IPv6 unspecified
+].join('|'), 'i');
 function isPoisonedIP(ip) {
     return typeof ip !== 'string' || POISONED_IP_RE.test(ip);
 }
@@ -413,6 +432,14 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
             });
 
         function handleResponse(res) {
+            // Surface socket-level aborts/resets on the response stream.
+            // Without this, an upstream RST mid-body emits an 'error' event
+            // on `res` with no listener attached → Node.js crash.
+            res.on('error', (err) => {
+                if (DEBUG) console.log(`[SmartFetch] response stream error: ${err.message}`);
+                reject(err);
+            });
+
             // FIX-2: Handle redirects
             if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
                 const redirectUrl = new URL(res.headers.location, urlStr).href;

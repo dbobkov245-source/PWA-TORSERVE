@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { useVoiceSearch } from '../hooks/useVoiceSearch.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -40,7 +40,8 @@ const getPlayabilityMeta = (status, preflightPeers) => {
     }
 }
 
-const SearchResultItem = ({ item, onAdd, addingItemKey }) => {
+// memo: result rows must not re-render while the user types in the input
+const SearchResultItem = memo(({ item, onAdd, addingItemKey }) => {
     const rowRef = useSpatialItem('search')
     const playability = getPlayabilityMeta(item.playabilityStatus, item.preflight?.peers || 0)
     const actionKey = getSearchResultActionKey(item)
@@ -69,7 +70,9 @@ const SearchResultItem = ({ item, onAdd, addingItemKey }) => {
             <span className="ml-2 text-gray-500 group-focus:text-green-400 text-lg transition-colors">{isActivePending ? '⏳' : '➕'}</span>
         </button>
     )
-}
+})
+
+SearchResultItem.displayName = 'SearchResultItem'
 
 const SearchFilter = ({ tag, active, onClick }) => {
     const spatialRef = useSpatialItem('search')
@@ -123,6 +126,17 @@ const SearchPanel = ({
     const [activeFilters, setActiveFilters] = useState([])
     const [sortBy, setSortBy] = useState('smart')
     const [providerTooltip, setProviderTooltip] = useState(null)
+
+    // Keystrokes stay local: lifting searchQuery to App re-rendered the whole
+    // tree (incl. every result row) per character — visible input lag on TV.
+    // Parent state syncs only on submit (Enter / 🔍 / voice).
+    const [localQuery, setLocalQuery] = useState(searchQuery)
+    useEffect(() => { setLocalQuery(searchQuery) }, [searchQuery])
+
+    const commitSearch = (q = localQuery) => {
+        onSearchQueryChange(q)
+        onSearch(q)
+    }
 
     // Centralized voice search (no more prompt() fallback)
     const { startListening, isListening } = useVoiceSearch()
@@ -208,12 +222,12 @@ const SearchPanel = ({
             <div className="flex gap-2 mb-4">
                 <input
                     ref={inputRef}
-                    value={searchQuery}
-                    onChange={(e) => onSearchQueryChange(e.target.value)}
+                    value={localQuery}
+                    onChange={(e) => setLocalQuery(e.target.value)}
                     onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                             e.preventDefault()
-                            onSearch(searchQuery)
+                            commitSearch()
                         }
                     }}
                     placeholder="Поиск торрентов..."
@@ -228,15 +242,18 @@ const SearchPanel = ({
                 >🎤</button>
                 <button
                     ref={searchRef}
-                    onClick={() => onSearch(searchQuery)}
+                    onClick={() => commitSearch()}
                     disabled={searchLoading}
                     tabIndex="0"
                     className="focusable bg-purple-600 px-6 py-3 rounded-lg font-bold disabled:opacity-50"
                 >{searchLoading ? '...' : '🔍'}</button>
                 <button
                     ref={refreshRef}
-                    onClick={() => onForceRefresh?.(searchQuery)}
-                    disabled={searchLoading || !searchQuery?.trim()}
+                    onClick={() => {
+                        onSearchQueryChange(localQuery)
+                        onForceRefresh?.(localQuery)
+                    }}
+                    disabled={searchLoading || !localQuery?.trim()}
                     tabIndex="0"
                     className="focusable bg-gray-700 px-4 py-3 rounded-lg font-bold disabled:opacity-50"
                     title="Искать без кэша"

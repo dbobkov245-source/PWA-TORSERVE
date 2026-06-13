@@ -189,6 +189,28 @@ async function runWithConcurrency(tasks, concurrency) {
 }
 
 /**
+ * Rank results without probing the swarm.
+ * Same scoring as preflightResults but every magnet stays 'unchecked',
+ * so callers get an instant seeders/size-based ordering.
+ *
+ * @param {Array} results - Search results from aggregator
+ * @returns {Array} Results enriched with neutral playability data, sorted
+ */
+export function rankWithoutProbe(results) {
+    if (!results || results.length === 0) return results
+
+    const enriched = results.map(r => ({
+        ...r,
+        playabilityStatus: r.magnet ? 'unchecked' : 'unknown',
+        playabilityScore: r.magnet ? calcScore(r, null) : -1,
+        preflight: null
+    }))
+
+    enriched.sort((a, b) => b.playabilityScore - a.playabilityScore)
+    return enriched
+}
+
+/**
  * Preflight top-N results from search output
  * Adds playabilityStatus, playabilityScore, and preflight data to each result.
  * Results without magnet (e.g. RuTracker) get status 'unknown'.

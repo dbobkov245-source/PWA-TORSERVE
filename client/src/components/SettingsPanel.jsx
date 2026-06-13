@@ -212,6 +212,11 @@ const SettingsPanel = ({
             // 10. WSRV Proxy (image proxy)
             await check('wsrv.nl', `${WSRV_PROXY}https://image.tmdb.org/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg`, () => 'OK')
 
+            // 11. Server Proxy (NAS) — LAN IP, работает даже при мёртвом DNS
+            if (serverUrl) {
+                await check('Server Proxy (НАС)', `${serverUrl}/api/proxy?url=${encodeURIComponent('https://image.tmdb.org/t/p/w92/8uO0gUM8aNqYLs1OsTBQiXu0fEv.jpg')}`, () => 'OK')
+            }
+
             // Summary line
             const working = results.filter(r => r.status === '✅').length
             const total = results.filter(r => r.status !== '').length

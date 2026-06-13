@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { App } from '@capacitor/app'
+import { pushBackHandler } from '../utils/backButton.js'
 import { cleanTitle, formatSize, organizeFiles } from '../utils/helpers'
 import { getMetadata } from '../utils/tmdbClient'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -29,13 +29,41 @@ const EpisodeItem = ({ file, idx, onClick }) => {
     )
 }
 
+const TsBoostButton = ({ torrent, onForceTs }) => {
+    const btnRef = useSpatialItem('modal')
+    const [state, setState] = useState('idle') // idle | busy | done | error
+
+    if (!onForceTs || torrent.isReady || (torrent.progress || 0) >= 0.99 || torrent.backend === 'torrserve') {
+        return null
+    }
+
+    const label = state === 'busy' ? '⏳ Переключаем...'
+        : state === 'done' ? '✅ Качается через TorrServer'
+        : state === 'error' ? '❌ Не удалось — подробности в логе'
+        : '🚀 Ускорить через TorrServer'
+
+    return (
+        <button
+            ref={btnRef}
+            disabled={state === 'busy' || state === 'done'}
+            onClick={async () => {
+                setState('busy')
+                const ok = await onForceTs(torrent.infoHash)
+                setState(ok ? 'done' : 'error')
+            }}
+            className="focusable w-full bg-cyan-700 text-white py-2 rounded font-bold focus:bg-cyan-600 mb-2 disabled:opacity-60"
+        >{label}</button>
+    )
+}
+
 const TorrentModal = ({
     torrent,
     onClose,
     onPlay,
     onPlayAll,
     onCopyUrl,
-    onDelete
+    onDelete,
+    onForceTs
 }) => {
     const [showFullOverview, setShowFullOverview] = useState(false)
     const [metadata, setMetadata] = useState(null)
@@ -74,22 +102,17 @@ const TorrentModal = ({
         }
     }, [])
 
+    // Registry instead of a raw Capacitor listener: Capacitor fires every
+    // listener at once, which would double-trigger against the global chain.
     useEffect(() => {
-        let backListener
-        const setupListener = async () => {
-            backListener = await App.addListener('backButton', () => {
-                if (showDeleteConfirm) {
-                    setShowDeleteConfirm(false)
-                    return
-                }
-                onClose()
-            })
-        }
-        setupListener()
-
-        return () => {
-            if (backListener) backListener.remove()
-        }
+        return pushBackHandler(() => {
+            if (showDeleteConfirm) {
+                setShowDeleteConfirm(false)
+                return true
+            }
+            onClose()
+            return true
+        })
     }, [onClose, showDeleteConfirm])
 
     useEffect(() => {
@@ -195,6 +218,9 @@ const TorrentModal = ({
                         onClick={() => allowInteraction && firstVideo && onPlay(torrent.infoHash, firstVideo.index, firstVideo.name)}
                         className={`focusable w-full bg-white text-black py-3 rounded font-bold focus:bg-yellow-400 mb-2 ${!allowInteraction ? 'opacity-50' : ''}`}
                     >▶ Play</button>
+
+                    {/* Manual TorrServer boost for crawling downloads */}
+                    <TsBoostButton torrent={torrent} onForceTs={onForceTs} />
 
                     {/* Play All */}
                     {mainList.length > 1 && (

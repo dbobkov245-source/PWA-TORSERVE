@@ -61,6 +61,12 @@ sharedDHT.on('ready', () => console.log('[DHT] Shared DHT bootstrapped'))
 sharedDHT.on('error', (err) => console.warn('[DHT] Error:', err.message))
 
 const engines = new Map()
+// Tracks infoHashes whose engine is being constructed but has not yet
+// reached the 'ready' event (engines.set happens inside that handler).
+// Without this guard, two concurrent addTorrent() calls for the same
+// magnet both pass the dedup loop and spawn duplicate torrent-stream
+// engines for one infoHash.
+const pendingEngines = new Set()
 
 // ─── Change Emitter (for SSE) ────────────────────────────────
 const _changeListeners = new Set()
@@ -69,6 +75,10 @@ export function offTorrentChange(cb) { _changeListeners.delete(cb) }
 export function _notifyTorrentChangeForTest() { _changeListeners.forEach(cb => cb()) }
 
 function notifyTorrentChange() { _changeListeners.forEach(cb => cb()) }
+
+// Public trigger for external backends (e.g. TorrServer failover jobs)
+// so their progress flows into the same SSE pipeline.
+export function notifyTorrentsChanged() { notifyTorrentChange() }
 
 // 🔥 Best Public Trackers — verified working (tested 2026-02-23)
 // Tested from Russian ISP: open.stealth.si:80 and torrent.eu.org:451 respond reliably.
@@ -472,6 +482,15 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }
         }
 
+        // Pending engine for the same hash is already being constructed
+        // by another concurrent caller. Reject so this caller can retry
+        // (or wait); creating a second engine here corrupts the engines
+        // Map and leaks peer-wire-swarm sockets.
+        if (pendingEngines.has(infoHash)) {
+            console.log(`[Torrent] Dedup: Engine pending for hash ${infoHash}`)
+            return reject(new Error(`Torrent ${infoHash} is already being added; retry after ready`))
+        }
+
         // Check frozen torrents (Keep-Alive: instant resume!)
         if (frozenTorrents.has(infoHash)) {
             console.log(`[Keep-Alive] Reusing frozen torrent: ${infoHash}`)
@@ -483,6 +502,10 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             if (engine.swarm?.resume) engine.swarm.resume()
             return resolve(formatEngine(engine))
         }
+
+        // Claim the slot AFTER frozen fast-path so a fast-resume doesn't
+        // need to clear pending state.
+        pendingEngines.add(infoHash)
 
         const path = process.env.DOWNLOAD_PATH || './downloads'
         console.log('[Torrent] Adding magnet, download path:', path)
@@ -511,6 +534,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }))
         } catch (err) {
             console.error('[Torrent] Failed to create engine:', err.message)
+            pendingEngines.delete(infoHash)
             return reject(err)
         }
 
@@ -561,6 +585,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
             engines.set(magnetURI, engine)
             engines.set(engine.infoHash, engine)
+            pendingEngines.delete(infoHash)
 
             // 🔄 Invalidate status cache on new torrent
             invalidateStatusCache()
@@ -586,6 +611,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             }
 
             console.error('[Torrent] Engine error:', err.message)
+            pendingEngines.delete(infoHash)
             engine.destroy()
             reject(err)
         })
@@ -625,6 +651,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
                 clearInterval(logInterval)
                 console.warn(`[Torrent] Timeout: metadata unavailable after ${totalTimeoutSec}s`)
+                pendingEngines.delete(infoHash)
                 engine.destroy()
                 reject(new Error(`Torrent timeout: metadata unavailable within ${totalTimeoutSec} seconds`))
             }, METADATA_TIMEOUT_MS)
@@ -1013,6 +1040,7 @@ export const boostTorrent = (infoHash) => {
     // Skip boost+recover for completed torrents — they stream from disk, no peers needed.
     // Calling recoverSwarm() on engines with thousands of known peers stalls event loop.
     if (isTorrentCompleted(infoHash)) {
+        console.log(`[Turbo] Skip boost for completed torrent: ${infoHash}`)
         return
     }
 

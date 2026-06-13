@@ -148,13 +148,12 @@ async function warmupImageMirrors() {
     console.log('[TMDB] 🔥 Warming up image mirrors...')
     const testPath = '/t/p/w92/wwemzKWzjKYJFfCeiB57q3r4Bcm.png'
 
-    for (const mirror of IMAGE_MIRRORS) {
+    // Parallel: sequential probes took up to 15s before a dead-DNS device
+    // learned that every mirror is unreachable.
+    await Promise.allSettled(IMAGE_MIRRORS.map(async (mirror) => {
         const start = Date.now()
         try {
-            const url = mirror.includes('/')
-                ? `https://${mirror}${testPath}`
-                : `https://${mirror}${testPath}`
-            await fetch(url, {
+            await fetch(`https://${mirror}${testPath}`, {
                 method: 'HEAD',
                 signal: timeoutSignal(3000)
             })
@@ -163,6 +162,10 @@ async function warmupImageMirrors() {
             console.log(`[TMDB] ❌ Mirror ${mirror} failed`)
             markMirrorBanned(mirror)
         }
+    }))
+
+    if (IMAGE_MIRRORS.every(m => mirrorStats[m].banned)) {
+        enableImageProxyMode('warmup: all mirrors unreachable')
     }
 }
 
@@ -176,6 +179,44 @@ function markMirrorBanned(mirror) {
 setTimeout(warmupImageMirrors, 2000)
 
 const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
+const PROXY_MODE_TS_KEY = 'tmdb_image_proxy_enabled_at'
+const PROXY_MODE_TTL_MS = 6 * 60 * 60 * 1000 // retry mirrors after 6h
+
+/**
+ * Proxy mode = posters go straight to the home server proxy, skipping
+ * CDN mirrors. Auto-enabled when mirrors keep failing (e.g. the TV's DNS
+ * is dead while the NAS LAN IP still works). TTL lets mirrors come back
+ * once the network recovers.
+ */
+export function isImageProxyModeActive() {
+    try {
+        if (localStorage.getItem(PROXY_MODE_KEY) !== 'true') return false
+        const ts = parseInt(localStorage.getItem(PROXY_MODE_TS_KEY) || '0', 10)
+        if (ts && Date.now() - ts > PROXY_MODE_TTL_MS) {
+            localStorage.removeItem(PROXY_MODE_KEY)
+            localStorage.removeItem(PROXY_MODE_TS_KEY)
+            return false
+        }
+        return true
+    } catch {
+        return false
+    }
+}
+
+function enableImageProxyMode(reason) {
+    try {
+        if (localStorage.getItem(PROXY_MODE_KEY) !== 'true') {
+            console.warn(`[ImageMirror] 🔁 Proxy mode ON (${reason}) — posters via server proxy`)
+        }
+        localStorage.setItem(PROXY_MODE_KEY, 'true')
+        localStorage.setItem(PROXY_MODE_TS_KEY, String(Date.now()))
+    } catch { /* localStorage unavailable */ }
+}
+
+// Fast convergence: after a few per-image mirror failures stop paying the
+// (potentially tens of seconds) DNS timeout for every remaining poster.
+let mirrorFallbackEvents = 0
+const MIRROR_FALLBACK_THRESHOLD = 3
 
 /**
  * Helper to get the base API URL from localStorage or current origin.
@@ -224,8 +265,10 @@ export function getCurrentImageMirror() {
         return freeMirrors[0]
     }
 
-    // All mirrors banned - reset and try first
-    IMAGE_MIRRORS.forEach(m => { mirrorStats[m].banned = false })
+    // All mirrors banned → switch to proxy mode.
+    // The old "reset bans and retry first mirror" looped forever against a
+    // dead DNS and fought the proxy-mode switch in reportBrokenImage.
+    enableImageProxyMode('all mirrors banned')
     return IMAGE_MIRRORS[0]
 }
 
@@ -255,10 +298,7 @@ export function reportBrokenImage(url) {
                 // Check if ALL mirrors are banned
                 const allBanned = IMAGE_MIRRORS.every(m => mirrorStats[m].banned)
                 if (allBanned) {
-                    console.warn('[ImageMirror] 🚨 ALL MIRRORS BANNED! Switching to WSRV.NL Proxy Mode.')
-                    localStorage.setItem(PROXY_MODE_KEY, 'true')
-                    // Optional: force reload or event to allow UI to update immediately
-                    // window.location.reload() 
+                    enableImageProxyMode('all mirrors banned via error reports')
                 }
             }
         }
@@ -275,29 +315,89 @@ export function getImageUrl(path, size = 'w342') {
     if (!path) return ''
     if (path.startsWith('http')) return path
 
+    // 1. Default: direct CDN mirror (e.g. imagetmdb.com), one network hop.
+    // Routing posters through the NAS /api/proxy looked attractive (shared
+    // disk cache) but measured 6-150s per uncached poster: wsrv.nl is slow
+    // from the NAS and the torrent engine stalls the server event loop.
+    // Mirrors stay fast and resilient in RU; auto-ban handles dead ones.
+    const proxyMode = isImageProxyModeActive()
+
+    if (!proxyMode) {
+        const mirror = getCurrentImageMirror()
+        return `https://${mirror}/t/p/${size}${path}`
+    }
+
+    // 2. All mirrors banned: prefer the home server proxy (disk cache +
+    // wsrv fallback chain) when an API base is configured.
     const originalUrl = `https://image.tmdb.org/t/p/${size}${path}`
     const apiBase = getApiBase()
-
-    // 1. Prefer the home server proxy whenever a reachable API base is configured.
-    // On Android TV this lets poster traffic reuse the NAS -> Amsterdam upstream path.
     if (apiBase) {
         return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
     }
 
-    // 2. For APK (TV) without a configured server: Use Dynamic Mirror System
-    // ARC-01: Check if Proxy Mode (WSRV) is forcibly enabled (due to all mirrors banned)
-    const proxyMode = localStorage.getItem(PROXY_MODE_KEY) === 'true'
+    // 3. Last resort: WSRV Global Proxy ("ssl:" bypasses TMDB GeoIP block)
+    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
+}
 
-    if (proxyMode) {
-        // Fallback: WSRV Global Proxy
-        // Handles "ssl:" for TMDB bypassing
-        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${path}&output=webp`
+// Matches /t/p/<size>/<file> in any mirror / tmdb / proxied poster URL
+const IMAGE_PATH_RE = /\/t\/p\/(w\d+|original)(\/[^/?&]+)/
+
+/**
+ * Per-image fallback chain for <img onError>.
+ * Mirror (DNS-dependent) → home server proxy (LAN IP, works with dead DNS)
+ * → wsrv.nl → null. The global mirror auto-ban (20 errors/10s) is too slow
+ * when every mirror fails at once (e.g. TV's DNS outage) — each image must
+ * recover on its own first error instead.
+ *
+ * @param {string} failedSrc - src that just fired onError
+ * @returns {string|null} next URL to try, or null when out of options
+ */
+export function getNextImageUrl(failedSrc) {
+    if (!failedSrc || typeof failedSrc !== 'string') return null
+    if (failedSrc.includes('wsrv.nl')) return null
+
+    // Proxied URLs carry the image path percent-encoded inside ?url=
+    let match = failedSrc.match(IMAGE_PATH_RE)
+    if (!match) {
+        try { match = decodeURIComponent(failedSrc).match(IMAGE_PATH_RE) } catch { /* malformed */ }
+    }
+    if (!match) return null
+    const [, size, file] = match
+
+    const originalUrl = `https://image.tmdb.org/t/p/${size}${file}`
+
+    if (failedSrc.includes('/api/proxy')) {
+        // Server proxy failed too → wsrv direct
+        return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${file}&output=webp`
     }
 
-    // Default: Use active CDN mirror (e.g. imagetmdb.com)
-    // This connects to Lampa's mirror system which is fast and resilient in RU
-    const mirror = getCurrentImageMirror()
-    return `https://${mirror}/t/p/${size}${path}`
+    // A mirror just failed for this image. A few of these in a row means
+    // mirrors are unreachable (dead DNS) — flip to proxy mode so the rest
+    // of the grid skips the slow mirror timeout entirely.
+    if (IMAGE_MIRRORS.some((m) => failedSrc.includes(m.split('/')[0]))) {
+        mirrorFallbackEvents++
+        if (mirrorFallbackEvents >= MIRROR_FALLBACK_THRESHOLD) {
+            enableImageProxyMode(`${mirrorFallbackEvents} mirror image failures`)
+        }
+    }
+
+    const apiBase = getApiBase()
+    if (apiBase) {
+        return `${apiBase}/api/proxy?url=${encodeURIComponent(originalUrl)}`
+    }
+
+    return `https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/${size}${file}&output=webp`
+}
+
+/**
+ * Drop-in <img onError> handler: advances the element's src through the
+ * fallback chain in place, no component state required.
+ */
+export function handleImageErrorFallback(e) {
+    const img = e?.currentTarget
+    if (!img?.src) return
+    const next = getNextImageUrl(img.src)
+    if (next && next !== img.src) img.src = next
 }
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────

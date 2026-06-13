@@ -10,11 +10,12 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import HomeRow from './HomeRow'
+import ContinueWatchingRow from './ContinueWatchingRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
-import { fetchAllDiscovery, getBackdropUrl } from '../utils/discover'
+import { DISCOVERY_CATEGORIES, fetchCategoryWithPages, getBackdropUrl } from '../utils/discover'
 import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -27,9 +28,13 @@ const HomePanel = ({
     showSidebar, setShowSidebar,
     torrentSession,
     onOpenMovieTorrents,
-    onSearch, onClose
+    onSearch, onClose,
+    resumeItems = [],
+    onResume
 }) => {
-    const MAX_HOME_QUALITY_TITLES = 60
+    // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
+    // ~40s of background jacred searches on the NAS right after home load.
+    const MAX_HOME_QUALITY_TITLES = 24
     const [categories, setCategories] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -72,24 +77,74 @@ const HomePanel = ({
 
     const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
 
-    // Data Loading
-    useEffect(() => {
-        const loadData = async () => {
-            try {
-                setLoading(true)
-                const results = await fetchAllDiscovery()
-                setCategories(results)
-                const nonEmptyRows = Object.values(results).filter(row => row.items?.length > 0)
-                setVisibleRows(nonEmptyRows)
-                if (nonEmptyRows[0]?.items?.[0]) setFocusedItem(nonEmptyRows[0].items[0])
-            } catch (err) {
-                console.error(err)
-                setError(err.message || 'Failed to load content')
-            } finally {
-                setLoading(false)
+    // 💎 "Есть в 4K": items from loaded rows whose torrent quality badges
+    // include 4K. Populates progressively as badge discovery completes —
+    // zero extra server traffic beyond the shared badge queue above.
+    const fourKItems = useMemo(() => {
+        const seen = new Set()
+        const out = []
+        for (const row of visibleRows) {
+            for (const item of (row?.items || [])) {
+                if (!item?.id || seen.has(item.id)) continue
+                const title = item.title || item.name
+                const original = item.original_title || item.original_name
+                const badges = qualityBadges?.[title] || qualityBadges?.[original] || []
+                if (badges.includes('4K')) {
+                    seen.add(item.id)
+                    out.push(item)
+                }
             }
         }
-        loadData()
+        return out.slice(0, 20)
+    }, [visibleRows, qualityBadges])
+
+    // Data Loading — progressive: each row renders as soon as its category
+    // arrives instead of waiting for all 12 (first paint = fastest category,
+    // not the slowest chain).
+    useEffect(() => {
+        let cancelled = false
+        const seenIds = new Set()
+        const rowsById = {}
+
+        const applyRows = () => {
+            const ordered = DISCOVERY_CATEGORIES
+                .map(c => rowsById[c.id])
+                .filter(row => row?.items?.length > 0)
+            setVisibleRows(ordered)
+            setCategories(prev => ({ ...prev, ...rowsById }))
+            setLoading(false)
+            if (ordered[0]?.items?.[0]) {
+                setFocusedItem(prev => prev || ordered[0].items[0])
+            }
+        }
+
+        const loadRow = async (category) => {
+            try {
+                const row = await fetchCategoryWithPages(category)
+                if (cancelled) return
+                const uniqueItems = (row.items || []).filter(item => {
+                    if (seenIds.has(item.id)) return false
+                    seenIds.add(item.id)
+                    return true
+                })
+                if (uniqueItems.length === 0) return
+                rowsById[category.id] = { ...row, items: uniqueItems }
+                applyRows()
+            } catch (err) {
+                console.error(`[HomePanel] Failed to load ${category.id}:`, err)
+            }
+        }
+
+        setLoading(true)
+        Promise.allSettled(DISCOVERY_CATEGORIES.map(loadRow)).then(() => {
+            if (cancelled) return
+            setLoading(false)
+            if (Object.keys(rowsById).length === 0) {
+                setError('Failed to load content')
+            }
+        })
+
+        return () => { cancelled = true }
     }, [])
 
     // ANTI-06: Prefetch Discovery - warm up bypass layers cache after initial load
@@ -368,6 +423,22 @@ const HomePanel = ({
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
                 <div className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
+                    {!loading && resumeItems.length > 0 && onResume && (
+                        <ContinueWatchingRow items={resumeItems} onResume={onResume} />
+                    )}
+                    {!loading && fourKItems.length > 0 && (
+                        <HomeRow
+                            key="has-4k"
+                            title="Есть в 4K"
+                            icon="💎"
+                            items={fourKItems}
+                            categoryId="has-4k"
+                            onItemClick={handleItemClick}
+                            onFocusChange={setFocusedItem}
+                            qualityBadges={qualityBadges}
+                            qualityDebug={qualityDebug}
+                        />
+                    )}
                     {!loading && visibleRows.map((row) => (
                         <HomeRow
                             key={row.id}

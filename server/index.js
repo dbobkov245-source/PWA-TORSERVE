@@ -20,6 +20,19 @@ import { scheduleBackgroundRefresh, serializeStatusItems } from './statusRespons
 import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex } from './streamSource.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
+import {
+    initTsFailover,
+    getTsDownloadStatusItems,
+    getActiveTsJob,
+    removeTsJob,
+    getTsJobsMetrics,
+    isTsAvailable,
+    buildPublicTsStreamUrl,
+    getTsConfig,
+    startDirectTsDownload,
+    startFailover,
+    hasTsJob
+} from './tsDownload.js'
 import { isMagnetHashMatch } from './utils/magnetHash.js'
 import { probeMagnet } from './magnetPreflight.js'
 
@@ -44,11 +57,19 @@ app.use(express.json())
 
 // ────────────────────────────────────────────────────────
 // 🛡️ Rate Limiting (Zero-Dependency)
-// 30 requests per minute per IP for /api/* routes
+// Separate buckets per IP: a general API window plus a dedicated
+// higher-volume window for /api/proxy/* image fetches.
+//
+// A single shared bucket either (a) blocks legit grid renders that
+// fan out 50+ poster requests at once, or (b) — if the proxy path is
+// exempted entirely (previous behaviour) — lets a LAN client hammer
+// the wsrv.nl relay and disk image cache without throttle.
 // ────────────────────────────────────────────────────────
-const rateLimitMap = new Map()
-const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 300 // 🔥 v2.4: increased from 60 to handle bulk poster loading
+const rateLimitMap = new Map()      // ip -> general window
+const proxyRateLimitMap = new Map() // ip -> /api/proxy window
+const RATE_LIMIT_WINDOW_MS = 60 * 1000
+const RATE_LIMIT_MAX = 300
+const PROXY_RATE_LIMIT_MAX = 600    // ~10 posters/sec sustained per client
 
 // O6: Use registerInterval for graceful shutdown
 let rateLimitCleanupId = null
@@ -56,44 +77,47 @@ let rateLimitCleanupId = null
 // Cleanup old entries every 5 minutes
 rateLimitCleanupId = registerInterval('rateLimitCleanup', () => {
     const now = Date.now()
-    for (const [ip, data] of rateLimitMap.entries()) {
-        if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
-            rateLimitMap.delete(ip)
+    for (const map of [rateLimitMap, proxyRateLimitMap]) {
+        for (const [ip, data] of map.entries()) {
+            if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+                map.delete(ip)
+            }
         }
     }
 }, 5 * 60 * 1000)
 
-app.use('/api/', (req, res, next) => {
-    // 🔥 Skip rate limiting for proxy requests (posters)
-    if (req.path.startsWith('/proxy')) {
-        return next()
-    }
-
-    const ip = req.ip || req.connection.remoteAddress || 'unknown'
+function applyWindowedLimit(map, ip, max, label, res) {
     const now = Date.now()
-
-    let entry = rateLimitMap.get(ip)
+    let entry = map.get(ip)
     if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
-        // New window
         entry = { windowStart: now, count: 1 }
-        rateLimitMap.set(ip, entry)
+        map.set(ip, entry)
     } else {
         entry.count++
     }
-
-    // Set rate limit headers
-    res.set('X-RateLimit-Limit', RATE_LIMIT_MAX)
-    res.set('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT_MAX - entry.count))
+    res.set('X-RateLimit-Limit', max)
+    res.set('X-RateLimit-Remaining', Math.max(0, max - entry.count))
     res.set('X-RateLimit-Reset', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS) / 1000))
-
-    if (entry.count > RATE_LIMIT_MAX) {
-        console.warn(`[RateLimit] Too many requests from ${ip}: ${entry.count}`)
-        return res.status(429).json({
+    if (entry.count > max) {
+        console.warn(`[RateLimit:${label}] Too many requests from ${ip}: ${entry.count}/${max}`)
+        res.status(429).json({
             error: 'Too many requests',
             retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000)
         })
+        return false
+    }
+    return true
+}
+
+app.use('/api/', (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown'
+
+    if (req.path.startsWith('/proxy')) {
+        if (!applyWindowedLimit(proxyRateLimitMap, ip, PROXY_RATE_LIMIT_MAX, 'proxy', res)) return
+        return next()
     }
 
+    if (!applyWindowedLimit(rateLimitMap, ip, RATE_LIMIT_MAX, 'api', res)) return
     next()
 })
 
@@ -208,7 +232,11 @@ app.get('/api/metrics', async (req, res) => {
         uptimeSec: Math.round(process.uptime()),
         activeStreams,
         imageCache,
-        imageProxy: getImageProbeState()
+        imageProxy: getImageProbeState(),
+        torrServer: {
+            available: isTsAvailable(),
+            jobs: getTsJobsMetrics()
+        }
     })
 })
 
@@ -227,7 +255,7 @@ function buildStatusPayload() {
     if (state.serverStatus === 'circuit_open' || state.serverStatus === 'error') {
         return { serverStatus: state.serverStatus, lastStateChange: state.lastStateChange, torrents: [] }
     }
-    const torrents = getAllTorrents()
+    const torrents = [...getAllTorrents(), ...getTsDownloadStatusItems()]
     const localItems = getLocalLibrarySnapshot()
     const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
     return {
@@ -270,6 +298,7 @@ app.get('/api/status/stream', (req, res) => {
     // Push progress updates every 3s while active downloads exist
     const progressTimer = setInterval(() => {
         const isDownloading = getAllTorrents().some(t => (t.progress || 0) < 1 && (t.downloadSpeed || 0) > 0)
+            || getTsDownloadStatusItems().some(t => (t.progress || 0) < 1 && !t.error)
         if (isDownloading) {
             scheduleBackgroundRefresh(
                 () => refreshLocalLibrary(),
@@ -935,8 +964,56 @@ app.post('/api/add', async (req, res) => {
         const torrent = await addTorrent(magnet)
         res.json({ infoHash: torrent.infoHash, name: torrent.name })
     } catch (err) {
+        // Native engine can't reach DHT-only swarms (RU-blocked bootstrap,
+        // no MSE encryption). TorrServer resolves the same magnets in
+        // seconds — hand the download over instead of failing.
+        if (/metadata unavailable/i.test(err.message)) {
+            try {
+                const job = await startDirectTsDownload(magnet)
+                if (job) {
+                    return res.json({ infoHash: job.infoHash, name: job.name || 'Resolving…', backend: 'torrserve' })
+                }
+            } catch (tsErr) {
+                console.warn('[Add] TorrServer fallback failed:', tsErr.message)
+            }
+        }
         res.status(500).json({ error: err.message })
     }
+})
+
+// API: manual TorrServer failover — "ускорить через TorrServer" button.
+// Same migration the watchdog does, just on user demand without waiting
+// out the grace period.
+app.post('/api/torrents/:infoHash/failover', async (req, res) => {
+    const infoHash = (req.params.infoHash || '').toLowerCase()
+    if (!/^[a-f0-9]{40}$/.test(infoHash)) {
+        return res.status(400).json({ error: 'Invalid infoHash' })
+    }
+    if (!isTsAvailable()) {
+        return res.status(503).json({ error: 'TorrServer unavailable' })
+    }
+    if (hasTsJob(infoHash)) {
+        return res.status(409).json({ error: 'Already migrated to TorrServer' })
+    }
+
+    const saved = db.data.torrents?.find(t => t.magnet.toLowerCase().includes(infoHash))
+    if (!saved?.magnet) {
+        return res.status(404).json({ error: 'Magnet not found for torrent' })
+    }
+
+    const torrent = getTorrent(infoHash)
+    const job = await startFailover({
+        infoHash,
+        magnet: saved.magnet,
+        name: torrent?.name || saved.name || null,
+        totalSize: torrent?.totalSize || 0
+    })
+    if (!job) {
+        return res.status(429).json({ error: 'Max concurrent TorrServer jobs reached' })
+    }
+
+    console.log(`[Failover] Manual migration requested for ${infoHash} ${describeRequestSource(req)}`)
+    res.json({ ok: true, infoHash, status: job.status })
 })
 
 // Map of MIME types
@@ -961,7 +1038,8 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
 
     // Default behavior is hard delete (destroy engine + delete files).
     // soft=1 keeps engine in frozen keep-alive cache without disk cleanup.
-    const success = removeTorrent(infoHash, !softDelete)
+    const tsJobRemoved = removeTsJob(infoHash)
+    const success = removeTorrent(infoHash, !softDelete) || tsJobRemoved
 
     if (success) {
         // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
@@ -1015,6 +1093,16 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
     const index = Number.parseInt(fileIndex, 10)
     if (!Number.isInteger(index) || index < 0) {
         return res.status(400).send('Invalid file index')
+    }
+
+    // Torrent migrated to TorrServer? Let the player pull bytes from it
+    // directly — keeps the Node event loop out of the video data path.
+    // The redirect must use a client-reachable host, not the docker bridge.
+    const tsJob = getActiveTsJob(infoHash)
+    if (tsJob) {
+        const file = tsJob.files?.[index]
+        if (!file) return res.status(404).send('File not found')
+        return res.redirect(302, buildPublicTsStreamUrl(req, tsJob.infoHash, file.tsId))
     }
 
     const engine = getRawTorrent(infoHash)
@@ -1240,6 +1328,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     startWatchdog().catch(err => {
         console.error('[Server] Watchdog failed:', err.message)
     })
+
+    // Hybrid backend: migrate crawling downloads to TorrServer sidecar
+    // (also resumes interrupted TorrServer downloads from db.tsDownloads)
+    initTsFailover()
 })
 
 // ────────────────────────────────────────────────────────

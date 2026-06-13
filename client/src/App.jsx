@@ -8,6 +8,8 @@ import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
 import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
+import { dispatchSystemBack } from './utils/backButton.js'
+import { recordPlaybackResult, getResumePosition, getResumeItems, removeResumeEntries } from './utils/watchHistory.js'
 
 // Components
 import Poster from './components/Poster'
@@ -144,6 +146,9 @@ function App() {
 
   // State: App Update
   const [updateInfo, setUpdateInfo] = useState(null)
+
+  // Continue Watching: unfinished playback sessions (watchHistory.js)
+  const [resumeItems, setResumeItems] = useState(() => getResumeItems())
 
   // VOICE-01: Centralized voice search (no more prompt() fallback)
   const { startListening, isListening, ToastPortal } = useVoiceSearch()
@@ -287,6 +292,24 @@ function App() {
     }
   }, [serverUrl, fetchStatus])
 
+  // ─── System Back (TV remote) ───
+  // The remote's Back key is an Android system event — it never reaches the
+  // DOM keydown path that useSpatialArbiter handles. Route it through the
+  // back-handler registry (modal-level handlers first), with the same
+  // central handleBack chain as fallback. Listener registers once; the ref
+  // always points at the latest handleBack closure.
+  const handleBackRef = useRef(handleBack)
+  useEffect(() => { handleBackRef.current = handleBack }, [handleBack])
+
+  useEffect(() => {
+    const listenerPromise = CapacitorApp.addListener('backButton', () => {
+      dispatchSystemBack(() => handleBackRef.current())
+    })
+    return () => {
+      listenerPromise.then(handle => handle.remove())
+    }
+  }, [])
+
   const handleVoiceSearch = useCallback(async () => {
     const query = await startListening()
     if (!query) return
@@ -328,6 +351,8 @@ function App() {
       const res = await fetch(`${serverUrl}/api/delete/${hash}`, { method: 'DELETE' })
       if (res.ok) {
         setSelectedTorrent(null)
+        removeResumeEntries(hash)
+        setResumeItems(getResumeItems())
         fetchStatus()
         return true
       }
@@ -359,15 +384,31 @@ function App() {
       console.log('[DEBUG] Final Play URL:', streamUrl);
 
       // 3. Mark last played
+      const torrentName = torrents.find(t => t.infoHash === hash)?.name
       localStorage.setItem('lastPlayed', JSON.stringify({
         infoHash: hash,
-        torrentName: torrents.find(t => t.infoHash === hash)?.name,
+        torrentName,
         fileIndex: index,
         fileName: fileName
       }));
 
-      // 4. Start playback via Custom Plugin
-      await TVPlayer.play({ url: streamUrl, title: fileName })
+      // 4. Start playback via Custom Plugin, resuming from the saved
+      // position. The plugin maps it to Vimu `startfrom` / MX `position`
+      // and resolves with {position, duration, finished} on player exit.
+      const resumeFrom = getResumePosition(hash, index)
+      const playOptions = { url: streamUrl, title: fileName }
+      if (resumeFrom > 0) playOptions.position = resumeFrom
+
+      const result = await TVPlayer.play(playOptions)
+
+      recordPlaybackResult({
+        infoHash: hash,
+        fileIndex: index,
+        fileName,
+        torrentName,
+        result: result || {}
+      })
+      setResumeItems(getResumeItems())
     } catch (e) {
       console.error('Play error:', e)
       alert('Error starting playback')
@@ -751,6 +792,8 @@ function App() {
             showSidebar={showSidebar} setShowSidebar={setShowSidebar}
             torrentSession={movieTorrentSession}
             onOpenMovieTorrents={openMovieTorrentSearch}
+            resumeItems={resumeItems.filter(r => torrents.some(t => t.infoHash?.toLowerCase() === r.infoHash))}
+            onResume={(item) => handlePlay(item.infoHash, item.fileIndex, item.fileName)}
             onSearch={(q) => {
               const query = q || searchQuery;
               setSearchQuery(query);
@@ -915,7 +958,7 @@ function App() {
                   key={t.infoHash} name={t.name} progress={t.progress || 0} peers={t.connectedPeers ?? t.numPeers ?? 0}
                   isReady={t.isReady} size={t.files?.reduce((sum, f) => sum + (f.length || 0), 0) || 0}
                   downloadSpeed={t.downloadSpeed || 0} downloaded={t.downloaded || 0} eta={t.eta || 0}
-                  newFilesCount={t.newFilesCount || 0} onClick={() => setSelectedTorrent(t)}
+                  newFilesCount={t.newFilesCount || 0} backend={t.backend} onClick={() => setSelectedTorrent(t)}
                 />
               ))}
               {displayTorrents.length === 0 && !loading && <div className="col-span-full py-20 text-center text-gray-600">Ваш список пуст</div>}
@@ -924,7 +967,28 @@ function App() {
         )}
 
         {selectedTorrent && (
-          <TorrentModal torrent={selectedTorrent} onClose={() => setSelectedTorrent(null)} onPlay={handlePlay} onPlayAll={handlePlayAll} onCopyUrl={copyUrl} onDelete={deleteTorrent} />
+          <TorrentModal
+            torrent={selectedTorrent}
+            onClose={() => setSelectedTorrent(null)}
+            onPlay={handlePlay}
+            onPlayAll={handlePlayAll}
+            onCopyUrl={copyUrl}
+            onDelete={deleteTorrent}
+            onForceTs={async (hash) => {
+              try {
+                const res = await fetch(`${serverUrl}/api/torrents/${hash}/failover`, { method: 'POST' })
+                if (res.ok) {
+                  fetchStatus()
+                  return true
+                }
+                console.warn('[ForceTS] failed:', res.status, await res.text().catch(() => ''))
+                return false
+              } catch (e) {
+                console.warn('[ForceTS] error:', e)
+                return false
+              }
+            }}
+          />
         )}
 
         {buffering && (

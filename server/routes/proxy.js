@@ -114,14 +114,62 @@ const ALLOWED_DOMAINS = [
 
 // Bunny CDN (image.tmdb.org → tmdb-image-prod.b-cdn.net) GeoIP-blocks RU:
 // its authoritative DNS returns 127.0.0.1 for RU clients, so direct fetch and
-// even DoH-resolved fetch end up with ECONNREFUSED. Route through wsrv.nl
-// (Netherlands-based image proxy) which still resolves the real CDN IP.
+// even DoH-resolved fetch end up with ECONNREFUSED. Route through Lampa CDN
+// mirrors (fast: 170-390ms from this NAS), wsrv.nl as the slow fallback
+// (measured 5.9-154s, aborts mid-body under load → half-rendered posters).
 const WSRV_PROXIED_HOSTS = new Set(['image.tmdb.org']);
+const IMAGE_MIRROR_HOSTS = ['imagetmdb.com', 'nl.imagetmdb.com', 'de.imagetmdb.com', 'pl.imagetmdb.com'];
+const IMAGE_MIRROR_TIMEOUT_MS = parseInt(process.env.IMAGE_MIRROR_TIMEOUT_MS || '2500', 10);
 
 function buildWsrvUrl(originalUrl) {
     const u = new URL(originalUrl);
     const sslPath = `ssl:${u.hostname}${u.pathname}${u.search}`;
     return `https://wsrv.nl/?url=${encodeURIComponent(sslPath)}&output=webp`;
+}
+
+async function forwardImageResponse({ upstream, source, url, res }) {
+    res.status(upstream.status);
+    const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
+    for (const h of forwardHeaders) {
+        const v = upstream.headers.get(h);
+        if (v) res.set(h, v);
+    }
+    res.set('X-Proxy-Source', source);
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+
+    // Disk-cache successful image fetches (mirrors the direct branch)
+    if (upstream.status === 200 && isImageRequest(url)) {
+        cacheImage(url, buffer).catch(() => {});
+    }
+
+    res.end(buffer);
+}
+
+async function streamViaImageMirrors({ url, req, res }) {
+    const u = new URL(url);
+
+    // Race all mirrors: one slow mirror must not serialize into its full
+    // timeout before the next is tried (measured 5s penalty per poster).
+    const attempts = IMAGE_MIRROR_HOSTS.map(async (host) => {
+        const upstream = await fetch(`https://${host}${u.pathname}${u.search}`, {
+            method: 'GET',
+            headers: { accept: req.headers.accept || 'image/*' },
+            signal: AbortSignal.timeout(IMAGE_MIRROR_TIMEOUT_MS)
+        });
+        if (!upstream.ok) throw new Error(`${host} HTTP ${upstream.status}`);
+        return { upstream, host };
+    });
+
+    let winner;
+    try {
+        winner = await Promise.any(attempts);
+    } catch (aggregate) {
+        const first = aggregate?.errors?.[0];
+        throw first || new Error('All image mirrors failed');
+    }
+
+    await forwardImageResponse({ upstream: winner.upstream, source: `mirror:${winner.host}`, url, res });
 }
 
 async function streamViaWsrv({ url, req, res }) {
@@ -132,22 +180,7 @@ async function streamViaWsrv({ url, req, res }) {
         signal: AbortSignal.timeout(20000)
     });
 
-    res.status(upstream.status);
-    const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag'];
-    for (const h of forwardHeaders) {
-        const v = upstream.headers.get(h);
-        if (v) res.set(h, v);
-    }
-    res.set('X-Proxy-Source', 'wsrv');
-
-    const buffer = Buffer.from(await upstream.arrayBuffer());
-
-    // Disk-cache successful image fetches (mirrors the direct branch)
-    if (upstream.status === 200 && isImageRequest(url)) {
-        cacheImage(url, buffer).catch(() => {});
-    }
-
-    res.end(buffer);
+    await forwardImageResponse({ upstream, source: 'wsrv', url, res });
 }
 
 // O2: Check if URL is an image request (for disk caching)
@@ -192,15 +225,22 @@ router.get('/', async (req, res) => {
             }
         }
 
-        // Route GeoIP-blocked hosts through wsrv.nl (e.g. image.tmdb.org)
+        // GeoIP-blocked image hosts: CDN mirrors first, wsrv.nl fallback
         if (WSRV_PROXIED_HOSTS.has(targetUrl.hostname)) {
+            try {
+                await streamViaImageMirrors({ url, req, res });
+                return;
+            } catch (mirrorErr) {
+                console.warn(`[Proxy] image mirrors failed for ${targetUrl.hostname}: ${mirrorErr.message}`);
+                if (res.headersSent) return;
+            }
             try {
                 await streamViaWsrv({ url, req, res });
                 return;
             } catch (err) {
                 console.warn(`[Proxy] wsrv fallback failed for ${targetUrl.hostname}: ${err.message}`);
                 if (!res.headersSent) {
-                    return res.status(502).json({ error: 'wsrv proxy failed', details: err.message });
+                    return res.status(502).json({ error: 'image proxy failed', details: err.message });
                 }
                 return;
             }
@@ -231,6 +271,22 @@ router.get('/', async (req, res) => {
 
         const transport = isHttps ? https : http;
         const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
+            // Surface upstream socket aborts on the response stream so we can
+            // close `res` and free the client socket. Without this listener,
+            // an upstream RST mid-body either crashes Node ('error' event with
+            // no listener) or, in the buffered-image branch below, leaves the
+            // client request hanging forever because 'end' never fires.
+            proxyRes.on('error', (err) => {
+                console.warn(`[Proxy] upstream stream error: ${err.message} ${url}`);
+                if (!res.headersSent) {
+                    // Direct path failed before any bytes left our process —
+                    // hand off to the existing fallback chain.
+                    tryFallback(`upstream ${err.message}`);
+                } else if (!res.writableEnded) {
+                    res.destroy(err);
+                }
+            });
+
             res.status(proxyRes.statusCode);
 
             // Forward allowed headers
@@ -273,6 +329,11 @@ router.get('/', async (req, res) => {
         // WORKER_PROXY_URL is set, so even a poisoned direct path recovers.
         // Only runs when no bytes have been sent yet.
         let fallbackTried = false;
+        // Guard against a misbehaving upstream returning a huge payload via
+        // the buffered smartFetch path. /api/proxy only fronts TMDB/KP/wsrv
+        // (max ~5MB images), so anything beyond this cap is almost certainly
+        // a bug or hostile response.
+        const FALLBACK_MAX_BYTES = 25 * 1024 * 1024;
         async function tryFallback(reason) {
             if (fallbackTried || res.headersSent) {
                 if (!res.headersSent) {
@@ -284,13 +345,18 @@ router.get('/', async (req, res) => {
             try {
                 const result = await smartFetch(url, { timeout: 20000, responseType: 'arraybuffer' });
                 if (res.headersSent) return;
+                const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
+                if (buffer.length > FALLBACK_MAX_BYTES) {
+                    console.warn(`[Proxy] Fallback payload too large (${buffer.length} bytes), refusing: ${url}`);
+                    res.status(502).json({ error: 'Proxy fallback payload too large' });
+                    return;
+                }
                 res.status(result.status || 200);
                 const ct = result.headers?.['content-type'];
                 if (ct) res.set('content-type', ct);
                 const cl = result.headers?.['content-length'];
                 if (cl) res.set('content-length', cl);
                 res.set('X-Proxy-Source', 'smartfetch-fallback');
-                const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
                 if (isImageRequest(url) && result.status === 200) {
                     cacheImage(url, buffer).catch(() => {});
                 }

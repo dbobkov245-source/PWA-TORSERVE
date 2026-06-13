@@ -14,13 +14,13 @@
 
 import { providerManager } from './providers/index.js'
 import { searchCache } from './searchCache.js'
-import { preflightResults, getPreflightStats } from './magnetPreflight.js'
+import { preflightResults, rankWithoutProbe, getPreflightStats } from './magnetPreflight.js'
 import { logger } from './utils/logger.js'
 
 const log = logger.child('Aggregator')
 
 // Search timeout per provider (ms)
-const PROVIDER_TIMEOUT = 30000
+const PROVIDER_TIMEOUT = parseInt(process.env.PROVIDER_TIMEOUT_MS || '8000', 10)
 
 // ─────────────────────────────────────────────────────────────
 // 🔒 Circuit Breaker: Auto-disable failing providers
@@ -276,21 +276,32 @@ export async function search(query, options = {}) {
     // Deduplicate by infohash
     const deduped = deduplicateByInfohash(allResults)
 
-    // STAB-F: Preflight probe + playability sorting
-    const enriched = await preflightResults(deduped)
+    // STAB-F: respond immediately with seeders-based ranking. Awaiting
+    // preflight here added the full PREFLIGHT_TOTAL_BUDGET_MS (~3s) to every
+    // uncached search because probes need longer than the budget allows.
+    // Probes now run in the background and re-rank the cached entry instead.
+    const ranked = rankWithoutProbe(deduped)
 
-    // Store in cache if we got results
-    if (enriched.length > 0 && !options.skipCacheWrite) {
-        searchCache.set(query, enriched, providerStats)
+    if (ranked.length > 0 && !options.skipCacheWrite) {
+        searchCache.set(query, ranked, providerStats)
+        preflightResults(deduped)
+            .then((enriched) => {
+                if (enriched?.length > 0) {
+                    searchCache.set(query, enriched, providerStats)
+                }
+            })
+            .catch((error) => {
+                log.warn('Background preflight failed', { error: error?.message || String(error) })
+            })
     }
 
     log.info('✅ Aggregation complete', {
-        totalResults: enriched.length,
+        totalResults: ranked.length,
         fromProviders: Object.keys(providerStats).length,
         errors: errors.length
     })
 
-    return { results: enriched, errors, providers: providerStats, cached: false }
+    return { results: ranked, errors, providers: providerStats, cached: false }
 }
 
 /**

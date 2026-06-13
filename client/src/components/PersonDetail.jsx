@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { App as CapacitorApp } from '@capacitor/app'
-import { getImageUrl, getPersonDetails, getPersonCredits, getPersonImages } from '../utils/tmdbClient'
+import { pushBackHandler } from '../utils/backButton.js'
+import { getImageUrl, getPersonDetails, getPersonCredits, getPersonImages , handleImageErrorFallback } from '../utils/tmdbClient'
 import { getPosterUrl } from '../utils/discover'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
@@ -24,7 +24,7 @@ const FilmItem = ({ item, onClick }) => {
             className="focusable relative aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden cursor-pointer transition-all duration-200 focus:ring-4 focus:ring-blue-500 scale-100 focus:scale-105 z-10 shadow-xl"
         >
             {item.poster_path ? (
-                <img
+                <img onError={handleImageErrorFallback}
                     src={getPosterUrl(item)}
                     loading="lazy"
                     className="w-full h-full object-cover"
@@ -69,14 +69,12 @@ const PersonDetail = ({
         backBtnSpatialRef(node)
     }, [backBtnSpatialRef])
 
-    // Handle Hardware Back Button
+    // Hardware Back via shared registry (single Capacitor listener app-wide)
     useEffect(() => {
-        const handleHardwareBack = async () => {
+        return pushBackHandler(() => {
             onBack()
-        }
-
-        const listener = CapacitorApp.addListener('backButton', handleHardwareBack)
-        return () => { listener.then(h => h.remove()) }
+            return true
+        })
     }, [onBack])
 
     // Load Data
@@ -177,7 +175,7 @@ const PersonDetail = ({
                     <div className="flex-shrink-0 mx-auto md:mx-0">
                         <div className="w-64 h-96 rounded-xl overflow-hidden shadow-2xl bg-gray-800">
                             {person.profile_path ? (
-                                <img
+                                <img onError={handleImageErrorFallback}
                                     src={getImageUrl(person.profile_path, 'h632')}
                                     className="w-full h-full object-cover"
                                 />
@@ -209,7 +207,7 @@ const PersonDetail = ({
                         <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2">
                             {photos.map((photo, idx) => (
                                 <div key={idx} className="flex-shrink-0 w-28 h-40 rounded-lg overflow-hidden bg-gray-800">
-                                    <img src={getImageUrl(photo.file_path, 'w185')} className="w-full h-full object-cover" loading="lazy" />
+                                    <img onError={handleImageErrorFallback} src={getImageUrl(photo.file_path, 'w185')} className="w-full h-full object-cover" loading="lazy" />
                                 </div>
                             ))}
                         </div>
