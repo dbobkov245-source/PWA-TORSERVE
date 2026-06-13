@@ -29,7 +29,9 @@ import {
     isTsAvailable,
     buildPublicTsStreamUrl,
     getTsConfig,
-    startDirectTsDownload
+    startDirectTsDownload,
+    startFailover,
+    hasTsJob
 } from './tsDownload.js'
 import { isMagnetHashMatch } from './utils/magnetHash.js'
 import { probeMagnet } from './magnetPreflight.js'
@@ -977,6 +979,41 @@ app.post('/api/add', async (req, res) => {
         }
         res.status(500).json({ error: err.message })
     }
+})
+
+// API: manual TorrServer failover — "ускорить через TorrServer" button.
+// Same migration the watchdog does, just on user demand without waiting
+// out the grace period.
+app.post('/api/torrents/:infoHash/failover', async (req, res) => {
+    const infoHash = (req.params.infoHash || '').toLowerCase()
+    if (!/^[a-f0-9]{40}$/.test(infoHash)) {
+        return res.status(400).json({ error: 'Invalid infoHash' })
+    }
+    if (!isTsAvailable()) {
+        return res.status(503).json({ error: 'TorrServer unavailable' })
+    }
+    if (hasTsJob(infoHash)) {
+        return res.status(409).json({ error: 'Already migrated to TorrServer' })
+    }
+
+    const saved = db.data.torrents?.find(t => t.magnet.toLowerCase().includes(infoHash))
+    if (!saved?.magnet) {
+        return res.status(404).json({ error: 'Magnet not found for torrent' })
+    }
+
+    const torrent = getTorrent(infoHash)
+    const job = await startFailover({
+        infoHash,
+        magnet: saved.magnet,
+        name: torrent?.name || saved.name || null,
+        totalSize: torrent?.totalSize || 0
+    })
+    if (!job) {
+        return res.status(429).json({ error: 'Max concurrent TorrServer jobs reached' })
+    }
+
+    console.log(`[Failover] Manual migration requested for ${infoHash} ${describeRequestSource(req)}`)
+    res.json({ ok: true, infoHash, status: job.status })
 })
 
 // Map of MIME types

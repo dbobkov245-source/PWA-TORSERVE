@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import HomeRow from './HomeRow'
+import ContinueWatchingRow from './ContinueWatchingRow'
 import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
@@ -27,11 +28,13 @@ const HomePanel = ({
     showSidebar, setShowSidebar,
     torrentSession,
     onOpenMovieTorrents,
-    onSearch, onClose
+    onSearch, onClose,
+    resumeItems = [],
+    onResume
 }) => {
-    // 12 ≈ first visible row. 60 used to trigger ~40s of background jacred
-    // searches on the NAS right after home load, starving poster requests.
-    const MAX_HOME_QUALITY_TITLES = 12
+    // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
+    // ~40s of background jacred searches on the NAS right after home load.
+    const MAX_HOME_QUALITY_TITLES = 24
     const [categories, setCategories] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -73,6 +76,27 @@ const HomePanel = ({
     }, [visibleRows, focusedItem])
 
     const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
+
+    // 💎 "Есть в 4K": items from loaded rows whose torrent quality badges
+    // include 4K. Populates progressively as badge discovery completes —
+    // zero extra server traffic beyond the shared badge queue above.
+    const fourKItems = useMemo(() => {
+        const seen = new Set()
+        const out = []
+        for (const row of visibleRows) {
+            for (const item of (row?.items || [])) {
+                if (!item?.id || seen.has(item.id)) continue
+                const title = item.title || item.name
+                const original = item.original_title || item.original_name
+                const badges = qualityBadges?.[title] || qualityBadges?.[original] || []
+                if (badges.includes('4K')) {
+                    seen.add(item.id)
+                    out.push(item)
+                }
+            }
+        }
+        return out.slice(0, 20)
+    }, [visibleRows, qualityBadges])
 
     // Data Loading — progressive: each row renders as soon as its category
     // arrives instead of waiting for all 12 (first paint = fastest category,
@@ -399,6 +423,22 @@ const HomePanel = ({
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
                 <div className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
+                    {!loading && resumeItems.length > 0 && onResume && (
+                        <ContinueWatchingRow items={resumeItems} onResume={onResume} />
+                    )}
+                    {!loading && fourKItems.length > 0 && (
+                        <HomeRow
+                            key="has-4k"
+                            title="Есть в 4K"
+                            icon="💎"
+                            items={fourKItems}
+                            categoryId="has-4k"
+                            onItemClick={handleItemClick}
+                            onFocusChange={setFocusedItem}
+                            qualityBadges={qualityBadges}
+                            qualityDebug={qualityDebug}
+                        />
+                    )}
                     {!loading && visibleRows.map((row) => (
                         <HomeRow
                             key={row.id}

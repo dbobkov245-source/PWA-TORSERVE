@@ -188,6 +188,10 @@ export function getActiveTsJob(infoHash) {
     return job && job.status === 'downloading' ? job : null
 }
 
+export function hasTsJob(infoHash) {
+    return jobs.has(infoHash?.toLowerCase?.() || infoHash)
+}
+
 export function getTsJobsMetrics() {
     let downloading = 0
     let done = 0

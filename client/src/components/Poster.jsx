@@ -3,7 +3,7 @@ import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient, extractQua
 import { getMetadata, resolveMetadata, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
-const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount }) => {
+const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount, backend }) => {
     const spatialRef = useSpatialItem('main')
     const [bgImage, setBgImage] = useState(null)
     const cleanedName = cleanTitle(name)
@@ -87,6 +87,9 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                         <span className="bg-purple-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm animate-pulse">
                             🆕 {newFilesCount} NEW
                         </span>
+                    )}
+                    {backend === 'torrserve' && !isReady && (
+                        <span className="bg-cyan-600 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm" title="Качается через TorrServer">TS</span>
                     )}
                     {isReady ? (
                         <span className="bg-green-500 text-white text-[10px] font-black tracking-wider px-2 py-0.5 rounded shadow-sm">READY</span>
