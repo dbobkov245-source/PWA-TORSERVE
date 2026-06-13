@@ -31,7 +31,7 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
             setStatus('error');
             setErrorMsg(e.message || 'Ошибка загрузки');
         }
-    }, [updateInfo.url, updateInfo.version]);
+    }, [updateInfo.url, updateInfo.version, updateInfo.versionCode]);
 
     return (
         <div className="details-overlay" style={{ zIndex: 9999 }}>
@@ -39,16 +39,19 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
                 style={{
                     background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',
                     borderRadius: '24px',
-                    padding: '3rem',
+                    padding: '2rem',
                     maxWidth: '500px',
                     width: '90%',
+                    maxHeight: '80vh',
+                    display: 'flex',
+                    flexDirection: 'column',
                     textAlign: 'center',
                     border: '1px solid #334155',
                     animation: 'fadeIn 0.3s ease-out'
                 }}
             >
                 {/* Header */}
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔄</div>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🔄</div>
                 <h2 style={{
                     fontSize: '1.75rem',
                     fontWeight: 700,
@@ -64,21 +67,6 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
                 }}>
                     {updateInfo.currentVersion} → <span style={{ color: '#22c55e', fontWeight: 600 }}>{updateInfo.version}</span>
                 </p>
-
-                {/* Release Notes */}
-                {updateInfo.notes && (
-                    <p style={{
-                        fontSize: '0.95rem',
-                        color: '#64748b',
-                        marginTop: '1rem',
-                        padding: '0.75rem 1rem',
-                        background: 'rgba(255,255,255,0.05)',
-                        borderRadius: '12px',
-                        lineHeight: 1.5
-                    }}>
-                        {updateInfo.notes}
-                    </p>
-                )}
 
                 {/* Progress Bar (when downloading) */}
                 {status === 'downloading' && (
@@ -124,7 +112,8 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '0.75rem',
-                        marginTop: '2rem'
+                        marginTop: '1.5rem',
+                        flexShrink: 0
                     }}>
                         <button
                             ref={updateBtnRef}
