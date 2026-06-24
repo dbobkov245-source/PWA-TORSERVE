@@ -37,7 +37,7 @@ describe('useMovieTorrentPreload', () => {
         )
 
         expect(searchTorrents).toHaveBeenCalledTimes(1)
-        expect(searchTorrents).toHaveBeenNthCalledWith(1, 'The Matrix 1999', expect.objectContaining({
+        expect(searchTorrents).toHaveBeenNthCalledWith(1, 'The Matrix', expect.objectContaining({
             forceFresh: false,
             limit: 100,
             signal: expect.any(AbortSignal)
@@ -55,7 +55,7 @@ describe('useMovieTorrentPreload', () => {
             expect(searchTorrents).toHaveBeenCalledTimes(2)
         })
 
-        expect(searchTorrents).toHaveBeenNthCalledWith(2, 'Матрица 1999', expect.objectContaining({
+        expect(searchTorrents).toHaveBeenNthCalledWith(2, 'Матрица', expect.objectContaining({
             forceFresh: false,
             limit: 100,
             signal: expect.any(AbortSignal)
@@ -94,18 +94,18 @@ describe('useMovieTorrentPreload', () => {
         })
 
         expect(searchTorrents).toHaveBeenCalledTimes(2)
-        expect(searchTorrents).toHaveBeenNthCalledWith(1, 'The Matrix 1999', expect.objectContaining({
+        expect(searchTorrents).toHaveBeenNthCalledWith(1, 'The Matrix', expect.objectContaining({
             forceFresh: false,
             limit: 100,
             signal: expect.any(AbortSignal)
         }))
-        expect(searchTorrents).toHaveBeenNthCalledWith(2, 'Матрица 1999', expect.objectContaining({
+        expect(searchTorrents).toHaveBeenNthCalledWith(2, 'Матрица', expect.objectContaining({
             forceFresh: false,
             limit: 100,
             signal: expect.any(AbortSignal)
         }))
         expect(result.current.session?.items).toHaveLength(4)
-        expect(result.current.session?.query).toBe('Матрица 1999')
+        expect(result.current.session?.query).toBe('Матрица')
     })
 
     it('reuses cached results for the same title key within ttl', async () => {
@@ -218,7 +218,7 @@ describe('useMovieTorrentPreload', () => {
         })
 
         expect(searchTorrents).toHaveBeenCalledTimes(2)
-        expect(searchTorrents).toHaveBeenLastCalledWith('Fight Club 1999', expect.objectContaining({
+        expect(searchTorrents).toHaveBeenLastCalledWith('Fight Club', expect.objectContaining({
             forceFresh: true,
             limit: 100,
             signal: expect.any(AbortSignal)

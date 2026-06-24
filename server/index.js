@@ -18,6 +18,7 @@ import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary, evictLocalLibraryItemByName } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
 import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex } from './streamSource.js'
+import * as streamMonitor from './streamMonitor.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
 import {
@@ -216,6 +217,17 @@ app.get('/api/lag-stats', (req, res) => {
     })
 })
 
+// API: NAS system load snapshot (playback diagnostics, layer 2)
+app.get('/api/system', (req, res) => {
+    res.json(streamMonitor.getSystemSnapshot())
+})
+
+// API: Playback session timeline ring buffer (graph, layer 1)
+app.get('/api/session-timeline', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 300, 900)
+    res.json({ samples: streamMonitor.getSessionTimeline(limit) })
+})
+
 // ────────────────────────────────────────────────────────
 // M1: Metrics endpoint for monitoring (ADR-001)
 // ────────────────────────────────────────────────────────
@@ -261,7 +273,8 @@ function buildStatusPayload() {
     return {
         serverStatus: state.serverStatus,
         lastStateChange: state.lastStateChange,
-        torrents: serializeStatusItems(combined)
+        torrents: serializeStatusItems(combined),
+        streams: streamMonitor.getStreamMetrics()
     }
 }
 
@@ -1177,6 +1190,9 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const stream = servingFromDisk
             ? fs.createReadStream(diskPath)
             : file.createReadStream()
+        streamMonitor.openStream(infoHash, { fromDisk: servingFromDisk, fileName: file.name, fileLength: file.length })
+        stream.on('data', (c) => streamMonitor.recordBytes(infoHash, c.length))
+        res.on('close', () => streamMonitor.closeStream(infoHash))
         stream.pipe(res)
     } else {
         const { start, end } = parsedRange
@@ -1240,6 +1256,10 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             ? fs.createReadStream(diskPath, { start, end, highWaterMark: hwm })
             : file.createReadStream({ start, end, highWaterMark: hwm })
 
+        // 📊 Monitor: count this range request (reopen) + bytes delivered
+        streamMonitor.openStream(infoHash, { fromDisk: servingFromDisk, fileName: file.name, fileLength: file.length })
+        stream.on('data', (c) => streamMonitor.recordBytes(infoHash, c.length))
+
         // ✅ FIX: Функция гарантированной очистки стрима
         const cleanup = () => {
             if (!stream.destroyed) {
@@ -1261,6 +1281,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             stallTimer = setTimeout(() => {
                 if (bytesEmitted === 0) {
                     console.warn(`[Stream] ⚠️ Stall detected for ${infoHash.slice(0,8)} byte=${start}: no data in ${STALL_TIMEOUT_MS}ms, resetting connection`)
+                    streamMonitor.recordStall(infoHash)
                     cleanup()
                     // Destroy the socket (TCP reset) so the player sees a network error
                     // and retries. res.end() after writeHead(206) with no body sends an
@@ -1289,11 +1310,13 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         activeStreams++
         res.on('close', () => {
             activeStreams--
+            streamMonitor.closeStream(infoHash)
             if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
             cleanup()
         })
         res.on('error', () => {
             activeStreams--
+            streamMonitor.closeStream(infoHash)
             if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
             cleanup()
         })

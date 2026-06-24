@@ -1,7 +1,38 @@
-import { useRef, useCallback, useEffect, useState } from 'react'
+import { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import { getPosterUrl, getTitle, getYear, DISCOVERY_CATEGORIES } from '../utils/discover'
 import { reportBrokenImage, filterDiscoveryResults, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+
+const SORT_OPTIONS = [
+    { id: 'popularity', label: 'Популярные' },
+    { id: 'rating', label: 'По рейтингу' },
+    { id: 'year', label: 'По году' }
+]
+
+const RATING_OPTIONS = [
+    { id: 0, label: 'Любой' },
+    { id: 7, label: '7+' },
+    { id: 8, label: '8+' }
+]
+
+const itemYear = (item) => parseInt(getYear(item), 10) || 0
+
+const FilterChip = ({ label, active, onClick }) => {
+    const ref = useSpatialItem('category')
+    return (
+        <button
+            ref={ref}
+            onClick={onClick}
+            className={`focusable shrink-0 px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors focus:outline-none focus:ring-4 focus:ring-blue-500 ${
+                active
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-gray-800 border-gray-700 text-gray-300'
+            }`}
+        >
+            {label}
+        </button>
+    )
+}
 
 const CategoryPage = ({
     categoryId,
@@ -14,10 +45,27 @@ const CategoryPage = ({
     const [loading, setLoading] = useState(false)
     const [hasMore, setHasMore] = useState(true)
     const [imageErrors, setImageErrors] = useState(new Set())
+    const [sortBy, setSortBy] = useState('popularity')
+    const [minRating, setMinRating] = useState(0)
     const observerTarget = useRef(null)
     const backRef = useSpatialItem('category')
 
     const category = customCategory || DISCOVERY_CATEGORIES.find(c => c.id === categoryId)
+
+    // Client-side filter + sort over already-loaded items. 'popularity' keeps the
+    // server order (no resort → no focus jump while paginating); other modes sort.
+    const visibleItems = useMemo(() => {
+        const filtered = minRating > 0
+            ? displayedItems.filter(i => (i.vote_average || 0) >= minRating)
+            : displayedItems
+        if (sortBy === 'rating') {
+            return [...filtered].sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0))
+        }
+        if (sortBy === 'year') {
+            return [...filtered].sort((a, b) => itemYear(b) - itemYear(a))
+        }
+        return filtered
+    }, [displayedItems, sortBy, minRating])
 
     useEffect(() => {
         setDisplayedItems(initialItems)
@@ -103,13 +151,34 @@ const CategoryPage = ({
                 <h1 className="text-2xl font-bold text-white flex items-center gap-3">
                     <span className="text-3xl">{category.icon}</span>
                     {category.name}
-                    <span className="text-gray-500 text-lg font-normal">({displayedItems.length})</span>
+                    <span className="text-gray-500 text-lg font-normal">({visibleItems.length})</span>
                 </h1>
+            </div>
+
+            {/* Filter / Sort chips */}
+            <div className="flex items-center gap-2 mb-6 overflow-x-auto scrollbar-hide py-1">
+                {SORT_OPTIONS.map(opt => (
+                    <FilterChip
+                        key={opt.id}
+                        label={opt.label}
+                        active={sortBy === opt.id}
+                        onClick={() => setSortBy(opt.id)}
+                    />
+                ))}
+                <span className="w-px h-6 bg-gray-700 mx-1 shrink-0" />
+                {RATING_OPTIONS.map(opt => (
+                    <FilterChip
+                        key={opt.id}
+                        label={opt.label}
+                        active={minRating === opt.id}
+                        onClick={() => setMinRating(opt.id)}
+                    />
+                ))}
             </div>
 
             {/* Grid */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {displayedItems.map((item, index) => (
+                {visibleItems.map((item, index) => (
                     <CategoryItem
                         key={`${item.id}-${index}`}
                         item={item}

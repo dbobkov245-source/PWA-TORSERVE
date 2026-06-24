@@ -30,6 +30,7 @@ import SpatialEngine, { useSpatialArbiter, useSpatialItem } from './hooks/useSpa
 
 // Helpers
 import { buildServerRequestUrl, cleanTitle, resolveInitialServerUrl } from './utils/helpers'
+import { loadServerUrlFromPrefs, persistServerUrl } from './utils/serverUrlStore'
 
 // Register Custom Java Bridge
 const TVPlayer = registerPlugin('TVPlayer')
@@ -220,6 +221,21 @@ function App() {
     else if (activeView === 'home' && activeCategory) setActiveZone('category')
     else setActiveZone('main')
   }, [updateInfo, showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
+
+  // Hydrate serverUrl from native Preferences once on mount. localStorage can be
+  // wiped on APK update; Preferences survives, so prefer it when they diverge.
+  useEffect(() => {
+    let cancelled = false
+    loadServerUrlFromPrefs().then((stored) => {
+      if (cancelled || !stored) return
+      const current = (localStorage.getItem('serverUrl') || '').trim().replace(/\/+$/, '')
+      if (stored !== current) {
+        localStorage.setItem('serverUrl', stored)
+        setServerUrl(stored)
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const fetchStatusImpl = useCallback(async () => {
     const baseUrl = serverUrl || (!Capacitor.isNativePlatform() && typeof window !== 'undefined' ? window.location.origin : '')
@@ -676,7 +692,8 @@ function App() {
     // Remove trailing slash to prevent double-slash in API paths
     const cleanUrl = val.replace(/\/+$/, '')
     setServerUrl(cleanUrl)
-    if (save) localStorage.setItem('serverUrl', cleanUrl)
+    // Persist to native Preferences (survives APK update) + localStorage mirror
+    if (save) persistServerUrl(cleanUrl)
   }
 
   const handleTmdbProxyUrlChange = (val, save) => {

@@ -42,6 +42,34 @@ const PosterTestItem = ({ torrent, onClick }) => {
     )
 }
 
+// Mini multi-series sparkline for the playback session timeline.
+// Each series is normalized to its own max so dips/spikes are visible
+// regardless of absolute scale. Newest sample is on the right.
+const MiniGraph = ({ samples = [], series = [], height = 64 }) => {
+    if (!samples.length) {
+        return <div className="text-xs text-gray-500 bg-white/5 rounded-lg p-3">Нет данных сессии. Запусти воспроизведение и обнови статус.</div>
+    }
+    const W = 300
+    const H = height
+    const n = samples.length
+    const line = (key, color) => {
+        const vals = samples.map(s => Number(s[key]) || 0)
+        const max = Math.max(...vals, 0.0001)
+        const pts = vals.map((v, i) => {
+            const x = n === 1 ? W : (i / (n - 1)) * W
+            const y = H - (v / max) * (H - 4) - 2
+            return `${x.toFixed(1)},${y.toFixed(1)}`
+        }).join(' ')
+        return <polyline key={key} points={pts} fill="none" stroke={color} strokeWidth="1.5" />
+    }
+    return (
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height }}>
+            <rect x="0" y="0" width={W} height={H} fill="rgba(255,255,255,0.03)" rx="6" />
+            {series.map(s => line(s.key, s.color))}
+        </svg>
+    )
+}
+
 const SettingsPanel = ({
     serverUrl,
     onServerUrlChange,
@@ -62,6 +90,11 @@ const SettingsPanel = ({
     const [statusLoading, setStatusLoading] = useState(false)
     const [providerDiagnostics, setProviderDiagnostics] = useState([])
     const [diagnosticsError, setDiagnosticsError] = useState(null)
+
+    // Playback monitor State (NAS load + per-stream delivery + session graph)
+    const [systemData, setSystemData] = useState(null)
+    const [streamMetrics, setStreamMetrics] = useState([])
+    const [timeline, setTimeline] = useState([])
 
     // Poster Test State
     const [testResult, setTestResult] = useState(null)
@@ -112,14 +145,18 @@ const SettingsPanel = ({
     const fetchStatus = async () => {
         setStatusLoading(true)
         try {
-            const [sRes, lRes, dRes] = await Promise.all([
+            const [sRes, lRes, dRes, sysRes, tlRes] = await Promise.all([
                 fetch(`${serverUrl}/api/status`).catch(e => ({ ok: false })),
                 fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/providers/diagnostics`).catch(e => ({ ok: false }))
+                fetch(`${serverUrl}/api/providers/diagnostics`).catch(e => ({ ok: false })),
+                fetch(`${serverUrl}/api/system`).catch(e => ({ ok: false })),
+                fetch(`${serverUrl}/api/session-timeline?limit=180`).catch(e => ({ ok: false }))
             ])
             const sData = sRes.ok ? await sRes.json() : {}
             const lData = lRes.ok ? await lRes.json() : {}
             const dData = dRes.ok ? await dRes.json() : null
+            const sysData = sysRes.ok ? await sysRes.json() : null
+            const tlData = tlRes.ok ? await tlRes.json() : null
             setStatusData({
                 server: sData.serverStatus || 'N/A',
                 ram: lData.server?.ram?.rss || 'N/A',
@@ -130,6 +167,9 @@ const SettingsPanel = ({
             })
             setProviderDiagnostics(Array.isArray(dData?.providers) ? dData.providers : [])
             setDiagnosticsError(dRes.ok ? null : 'Endpoint недоступен')
+            setSystemData(sysData)
+            setStreamMetrics(Array.isArray(sData.streams) ? sData.streams : [])
+            setTimeline(Array.isArray(tlData?.samples) ? tlData.samples : [])
         } catch (e) { console.error(e) }
         finally { setStatusLoading(false) }
     }
@@ -378,6 +418,67 @@ const SettingsPanel = ({
                                     Обновить статус
                                 </button>
                             </div>
+
+                            {/* --- PLAYBACK MONITOR (NAS load + delivery + session graph) --- */}
+                            <section className="pt-4 border-t border-white/10">
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🎥 Мониторинг воспроизведения</label>
+
+                                {/* NAS system load */}
+                                <div className="grid grid-cols-2 gap-3 mb-3">
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                        <div className="text-[10px] text-gray-500 font-bold uppercase">CPU / ядро</div>
+                                        <div className={`text-xl font-mono ${systemData?.loadPerCore > 0.9 ? 'text-red-400' : systemData?.loadPerCore > 0.6 ? 'text-yellow-400' : 'text-green-400'}`}>{systemData?.loadPerCore ?? '—'}</div>
+                                        <div className="text-[10px] text-gray-600">load1 {systemData?.load1 ?? '—'} · {systemData?.cpuCores ?? '?'}c</div>
+                                    </div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                        <div className="text-[10px] text-gray-500 font-bold uppercase">Чтение диска</div>
+                                        <div className="text-xl font-mono text-blue-400">{systemData?.diskReadMBs != null ? `${systemData.diskReadMBs}` : '—'}<span className="text-xs text-gray-500"> MB/s</span></div>
+                                    </div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                        <div className="text-[10px] text-gray-500 font-bold uppercase">RAM НАС</div>
+                                        <div className="text-xl font-mono">{systemData?.ramUsedMB ?? '—'}<span className="text-xs text-gray-500">/{systemData?.ramTotalMB ?? '—'}</span></div>
+                                    </div>
+                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                        <div className="text-[10px] text-gray-500 font-bold uppercase">Активн. стримов</div>
+                                        <div className="text-xl font-mono text-purple-400">{systemData?.activeStreams ?? 0}</div>
+                                    </div>
+                                </div>
+
+                                {/* Per-stream delivery */}
+                                {streamMetrics.length > 0 && (
+                                    <div className="space-y-2 mb-3">
+                                        {streamMetrics.map((s) => (
+                                            <div key={s.infoHash} className="bg-white/5 rounded-xl border border-white/10 p-3 text-xs">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="font-mono text-white truncate">{s.fileName || s.infoHash.slice(0, 8)}</div>
+                                                    <div className={`font-mono ${s.active ? 'text-green-400' : 'text-gray-500'}`}>{s.active ? '▶' : '⏸'} {s.fromDisk ? 'диск' : 'торрент'}</div>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-2 mt-2 text-[11px] text-gray-300">
+                                                    <div>Отдача<br /><span className={`font-mono ${s.active && s.throughputMBs < 1 ? 'text-red-400' : 'text-white'}`}>{s.throughputMBs} MB/s</span></div>
+                                                    <div>Reopen<br /><span className={`font-mono ${s.reopenCount > 20 ? 'text-yellow-400' : 'text-white'}`}>{s.reopenCount}</span></div>
+                                                    <div>Stall<br /><span className={`font-mono ${s.stallCount > 0 ? 'text-red-400' : 'text-white'}`}>{s.stallCount}</span></div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Session timeline graph */}
+                                <MiniGraph
+                                    samples={timeline}
+                                    series={[
+                                        { key: 'cpuPct', color: '#f87171' },
+                                        { key: 'diskReadMBs', color: '#60a5fa' },
+                                        { key: 'streamMBs', color: '#4ade80' }
+                                    ]}
+                                />
+                                <div className="flex gap-4 mt-2 text-[10px] text-gray-400">
+                                    <span><span className="text-red-400">●</span> CPU%</span>
+                                    <span><span className="text-blue-400">●</span> Диск MB/s</span>
+                                    <span><span className="text-green-400">●</span> Отдача MB/s</span>
+                                </div>
+                                <div className="text-[10px] text-gray-600 mt-1">Фриз = провал зелёной (отдача) при росте красной (CPU) или провале синей (диск).</div>
+                            </section>
 
                             <section ref={diagnosticsSectionRef} tabIndex="0" className="focusable pt-4 border-t border-white/10 outline-none focus:ring-1 focus:ring-blue-500/30 rounded-xl">
                                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 block">🧪 Диагностика источников</label>

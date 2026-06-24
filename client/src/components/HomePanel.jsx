@@ -41,6 +41,9 @@ const HomePanel = ({
     const [backdrop, setBackdrop] = useState(null)
     const [focusedItem, setFocusedItem] = useState(null)
     const [visibleRows, setVisibleRows] = useState([])
+    // Set of TMDB ids the user already opened/watched — drives the "seen" marker
+    // on catalog posters. Server view-history is tmdbId-keyed (recordHistory).
+    const [watchedIds, setWatchedIds] = useState(() => new Set())
 
     // ADR-003: Centralized navigation state
     const [activeArea, setActiveArea] = useState('content') // 'content' | 'sidebar'
@@ -103,7 +106,6 @@ const HomePanel = ({
     // not the slowest chain).
     useEffect(() => {
         let cancelled = false
-        const seenIds = new Set()
         const rowsById = {}
 
         const applyRows = () => {
@@ -122,13 +124,12 @@ const HomePanel = ({
             try {
                 const row = await fetchCategoryWithPages(category)
                 if (cancelled) return
-                const uniqueItems = (row.items || []).filter(item => {
-                    if (seenIds.has(item.id)) return false
-                    seenIds.add(item.id)
-                    return true
-                })
-                if (uniqueItems.length === 0) return
-                rowsById[category.id] = { ...row, items: uniqueItems }
+                // No cross-row dedup: each row keeps its own ~20 items
+                // (fetchCategoryWithPages already caps to 20). Overlap between
+                // rows is expected and matches Netflix/Lampa — uniform row length.
+                const items = row.items || []
+                if (items.length === 0) return
+                rowsById[category.id] = { ...row, items }
                 applyRows()
             } catch (err) {
                 console.error(`[HomePanel] Failed to load ${category.id}:`, err)
@@ -144,6 +145,18 @@ const HomePanel = ({
             }
         })
 
+        return () => { cancelled = true }
+    }, [])
+
+    // Load watched-id set once for the "seen" poster marker.
+    useEffect(() => {
+        let cancelled = false
+        getHistory()
+            .then((hist) => {
+                if (cancelled) return
+                setWatchedIds(new Set((hist || []).map(h => h.tmdbId).filter(Boolean)))
+            })
+            .catch(() => { /* history optional — no marker on failure */ })
         return () => { cancelled = true }
     }, [])
 
@@ -437,6 +450,7 @@ const HomePanel = ({
                             onFocusChange={setFocusedItem}
                             qualityBadges={qualityBadges}
                             qualityDebug={qualityDebug}
+                            watchedIds={watchedIds}
                         />
                     )}
                     {!loading && visibleRows.map((row) => (
@@ -450,6 +464,7 @@ const HomePanel = ({
                             onMoreClick={handleMoreClick}
                             qualityBadges={qualityBadges}
                             qualityDebug={qualityDebug}
+                            watchedIds={watchedIds}
                         />
                     ))}
                 </div>

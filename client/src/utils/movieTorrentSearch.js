@@ -54,15 +54,27 @@ export function buildMovieTorrentQueries(item) {
         ])
     }
 
+    // Bare title FIRST: providers (jacred) return 0 for year-suffixed queries,
+    // so leading with "Title Year" wastes 1-2 sequential round-trips before any
+    // result. Bare title yields the full swarm immediately → early-stop on query 1.
+    // Year-suffixed kept as a disambiguation fallback for common titles.
     return uniqueQueries([
-        year && originalTitle ? `${originalTitle} ${year}` : '',
-        year && localTitle ? `${localTitle} ${year}` : '',
         originalTitle,
-        localTitle
+        localTitle,
+        year && originalTitle ? `${originalTitle} ${year}` : '',
+        year && localTitle ? `${localTitle} ${year}` : ''
     ])
 }
 
+// Enough results to render the modal. Stops the sequential query sweep early.
+const RAW_PRELOAD_STOP_COUNT = 12
+
 export function shouldStopMovieTorrentPreload(items = []) {
+    // Prefer ≥2 verified-accessible candidates. But under RU ISP blocking the
+    // preflight marks most torrents dead/risky, so accessibleCount rarely hits 2
+    // and the loop would run every query. Fall back to raw count so a healthy
+    // first query (e.g. 75 results) early-stops instead of sweeping all queries.
+    if (items.length >= RAW_PRELOAD_STOP_COUNT) return true
     const accessibleCount = items.filter(isLikelyAccessibleCandidate).length
     return accessibleCount >= 2
 }

@@ -5,7 +5,7 @@ import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getBadgeStyle } from '../hooks/useQualityBadges'
 
 // O3: MovieCard now has local isBroken state to prevent full row re-renders
-const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }) => {
+const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, watched }) => {
     const spatialRef = useSpatialItem('main')
     const posterUrl = getPosterUrl(item)
     const title = getTitle(item)
@@ -43,7 +43,7 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }
                 <img
                     src={imgSrc}
                     alt={title}
-                    className="w-full h-full object-cover pointer-events-none"
+                    className={`w-full h-full object-cover pointer-events-none ${watched ? 'opacity-60' : ''}`}
                     loading="lazy"
                     onError={handleImageError}
                 />
@@ -72,6 +72,13 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges }
                     {item.vote_average.toFixed(1)}
                 </div>
             )}
+
+            {/* Watched marker - bottom left (already opened/seen) */}
+            {watched && (
+                <div className="absolute bottom-1 left-1 bg-blue-600 text-white w-5 h-5 flex items-center justify-center rounded-full text-[11px] font-bold shadow-sm pointer-events-none">
+                    ✓
+                </div>
+            )}
         </div>
     )
 }
@@ -85,7 +92,8 @@ const HomeRow = forwardRef(({
     onFocusChange,
     onMoreClick,
     qualityBadges,
-    qualityDebug
+    qualityDebug,
+    watchedIds
 }, ref) => {
     // O3: useRef instead of useState to prevent row re-renders on image errors
     const imageErrorsRef = useRef(new Set())
@@ -140,6 +148,7 @@ const HomeRow = forwardRef(({
                         onFocus={() => onFocusChange?.(item)}
                         imageErrorsRef={imageErrorsRef}
                         qualityBadges={qualityBadges}
+                        watched={watchedIds?.has(item.id)}
                     />
                 ))}
 

@@ -23,7 +23,7 @@ describe('getMovieTorrentKey', () => {
 })
 
 describe('buildMovieTorrentQueries', () => {
-    it('builds movie queries in year-first order and removes duplicates', () => {
+    it('builds movie queries in bare-title-first order and removes duplicates', () => {
         const item = {
             id: 603,
             title: 'Матрица',
@@ -32,11 +32,13 @@ describe('buildMovieTorrentQueries', () => {
             media_type: 'movie'
         }
 
+        // Bare title leads: providers return 0 for year-suffixed queries, so the
+        // bare title must run first to early-stop instead of wasting round-trips.
         expect(buildMovieTorrentQueries(item)).toEqual([
-            'The Matrix 1999',
-            'Матрица 1999',
             'The Matrix',
-            'Матрица'
+            'Матрица',
+            'The Matrix 1999',
+            'Матрица 1999'
         ])
     })
 
@@ -50,8 +52,8 @@ describe('buildMovieTorrentQueries', () => {
         }
 
         expect(buildMovieTorrentQueries(item)).toEqual([
-            'Fight Club 1999',
-            'Fight Club'
+            'Fight Club',
+            'Fight Club 1999'
         ])
     })
 
@@ -102,6 +104,19 @@ describe('shouldStopMovieTorrentPreload', () => {
         ]
 
         expect(shouldStopMovieTorrentPreload(items)).toBe(false)
+    })
+
+    it('stops on a large raw result set even without verified-accessible peers', () => {
+        // Under RU ISP blocking preflight marks most torrents dead/risky, so the
+        // accessible heuristic rarely hits 2. A healthy first query still must
+        // early-stop so the preload does not sweep every fallback query.
+        const items = Array.from({ length: 12 }, (_, index) => ({
+            id: `raw-${index}`,
+            seeders: 0,
+            playabilityStatus: 'risky'
+        }))
+
+        expect(shouldStopMovieTorrentPreload(items)).toBe(true)
     })
 
     it('does not stop on bare private-tracker results with index seeders only', () => {

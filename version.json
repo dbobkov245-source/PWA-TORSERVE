@@ -1,7 +1,7 @@
 {
-    "version": "3.14.0",
-    "versionCode": 32,
+    "version": "3.16.0",
+    "versionCode": 34,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.14.0/pwa-torserve-v3.14.0.apk",
-    "notes": "v3.14.0 — коротко:\n- Продолжить просмотр с места остановки\n- Ряд «Есть в 4K» на главной\n- Ускорение через TorrServer из карточки торрента"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.16.0/pwa-torserve-v3.16.0.apk",
+    "notes": "v3.16.0\n- Быстрый список торрентов в карточке\n- Маркер «просмотрено» на постерах\n- Фильтры каталога: рейтинг и год\n- Ровно 20 постеров в каждом ряду\n- Мониторинг плеера + нативный IP НАС"
 }
