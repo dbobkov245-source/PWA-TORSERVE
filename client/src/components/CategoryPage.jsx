@@ -44,6 +44,8 @@ const CategoryPage = ({
     const [displayedItems, setDisplayedItems] = useState(initialItems)
     const [loading, setLoading] = useState(false)
     const [hasMore, setHasMore] = useState(true)
+    const [loadError, setLoadError] = useState(null)
+    const [retryTick, setRetryTick] = useState(0)
     const [imageErrors, setImageErrors] = useState(new Set())
     const [sortBy, setSortBy] = useState('popularity')
     const [minRating, setMinRating] = useState(0)
@@ -53,7 +55,7 @@ const CategoryPage = ({
     const backRef = useSpatialItem('category')
 
     const category = customCategory || DISCOVERY_CATEGORIES.find(c => c.id === categoryId)
-    const categoryKey = customCategory?.name || categoryId || null
+    const categoryKey = customCategory?.id || categoryId || customCategory?.name || null
 
     // Client-side filter + sort over already-loaded items. 'popularity' keeps the
     // server order (no resort → no focus jump while paginating); other modes sort.
@@ -107,6 +109,7 @@ const CategoryPage = ({
         setDisplayedItems(initialItems)
         pageRef.current = initialItems.length > 0 ? 1 : 0
         setHasMore(true)
+        setLoadError(null)
         setImageErrors(new Set())
 
         if (!category?.fetcher || initialItems.length > 0) return
@@ -124,12 +127,23 @@ const CategoryPage = ({
                     setHasMore(false)
                 }
             })
-            .catch((e) => { if (!cancelled) { console.error(e); setHasMore(false) } })
+            .catch((e) => {
+                if (!cancelled) {
+                    console.error(e)
+                    setLoadError(e)
+                    setHasMore(false)
+                }
+            })
             .finally(() => { if (!cancelled) setLoading(false) })
 
         return () => { cancelled = true }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [categoryKey])
+    }, [categoryKey, retryTick])
+
+    const handleRetry = useCallback(() => {
+        loadedKeyRef.current = null
+        setRetryTick(t => t + 1)
+    }, [])
 
     // Use both IntersectionObserver and Scroll Listener for maximum robustness on TV
     useEffect(() => {
@@ -208,6 +222,22 @@ const CategoryPage = ({
                     />
                 ))}
             </div>
+
+            {loadError && (
+                <div className="mt-8 flex flex-col items-center gap-3 text-center text-gray-300">
+                    <div>Не удалось загрузить подборку</div>
+                    <button
+                        className="focusable px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold focus:ring-4 focus:ring-blue-500"
+                        onClick={handleRetry}
+                    >
+                        Повторить
+                    </button>
+                </div>
+            )}
+
+            {!loading && !loadError && visibleItems.length === 0 && (
+                <div className="mt-8 text-center text-gray-400">Ничего не найдено</div>
+            )}
 
             {/* sentinel */}
             {hasMore && (
