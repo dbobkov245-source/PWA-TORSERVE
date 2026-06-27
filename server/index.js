@@ -345,8 +345,10 @@ app.post('/api/library/rescan', async (req, res) => {
 // API: TMDB Proxy with DoH bypass
 import { smartFetch, insecureAgent } from './utils/doh.js'
 import proxyRouter from './routes/proxy.js'
+import traktRouter from './routes/trakt.js'
 
 app.use('/api/proxy', proxyRouter)
+app.use('/api/trakt', traktRouter)
 
 // ────────────────────────────────────────────────────────
 // 📦 Updater proxy: lets clients with broken TLS (old Android,

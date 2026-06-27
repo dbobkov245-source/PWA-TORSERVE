@@ -3,6 +3,7 @@ import {
     recordPlaybackResult,
     getResumePosition,
     getResumeItems,
+    getResumeEntry,
     removeResumeEntries,
     isFinishedResult
 } from './watchHistory.js'
@@ -47,6 +48,14 @@ describe('watchHistory', () => {
         recordPlaybackResult({ ...base, fileIndex: 1, result: { position: 900000, duration: 0, finished: false } })
         removeResumeEntries('ABCDEF1234')
         expect(getResumeItems()).toHaveLength(0)
+    })
+
+    it('carries tmdbId/mediaType and preserves them across updates', () => {
+        recordPlaybackResult({ ...base, tmdbId: 603, mediaType: 'movie', result: { position: 600000, duration: 7200000 } })
+        expect(getResumeEntry('abcdef1234', 0)).toMatchObject({ tmdbId: 603, mediaType: 'movie' })
+        // A later update without an id (e.g. resume from home) keeps the stored id.
+        recordPlaybackResult({ ...base, result: { position: 800000, duration: 7200000 } })
+        expect(getResumeEntry('abcdef1234', 0)).toMatchObject({ tmdbId: 603, position: 800000 })
     })
 
     it('newest entries come first', () => {

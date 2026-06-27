@@ -48,7 +48,7 @@ export function isFinishedResult({ position = 0, duration = 0, finished = false 
  * Store the outcome of a playback session.
  * Finished sessions remove the resume entry (next play starts fresh).
  */
-export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentName, result }) {
+export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentName, tmdbId = null, mediaType = null, result }) {
     if (!infoHash || !Number.isInteger(fileIndex)) return
     const map = load()
     const key = entryKey(infoHash, fileIndex)
@@ -67,6 +67,11 @@ export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentNam
         fileIndex,
         fileName: fileName || null,
         torrentName: torrentName || null,
+        // tmdbId/mediaType carried so the catalog can map this torrent back to a
+        // TMDB item (Trakt scrobble, real progress % on posters). Preserve any
+        // previously-stored id if this call doesn't supply one.
+        tmdbId: tmdbId ?? map[key]?.tmdbId ?? null,
+        mediaType: mediaType ?? map[key]?.mediaType ?? null,
         position,
         duration: Math.max(0, result?.duration || 0),
         updatedAt: Date.now()
@@ -78,6 +83,11 @@ export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentNam
 export function getResumePosition(infoHash, fileIndex) {
     const entry = load()[entryKey(infoHash, fileIndex)]
     return entry?.position || 0
+}
+
+/** Full stored entry (incl. tmdbId/mediaType) for a torrent file, or null. */
+export function getResumeEntry(infoHash, fileIndex) {
+    return load()[entryKey(infoHash, fileIndex)] || null
 }
 
 /** Unfinished sessions, newest first — source for the Continue Watching row */

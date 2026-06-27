@@ -22,7 +22,18 @@ const defaultData = {
     // View History (HIST-01)
     viewHistory: [],           // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, lastWatched, genreIds }]
     // TorrServer failover downloads in progress (resumed on restart)
-    tsDownloads: []            // [{ infoHash, magnet, name }]
+    tsDownloads: [],           // [{ infoHash, magnet, name }]
+    // Trakt.tv OAuth device-flow tokens + sync cache
+    trakt: {
+        connected: false,
+        accessToken: null,
+        refreshToken: null,
+        expiresAt: 0,          // ms epoch when accessToken expires
+        pendingDeviceCode: null,
+        slug: null,            // trakt username
+        watchedTmdbIds: [],    // cached from /sync/watched for poster markers
+        syncedAt: 0
+    }
 }
 const dbPath = process.env.DB_PATH || 'db.json'
 const adapter = new JSONFile(dbPath)
@@ -46,6 +57,7 @@ db.data.autoDownloadHistory ||= []
 db.data.favorites ||= []
 db.data.viewHistory ||= []
 db.data.tsDownloads ||= []
+db.data.trakt = { ...defaultData.trakt, ...(db.data.trakt || {}) }
 
 await db.write()
 

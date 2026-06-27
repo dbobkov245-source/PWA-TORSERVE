@@ -9,7 +9,8 @@ import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
 import { dispatchSystemBack } from './utils/backButton.js'
-import { recordPlaybackResult, getResumePosition, getResumeItems, removeResumeEntries } from './utils/watchHistory.js'
+import { recordPlaybackResult, getResumePosition, getResumeItems, getResumeEntry, removeResumeEntries } from './utils/watchHistory.js'
+import { scrobbleTrakt } from './utils/traktApi.js'
 
 // Components
 import Poster from './components/Poster'
@@ -141,6 +142,10 @@ function App() {
   // State: Discovery Views
   const [activeView, setActiveView] = useState('home')
   const [activeMovie, setActiveMovie] = useState(null)
+  // Latest opened movie, readable inside handlePlay to attach a TMDB id to the
+  // playback (Trakt scrobble + carrying tmdbId into the resume entry).
+  const activeMovieRef = useRef(null)
+  useEffect(() => { activeMovieRef.current = activeMovie }, [activeMovie])
   const [activePerson, setActivePerson] = useState(null)
   const [activeCategory, setActiveCategory] = useState(null)
   const [showSidebar, setShowSidebar] = useState(false)
@@ -415,6 +420,18 @@ function App() {
       const playOptions = { url: streamUrl, title: fileName }
       if (resumeFrom > 0) playOptions.position = resumeFrom
 
+      // Resolve a TMDB id for this playback: prefer the movie currently open,
+      // fall back to one previously stored on the resume entry (home → resume).
+      const prevEntry = getResumeEntry(hash, index)
+      const movie = activeMovieRef.current
+      const tmdbId = movie?.id ?? prevEntry?.tmdbId ?? null
+      const mediaType = movie
+        ? (movie.media_type || (movie.name || movie.original_name ? 'tv' : 'movie'))
+        : (prevEntry?.mediaType || 'movie')
+
+      // Trakt scrobble: start before launch, stop after the player returns.
+      if (tmdbId) scrobbleTrakt({ tmdbId, mediaType, progress: 0, action: 'start' })
+
       const result = await TVPlayer.play(playOptions)
 
       recordPlaybackResult({
@@ -422,9 +439,18 @@ function App() {
         fileIndex: index,
         fileName,
         torrentName,
+        tmdbId,
+        mediaType,
         result: result || {}
       })
       setResumeItems(getResumeItems())
+
+      if (tmdbId) {
+        const dur = result?.duration || 0
+        const pos = result?.position || 0
+        const pct = dur > 0 ? Math.max(0, Math.min(100, Math.round((pos / dur) * 100))) : 0
+        scrobbleTrakt({ tmdbId, mediaType, progress: pct, action: 'stop' })
+      }
     } catch (e) {
       console.error('Play error:', e)
       alert('Error starting playback')
@@ -812,11 +838,18 @@ function App() {
             resumeItems={resumeItems.filter(r => torrents.some(t => t.infoHash?.toLowerCase() === r.infoHash))}
             onResume={(item) => handlePlay(item.infoHash, item.fileIndex, item.fileName)}
             onSearch={(q) => {
-              const query = q || searchQuery;
-              setSearchQuery(query);
               setActiveView('list');
               setShowSearch(true);
-              searchRuTracker(query);
+              const query = (q || '').trim();
+              // Sidebar "Поиск" passes '' → open a clean panel for typing instead
+              // of silently re-running the previous query. MovieDetail passes a
+              // real title → run it.
+              if (query) {
+                setSearchQuery(query);
+                searchRuTracker(query);
+              } else {
+                setSearchQuery('');
+              }
             }}
             onClose={() => setActiveView('list')}
           />

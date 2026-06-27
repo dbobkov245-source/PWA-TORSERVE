@@ -38,19 +38,22 @@ const CategoryPage = ({
     categoryId,
     customCategory,
     items: initialItems = [],
-    onItemClick
+    onItemClick,
+    onFocusChange
 }) => {
     const [displayedItems, setDisplayedItems] = useState(initialItems)
-    const [page, setPage] = useState(initialItems.length > 0 ? 1 : 0)
     const [loading, setLoading] = useState(false)
     const [hasMore, setHasMore] = useState(true)
     const [imageErrors, setImageErrors] = useState(new Set())
     const [sortBy, setSortBy] = useState('popularity')
     const [minRating, setMinRating] = useState(0)
     const observerTarget = useRef(null)
+    const pageRef = useRef(initialItems.length > 0 ? 1 : 0)
+    const loadedKeyRef = useRef(null)
     const backRef = useSpatialItem('category')
 
     const category = customCategory || DISCOVERY_CATEGORIES.find(c => c.id === categoryId)
+    const categoryKey = customCategory?.name || categoryId || null
 
     // Client-side filter + sort over already-loaded items. 'popularity' keeps the
     // server order (no resort → no focus jump while paginating); other modes sort.
@@ -67,19 +70,11 @@ const CategoryPage = ({
         return filtered
     }, [displayedItems, sortBy, minRating])
 
-    useEffect(() => {
-        setDisplayedItems(initialItems)
-        setPage(initialItems.length > 0 ? 1 : 0)
-        setHasMore(true)
-        setImageErrors(new Set())
-        hasInitiallyLoaded.current = false
-    }, [categoryId, customCategory?.name])
-
     const loadMore = useCallback(async () => {
         if (loading || !hasMore || !category?.fetcher) return
         setLoading(true)
         try {
-            const nextPage = page + 1
+            const nextPage = pageRef.current + 1
             const response = await category.fetcher(nextPage)
             if (response && response.results && response.results.length > 0) {
                 const newItems = filterDiscoveryResults(response.results)
@@ -90,7 +85,7 @@ const CategoryPage = ({
                         return unique.length > 0 ? [...prev, ...unique] : prev
                     })
                 }
-                setPage(nextPage)
+                pageRef.current = nextPage
                 // Stop pagination if: few results, or server says only 1 page, or we exceeded total pages
                 if (response.results.length < 20 || response.total_pages === 1 || (response.total_pages && nextPage >= response.total_pages)) {
                     setHasMore(false)
@@ -100,15 +95,41 @@ const CategoryPage = ({
             console.error(e)
             setHasMore(false)
         } finally { setLoading(false) }
-    }, [loading, hasMore, page, category])
+    }, [loading, hasMore, category])
 
-    const hasInitiallyLoaded = useRef(false)
+    // Reset + fresh page-1 fetch whenever the category identity changes, in ONE
+    // effect. The prior split (reset effect + [category] initial-load effect) had
+    // a stale-`page` race: on a category→category switch the reset's setPage(0)
+    // had not committed when the load effect ran, so `page === 0` was false and
+    // loadMore never fired → empty grid (year/genre/favorites came up blank).
     useEffect(() => {
-        if (page === 0 && !hasInitiallyLoaded.current && category) {
-            hasInitiallyLoaded.current = true
-            loadMore()
-        }
-    }, [category])
+        let cancelled = false
+        setDisplayedItems(initialItems)
+        pageRef.current = initialItems.length > 0 ? 1 : 0
+        setHasMore(true)
+        setImageErrors(new Set())
+
+        if (!category?.fetcher || initialItems.length > 0) return
+        if (loadedKeyRef.current === categoryKey) return
+        loadedKeyRef.current = categoryKey
+
+        setLoading(true)
+        category.fetcher(1)
+            .then((response) => {
+                if (cancelled) return
+                const newItems = filterDiscoveryResults(response?.results || [])
+                setDisplayedItems(newItems)
+                pageRef.current = 1
+                if (!response?.results?.length || response.results.length < 20 || response.total_pages === 1) {
+                    setHasMore(false)
+                }
+            })
+            .catch((e) => { if (!cancelled) { console.error(e); setHasMore(false) } })
+            .finally(() => { if (!cancelled) setLoading(false) })
+
+        return () => { cancelled = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [categoryKey])
 
     // Use both IntersectionObserver and Scroll Listener for maximum robustness on TV
     useEffect(() => {
@@ -183,6 +204,7 @@ const CategoryPage = ({
                         key={`${item.id}-${index}`}
                         item={item}
                         onClick={() => onItemClick(item)}
+                        onFocus={() => onFocusChange?.(item)}
                     />
                 ))}
             </div>
@@ -197,7 +219,7 @@ const CategoryPage = ({
     )
 }
 
-const CategoryItem = ({ item, onClick }) => {
+const CategoryItem = ({ item, onClick, onFocus }) => {
     const spatialRef = useSpatialItem('category')
     const posterUrl = getPosterUrl(item)
     // Per-image fallback chain: mirror → server proxy → wsrv → title card
@@ -208,6 +230,7 @@ const CategoryItem = ({ item, onClick }) => {
         <button
             ref={spatialRef}
             onClick={onClick}
+            onFocus={onFocus}
             className="focusable rounded-lg transition-all duration-200 relative overflow-hidden focus:outline-none focus:ring-4 focus:ring-blue-500 focus:scale-105 focus:z-10 aspect-[2/3]"
         >
             {imgSrc ? (

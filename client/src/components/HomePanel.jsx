@@ -8,7 +8,7 @@
  * - No double event processing
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import HomeRow from './HomeRow'
 import ContinueWatchingRow from './ContinueWatchingRow'
 import CategoryPage from './CategoryPage'
@@ -18,8 +18,39 @@ import Sidebar from './Sidebar'
 import { DISCOVERY_CATEGORIES, fetchCategoryWithPages, getBackdropUrl } from '../utils/discover'
 import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
+import { getTraktSynced } from '../utils/traktApi'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { useQualityBadges } from '../hooks/useQualityBadges'
+
+// Tier-3 lazy row placeholder: fetches its category only once it scrolls near
+// the viewport, then the parent swaps it for a real HomeRow. Keeps the home page
+// from firing 30+ cascade requests (and NAS quality-badge work) on first paint.
+const LazyRow = ({ category, onVisible }) => {
+    const ref = useRef(null)
+    useEffect(() => {
+        const el = ref.current
+        if (!el) return
+        const obs = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+                onVisible(category)
+                obs.disconnect()
+            }
+        }, { rootMargin: '300px' })
+        obs.observe(el)
+        return () => obs.disconnect()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [category.id])
+
+    return (
+        <div ref={ref} className="home-row mb-6">
+            <div className="flex items-center gap-2 px-8 mb-3">
+                <span className="text-2xl">{category.icon}</span>
+                <h2 className="text-xl font-bold text-white/70">{category.name}</h2>
+            </div>
+            <div className="px-8 h-[195px] flex items-center text-gray-600 text-sm">Загрузка…</div>
+        </div>
+    )
+}
 
 const HomePanel = ({
     activeMovie, setActiveMovie,
@@ -42,8 +73,10 @@ const HomePanel = ({
     const [focusedItem, setFocusedItem] = useState(null)
     const [visibleRows, setVisibleRows] = useState([])
     // Set of TMDB ids the user already opened/watched — drives the "seen" marker
-    // on catalog posters. Server view-history is tmdbId-keyed (recordHistory).
+    // on catalog posters. Merged from server view-history + Trakt watched.
     const [watchedIds, setWatchedIds] = useState(() => new Set())
+    // TMDB items resolved from the connected Trakt account's watchlist.
+    const [traktWatchlist, setTraktWatchlist] = useState([])
 
     // ADR-003: Centralized navigation state
     const [activeArea, setActiveArea] = useState('content') // 'content' | 'sidebar'
@@ -101,62 +134,98 @@ const HomePanel = ({
         return out.slice(0, 20)
     }, [visibleRows, qualityBadges])
 
-    // Data Loading — progressive: each row renders as soon as its category
-    // arrives instead of waiting for all 12 (first paint = fastest category,
-    // not the slowest chain).
+    // Accumulator + in-flight guard live in refs so a tier-3 row can be loaded
+    // lazily (from a LazyRow sentinel) long after the mount effect finished.
+    const rowsByIdRef = useRef({})
+    const inflightRef = useRef(new Set())
+    const mountedRef = useRef(true)
+    useEffect(() => () => { mountedRef.current = false }, [])
+
+    const applyRows = useCallback(() => {
+        if (!mountedRef.current) return
+        const ordered = DISCOVERY_CATEGORIES
+            .map(c => rowsByIdRef.current[c.id])
+            .filter(row => row?.items?.length > 0)
+        setVisibleRows(ordered)
+        if (ordered[0]?.items?.[0]) {
+            setFocusedItem(prev => prev || ordered[0].items[0])
+        }
+    }, [])
+
+    // Load one category. Idempotent: skips already-loaded or in-flight rows so
+    // both the tiered mount load and lazy sentinels can call it freely.
+    const loadRow = useCallback(async (category) => {
+        if (rowsByIdRef.current[category.id] || inflightRef.current.has(category.id)) return
+        inflightRef.current.add(category.id)
+        try {
+            const row = await fetchCategoryWithPages(category)
+            const items = row.items || []
+            if (items.length === 0) { inflightRef.current.delete(category.id); return }
+            if (!mountedRef.current) return
+            rowsByIdRef.current[category.id] = { ...row, items }
+            setCategories(prev => ({ ...prev, [category.id]: { ...row, items } }))
+            applyRows()
+        } catch (err) {
+            console.error(`[HomePanel] Failed to load ${category.id}:`, err)
+            inflightRef.current.delete(category.id) // allow retry on next intersection
+        }
+    }, [applyRows])
+
+    // Data Loading — tiered to keep first paint fast and the NAS calm:
+    // Tier 1 immediately, Tier 2 after a short delay, Tier 3 lazily on scroll.
     useEffect(() => {
         let cancelled = false
-        const rowsById = {}
-
-        const applyRows = () => {
-            const ordered = DISCOVERY_CATEGORIES
-                .map(c => rowsById[c.id])
-                .filter(row => row?.items?.length > 0)
-            setVisibleRows(ordered)
-            setCategories(prev => ({ ...prev, ...rowsById }))
-            setLoading(false)
-            if (ordered[0]?.items?.[0]) {
-                setFocusedItem(prev => prev || ordered[0].items[0])
-            }
-        }
-
-        const loadRow = async (category) => {
-            try {
-                const row = await fetchCategoryWithPages(category)
-                if (cancelled) return
-                // No cross-row dedup: each row keeps its own ~20 items
-                // (fetchCategoryWithPages already caps to 20). Overlap between
-                // rows is expected and matches Netflix/Lampa — uniform row length.
-                const items = row.items || []
-                if (items.length === 0) return
-                rowsById[category.id] = { ...row, items }
-                applyRows()
-            } catch (err) {
-                console.error(`[HomePanel] Failed to load ${category.id}:`, err)
-            }
-        }
-
         setLoading(true)
-        Promise.allSettled(DISCOVERY_CATEGORIES.map(loadRow)).then(() => {
+
+        const tier1 = DISCOVERY_CATEGORIES.filter(c => (c.tier || 1) === 1)
+        const tier2 = DISCOVERY_CATEGORIES.filter(c => c.tier === 2)
+
+        Promise.allSettled(tier1.map(loadRow)).then(() => {
             if (cancelled) return
             setLoading(false)
-            if (Object.keys(rowsById).length === 0) {
+            if (Object.keys(rowsByIdRef.current).length === 0) {
                 setError('Failed to load content')
             }
         })
 
-        return () => { cancelled = true }
-    }, [])
+        const t = setTimeout(() => {
+            if (!cancelled) tier2.forEach(loadRow)
+        }, 2000)
 
-    // Load watched-id set once for the "seen" poster marker.
+        return () => { cancelled = true; clearTimeout(t) }
+    }, [loadRow])
+
+    // Fast id→row lookup for the render (loaded rows vs lazy placeholders).
+    const loadedById = useMemo(() => {
+        const map = {}
+        for (const row of visibleRows) map[row.id] = row
+        return map
+    }, [visibleRows])
+
+    // Watched-id set for the "seen" poster marker — merged from local server
+    // history AND the connected Trakt account. Trakt also feeds a watchlist row.
     useEffect(() => {
         let cancelled = false
-        getHistory()
-            .then((hist) => {
-                if (cancelled) return
-                setWatchedIds(new Set((hist || []).map(h => h.tmdbId).filter(Boolean)))
-            })
-            .catch(() => { /* history optional — no marker on failure */ })
+        Promise.allSettled([getHistory(), getTraktSynced()]).then(async ([h, t]) => {
+            if (cancelled) return
+            const ids = new Set()
+            if (h.status === 'fulfilled') {
+                (h.value || []).forEach(x => x.tmdbId && ids.add(x.tmdbId))
+            }
+            let watchlistIds = []
+            if (t.status === 'fulfilled') {
+                (t.value?.watched || []).forEach(id => ids.add(id))
+                watchlistIds = (t.value?.watchlist || []).map(w => w.tmdbId).filter(Boolean).slice(0, 20)
+            }
+            setWatchedIds(ids)
+
+            if (watchlistIds.length > 0) {
+                const items = await Promise.all(watchlistIds.map(id =>
+                    tmdbClient(`/movie/${id}?language=ru-RU`).then(r => (r && r.id ? r : null)).catch(() => null)
+                ))
+                if (!cancelled) setTraktWatchlist(items.filter(Boolean))
+            }
+        })
         return () => { cancelled = true }
     }, [])
 
@@ -439,6 +508,20 @@ const HomePanel = ({
                     {!loading && resumeItems.length > 0 && onResume && (
                         <ContinueWatchingRow items={resumeItems} onResume={onResume} />
                     )}
+                    {!loading && traktWatchlist.length > 0 && (
+                        <HomeRow
+                            key="trakt-watchlist"
+                            title="Trakt: смотреть позже"
+                            icon="📋"
+                            items={traktWatchlist}
+                            categoryId="trakt-watchlist"
+                            onItemClick={handleItemClick}
+                            onFocusChange={setFocusedItem}
+                            qualityBadges={qualityBadges}
+                            qualityDebug={qualityDebug}
+                            watchedIds={watchedIds}
+                        />
+                    )}
                     {!loading && fourKItems.length > 0 && (
                         <HomeRow
                             key="has-4k"
@@ -453,20 +536,31 @@ const HomePanel = ({
                             watchedIds={watchedIds}
                         />
                     )}
-                    {!loading && visibleRows.map((row) => (
-                        <HomeRow
-                            key={row.id}
-                            title={row.name}
-                            items={row.items}
-                            categoryId={row.id}
-                            onItemClick={handleItemClick}
-                            onFocusChange={setFocusedItem}
-                            onMoreClick={handleMoreClick}
-                            qualityBadges={qualityBadges}
-                            qualityDebug={qualityDebug}
-                            watchedIds={watchedIds}
-                        />
-                    ))}
+                    {!loading && DISCOVERY_CATEGORIES.map((cat) => {
+                        const row = loadedById[cat.id]
+                        if (row) {
+                            return (
+                                <HomeRow
+                                    key={cat.id}
+                                    title={row.name}
+                                    icon={cat.icon}
+                                    items={row.items}
+                                    categoryId={cat.id}
+                                    onItemClick={handleItemClick}
+                                    onFocusChange={setFocusedItem}
+                                    onMoreClick={handleMoreClick}
+                                    qualityBadges={qualityBadges}
+                                    qualityDebug={qualityDebug}
+                                    watchedIds={watchedIds}
+                                />
+                            )
+                        }
+                        // Tier 3 not yet loaded → lazy sentinel; Tier 1/2 pending → nothing.
+                        if ((cat.tier || 1) >= 3) {
+                            return <LazyRow key={cat.id} category={cat} onVisible={loadRow} />
+                        }
+                        return null
+                    })}
                 </div>
 
                 {/* Menu / Sidebar Trigger via ArrowLeft (invisible) */}

@@ -3,6 +3,7 @@ import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
 import { getLayerStatus } from '../utils/tmdbClient'
+import { getTraktStatus, startTraktDevice, pollTraktDevice, disconnectTrakt } from '../utils/traktApi'
 
 const TABS = [
     { id: 'general', name: 'Основные', icon: '⚙️' },
@@ -24,6 +25,98 @@ const SpeedButton = ({ mode, active, disabled, onClick }) => {
             <div className="font-bold text-xs">{mode.name}</div>
             <div className="text-[10px] opacity-70">{mode.desc}</div>
         </button>
+    )
+}
+
+const TraktSection = () => {
+    const connectRef = useSpatialItem('settings')
+    const [status, setStatus] = useState(null) // {configured, connected, slug, watchedCount}
+    const [device, setDevice] = useState(null) // {user_code, verification_url}
+    const [busy, setBusy] = useState(false)
+    const [msg, setMsg] = useState('')
+    const pollTimer = useRef(null)
+
+    const refresh = useCallback(() => {
+        getTraktStatus().then(setStatus).catch(() => setStatus({ configured: false, connected: false }))
+    }, [])
+
+    useEffect(() => {
+        refresh()
+        return () => { if (pollTimer.current) clearInterval(pollTimer.current) }
+    }, [refresh])
+
+    const startPolling = useCallback((intervalSec) => {
+        if (pollTimer.current) clearInterval(pollTimer.current)
+        pollTimer.current = setInterval(async () => {
+            try {
+                const r = await pollTraktDevice()
+                if (r.status === 'authorized') {
+                    clearInterval(pollTimer.current); pollTimer.current = null
+                    setDevice(null); setMsg('✅ Trakt подключён'); refresh()
+                } else if (r.status && r.status !== 'pending') {
+                    clearInterval(pollTimer.current); pollTimer.current = null
+                    setDevice(null); setMsg(`Не удалось: ${r.status}`)
+                }
+            } catch { /* keep polling */ }
+        }, Math.max(2, intervalSec || 5) * 1000)
+    }, [refresh])
+
+    const connect = useCallback(async () => {
+        setBusy(true); setMsg('')
+        try {
+            const d = await startTraktDevice()
+            setDevice(d)
+            startPolling(d.interval)
+        } catch (e) {
+            setMsg('Ошибка. Проверь TRAKT_CLIENT_ID/SECRET на сервере.')
+        } finally { setBusy(false) }
+    }, [startPolling])
+
+    const disconnect = useCallback(async () => {
+        setBusy(true)
+        try { await disconnectTrakt(); setMsg('Отключено'); setDevice(null) } catch { /* ignore */ }
+        finally { setBusy(false); refresh() }
+    }, [refresh])
+
+    return (
+        <section className="pt-4 border-t border-white/10">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 block">🎬 Trakt.tv синхронизация</label>
+
+            {status && !status.configured && (
+                <div className="text-xs text-yellow-500/80 bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-3">
+                    Trakt не настроен на сервере. Задай <code>TRAKT_CLIENT_ID</code> и <code>TRAKT_CLIENT_SECRET</code> (создай приложение на trakt.tv/oauth/applications, redirect uri <code>urn:ietf:wg:oauth:2.0:oob</code>).
+                </div>
+            )}
+
+            {status?.configured && status.connected && (
+                <div className="space-y-2">
+                    <div className="text-sm text-green-400">✅ Подключено{status.slug ? ` — ${status.slug}` : ''} · просмотрено: {status.watchedCount}</div>
+                    <button ref={connectRef} onClick={disconnect} disabled={busy}
+                        className="focusable w-full py-3 bg-red-900/10 text-red-400 rounded-xl font-bold text-sm border border-red-900/30 hover:bg-red-900/20 transition-all disabled:opacity-50">
+                        Отключить Trakt
+                    </button>
+                </div>
+            )}
+
+            {status?.configured && !status.connected && !device && (
+                <button ref={connectRef} onClick={connect} disabled={busy}
+                    className="focusable w-full py-3 bg-red-600/20 text-red-300 rounded-xl font-bold text-sm border border-red-500/30 hover:bg-red-600/30 transition-all disabled:opacity-50">
+                    {busy ? 'Подождите…' : 'Подключить Trakt'}
+                </button>
+            )}
+
+            {device && (
+                <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 text-center space-y-2">
+                    <div className="text-xs text-gray-400">Открой на телефоне/ПК:</div>
+                    <div className="text-sm text-blue-400 font-mono">{device.verification_url}</div>
+                    <div className="text-xs text-gray-400">и введи код:</div>
+                    <div className="text-3xl font-black tracking-widest text-white">{device.user_code}</div>
+                    <div className="text-[11px] text-gray-500 animate-pulse">Ожидаю подтверждения…</div>
+                </div>
+            )}
+
+            {msg && <div className="text-xs text-gray-400 mt-2">{msg}</div>}
+        </section>
     )
 }
 
@@ -351,6 +444,8 @@ const SettingsPanel = ({
                                     ))}
                                 </div>
                             </section>
+
+                            <TraktSection />
                         </div>
                     )}
 

@@ -22,3 +22,8 @@ deploy/
 skills/
 *FULL_PROJECT_CODE.md
 *.apk
+
+# Android signing — NEVER commit. Back these up outside git (lose them = can never update the app again).
+*.jks
+*.keystore
+keystore.properties

@@ -30,20 +30,49 @@ const fetchTrendingDay = (page = 1) => tmdbClient(`/trending/movie/day?page=${pa
 const fetchUpcoming = (page = 1) => tmdbClient(`/movie/upcoming?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
 const fetchTopTV = (page = 1) => tmdbClient(`/tv/top_rated?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
 const fetchGenre = (id, page = 1) => tmdbClient(`/discover/movie?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchTVGenre = (id, page = 1) => tmdbClient(`/discover/tv?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchByLanguage = (lang, page = 1) => tmdbClient(`/discover/movie?with_original_language=${lang}&sort_by=popularity.desc&vote_count.gte=50&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchByYearRange = (gte, lte, page = 1) => tmdbClient(`/discover/movie?primary_release_date.gte=${gte}-01-01&primary_release_date.lte=${lte}-12-31&sort_by=popularity.desc&vote_count.gte=100&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 
+// `tier` controls home-load timing (HomePanel): 1 = immediate, 2 = short delay,
+// 3 = lazy (fetch only when the row scrolls into view). Keeps NAS/cascade calm.
 export const DISCOVERY_CATEGORIES = [
-    { id: 'now_playing', name: 'Сейчас смотрят', icon: '🎬', fetcher: fetchNowPlaying },
-    { id: 'trending_day', name: 'Тренды дня', icon: '📈', fetcher: fetchTrendingDay },
-    { id: 'genre_28', name: 'Боевики', icon: '👊', fetcher: (page) => fetchGenre(28, page) },
-    { id: 'trending', name: 'Тренды недели', icon: '🔥', fetcher: (page) => getTrending('week', page) },
-    { id: 'genre_35', name: 'Комедии', icon: '😂', fetcher: (page) => fetchGenre(35, page) },
-    { id: 'upcoming', name: 'Скоро в кино', icon: '📅', fetcher: fetchUpcoming },
-    { id: 'movies', name: 'Популярные фильмы', icon: '⭐', fetcher: getPopularMovies },
-    { id: 'genre_878', name: 'Фантастика', icon: '👽', fetcher: (page) => fetchGenre(878, page) },
-    { id: 'tv', name: 'Популярные сериалы', icon: '📺', fetcher: getPopularTV },
-    { id: 'genre_16', name: 'Мультфильмы', icon: '🎨', fetcher: (page) => fetchGenre(16, page) },
-    { id: 'top', name: 'Топ фильмов', icon: '🏆', fetcher: getTopRated },
-    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', fetcher: fetchTopTV }
+    // ── Tier 1: load immediately (above the fold) ──
+    { id: 'now_playing', name: 'Сейчас смотрят', icon: '🎬', tier: 1, fetcher: fetchNowPlaying },
+    { id: 'trending_day', name: 'Тренды дня', icon: '📈', tier: 1, fetcher: fetchTrendingDay },
+    { id: 'genre_28', name: 'Боевики', icon: '👊', tier: 1, fetcher: (page) => fetchGenre(28, page) },
+    { id: 'trending', name: 'Тренды недели', icon: '🔥', tier: 1, fetcher: (page) => getTrending('week', page) },
+    { id: 'genre_35', name: 'Комедии', icon: '😂', tier: 1, fetcher: (page) => fetchGenre(35, page) },
+    { id: 'movies', name: 'Популярные фильмы', icon: '⭐', tier: 1, fetcher: getPopularMovies },
+    // ── Tier 2: load after a short delay ──
+    { id: 'genre_878', name: 'Фантастика', icon: '👽', tier: 2, fetcher: (page) => fetchGenre(878, page) },
+    { id: 'genre_27', name: 'Ужасы', icon: '👻', tier: 2, fetcher: (page) => fetchGenre(27, page) },
+    { id: 'genre_18', name: 'Драмы', icon: '🎭', tier: 2, fetcher: (page) => fetchGenre(18, page) },
+    { id: 'genre_53', name: 'Триллеры', icon: '🔪', tier: 2, fetcher: (page) => fetchGenre(53, page) },
+    { id: 'tv', name: 'Популярные сериалы', icon: '📺', tier: 2, fetcher: getPopularTV },
+    { id: 'genre_16', name: 'Мультфильмы', icon: '🎨', tier: 2, fetcher: (page) => fetchGenre(16, page) },
+    { id: 'upcoming', name: 'Скоро в кино', icon: '📅', tier: 2, fetcher: fetchUpcoming },
+    { id: 'top', name: 'Топ фильмов', icon: '🏆', tier: 2, fetcher: getTopRated },
+    // ── Tier 3: lazy — fetch when scrolled into view ──
+    { id: 'genre_10749', name: 'Мелодрамы', icon: '💕', tier: 3, fetcher: (page) => fetchGenre(10749, page) },
+    { id: 'genre_80', name: 'Криминал', icon: '🚔', tier: 3, fetcher: (page) => fetchGenre(80, page) },
+    { id: 'genre_9648', name: 'Детективы', icon: '🕵️', tier: 3, fetcher: (page) => fetchGenre(9648, page) },
+    { id: 'genre_12', name: 'Приключения', icon: '🗺️', tier: 3, fetcher: (page) => fetchGenre(12, page) },
+    { id: 'genre_14', name: 'Фэнтези', icon: '🧙', tier: 3, fetcher: (page) => fetchGenre(14, page) },
+    { id: 'genre_10751', name: 'Семейные', icon: '👨‍👩‍👧', tier: 3, fetcher: (page) => fetchGenre(10751, page) },
+    { id: 'genre_99', name: 'Документальные', icon: '🎥', tier: 3, fetcher: (page) => fetchGenre(99, page) },
+    { id: 'genre_36', name: 'Исторические', icon: '🏛️', tier: 3, fetcher: (page) => fetchGenre(36, page) },
+    { id: 'genre_10752', name: 'Военные', icon: '🎖️', tier: 3, fetcher: (page) => fetchGenre(10752, page) },
+    { id: 'genre_37', name: 'Вестерны', icon: '🤠', tier: 3, fetcher: (page) => fetchGenre(37, page) },
+    { id: 'genre_10402', name: 'Музыкальные', icon: '🎵', tier: 3, fetcher: (page) => fetchGenre(10402, page) },
+    { id: 'lang_ru', name: 'Русское кино', icon: '🇷🇺', tier: 3, fetcher: (page) => fetchByLanguage('ru', page) },
+    { id: 'lang_ko', name: 'Корейское кино', icon: '🇰🇷', tier: 3, fetcher: (page) => fetchByLanguage('ko', page) },
+    { id: 'anime_tv', name: 'Аниме', icon: '🍥', tier: 3, fetcher: (page) => fetchTVGenre(16, page) },
+    { id: 'decade_2020', name: 'Кино 2020-х', icon: '🆕', tier: 3, fetcher: (page) => fetchByYearRange(2020, 2029, page) },
+    { id: 'decade_2010', name: 'Кино 2010-х', icon: '📀', tier: 3, fetcher: (page) => fetchByYearRange(2010, 2019, page) },
+    { id: 'decade_2000', name: 'Кино 2000-х', icon: '💿', tier: 3, fetcher: (page) => fetchByYearRange(2000, 2009, page) },
+    { id: 'decade_1990', name: 'Кино 90-х', icon: '📼', tier: 3, fetcher: (page) => fetchByYearRange(1990, 1999, page) },
+    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, fetcher: fetchTopTV }
 ]
 
 /**
