@@ -11,6 +11,7 @@
  */
 
 import express from 'express'
+import https from 'node:https'
 import { db, safeWrite } from '../db.js'
 
 const router = express.Router()
@@ -37,19 +38,36 @@ function apiHeaders(token) {
     const headers = {
         'Content-Type': 'application/json',
         'trakt-api-version': '2',
-        'trakt-api-key': clientId
+        'trakt-api-key': clientId,
+        // Trakt sits behind Cloudflare which 403s undici's default UA — send an
+        // explicit one (curl/UA-bearing requests succeed, bare node fetch fails).
+        'User-Agent': 'PWA-TorServe/1.0'
     }
     if (token) headers['Authorization'] = `Bearer ${token}`
     return headers
 }
 
-async function traktFetch(path, { method = 'GET', body, token } = {}) {
-    const res = await fetch(`${TRAKT_BASE}${path}`, {
-        method,
-        headers: apiHeaders(token),
-        body: body ? JSON.stringify(body) : undefined
+// Use node's https (OpenSSL TLS) rather than global fetch (undici): Trakt's
+// Cloudflare blocks undici's TLS fingerprint (403 / connection reset) while
+// curl and node:https pass. Returns a minimal fetch-like { ok, status, json }.
+function traktFetch(path, { method = 'GET', body, token } = {}) {
+    return new Promise((resolve, reject) => {
+        const payload = body ? JSON.stringify(body) : null
+        const headers = apiHeaders(token)
+        if (payload) headers['Content-Length'] = Buffer.byteLength(payload)
+        const req = https.request(`${TRAKT_BASE}${path}`, { method, headers }, (res) => {
+            let data = ''
+            res.on('data', (c) => { data += c })
+            res.on('end', () => resolve({
+                ok: res.statusCode >= 200 && res.statusCode < 300,
+                status: res.statusCode,
+                json: async () => (data ? JSON.parse(data) : {})
+            }))
+        })
+        req.on('error', reject)
+        if (payload) req.write(payload)
+        req.end()
     })
-    return res
 }
 
 /** Persist token payload from an OAuth response into db.data.trakt. */
