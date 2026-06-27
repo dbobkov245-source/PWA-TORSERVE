@@ -131,8 +131,8 @@ function recordLayerSuccess(layer) {
 // 5 CDN mirrors with automatic failover and ban system
 // 5 CDN mirrors with automatic failover and ban system
 const IMAGE_MIRRORS = [
-    'imagetmdb.com',
     'nl.imagetmdb.com',
+    'imagetmdb.com',
     'de.imagetmdb.com',
     'pl.imagetmdb.com',
     'lampa.byskaz.ru/tmdb/img'

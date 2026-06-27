@@ -21,6 +21,7 @@ describe('getImageUrl poster routing', () => {
         const url = getImageUrl('/abc123.jpg', 'w342')
 
         expect(url).toMatch(/^https:\/\//)
+        expect(url).toContain('nl.imagetmdb.com')
         expect(url).toContain('/t/p/w342/abc123.jpg')
         expect(url).not.toContain('/api/proxy')
     })
