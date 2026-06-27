@@ -125,8 +125,42 @@ describe('DISCOVERY_CATEGORIES', () => {
             expect(cat).toHaveProperty('id')
             expect(cat).toHaveProperty('name')
             expect(cat).toHaveProperty('icon')
+            expect(cat).toHaveProperty('tier')
             expect(cat).toHaveProperty('fetcher')
             expect(typeof cat.fetcher).toBe('function')
         })
+    })
+
+    it('includes expanded Lampa-style rows for long-scroll discovery', () => {
+        const ids = DISCOVERY_CATEGORIES.map(c => c.id)
+        const expectedIds = [
+            'genre_80',
+            'genre_9648',
+            'genre_12',
+            'genre_14',
+            'genre_10751',
+            'genre_99',
+            'genre_36',
+            'genre_10752',
+            'genre_10402',
+            'decade_1980',
+            'lang_ja',
+            'lang_fr',
+            'lang_es',
+            'lang_hi',
+            'lang_tr',
+            'top_tv',
+            'tv_airing_today',
+            'tv_on_the_air'
+        ]
+        expectedIds.forEach(id => expect(ids).toContain(id))
+    })
+
+    it('keeps first-paint rows bounded and moves long-tail rows to lazy tier', () => {
+        const tier1Count = DISCOVERY_CATEGORIES.filter(c => c.tier === 1).length
+        const tier3Count = DISCOVERY_CATEGORIES.filter(c => c.tier === 3).length
+
+        expect(tier1Count).toBeLessThanOrEqual(8)
+        expect(tier3Count).toBeGreaterThanOrEqual(15)
     })
 })

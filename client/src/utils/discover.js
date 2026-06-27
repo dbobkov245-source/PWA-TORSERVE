@@ -29,6 +29,8 @@ const fetchNowPlaying = (page = 1) => tmdbClient(`/movie/now_playing?page=${page
 const fetchTrendingDay = (page = 1) => tmdbClient(`/trending/movie/day?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
 const fetchUpcoming = (page = 1) => tmdbClient(`/movie/upcoming?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
 const fetchTopTV = (page = 1) => tmdbClient(`/tv/top_rated?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchTVAiringToday = (page = 1) => tmdbClient(`/tv/airing_today?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
+const fetchTVOnTheAir = (page = 1) => tmdbClient(`/tv/on_the_air?page=${page}`, { cacheTTL: 10 * 60 * 1000 })
 const fetchGenre = (id, page = 1) => tmdbClient(`/discover/movie?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 const fetchTVGenre = (id, page = 1) => tmdbClient(`/discover/tv?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 const fetchByLanguage = (lang, page = 1) => tmdbClient(`/discover/movie?with_original_language=${lang}&sort_by=popularity.desc&vote_count.gte=50&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
@@ -67,12 +69,20 @@ export const DISCOVERY_CATEGORIES = [
     { id: 'genre_10402', name: 'Музыкальные', icon: '🎵', tier: 3, fetcher: (page) => fetchGenre(10402, page) },
     { id: 'lang_ru', name: 'Русское кино', icon: '🇷🇺', tier: 3, fetcher: (page) => fetchByLanguage('ru', page) },
     { id: 'lang_ko', name: 'Корейское кино', icon: '🇰🇷', tier: 3, fetcher: (page) => fetchByLanguage('ko', page) },
+    { id: 'lang_ja', name: 'Японское кино', icon: '🇯🇵', tier: 3, fetcher: (page) => fetchByLanguage('ja', page) },
+    { id: 'lang_fr', name: 'Французское кино', icon: '🇫🇷', tier: 3, fetcher: (page) => fetchByLanguage('fr', page) },
+    { id: 'lang_es', name: 'Испанское кино', icon: '🇪🇸', tier: 3, fetcher: (page) => fetchByLanguage('es', page) },
+    { id: 'lang_hi', name: 'Индийское кино', icon: '🇮🇳', tier: 3, fetcher: (page) => fetchByLanguage('hi', page) },
+    { id: 'lang_tr', name: 'Турецкое кино', icon: '🇹🇷', tier: 3, fetcher: (page) => fetchByLanguage('tr', page) },
     { id: 'anime_tv', name: 'Аниме', icon: '🍥', tier: 3, fetcher: (page) => fetchTVGenre(16, page) },
     { id: 'decade_2020', name: 'Кино 2020-х', icon: '🆕', tier: 3, fetcher: (page) => fetchByYearRange(2020, 2029, page) },
     { id: 'decade_2010', name: 'Кино 2010-х', icon: '📀', tier: 3, fetcher: (page) => fetchByYearRange(2010, 2019, page) },
     { id: 'decade_2000', name: 'Кино 2000-х', icon: '💿', tier: 3, fetcher: (page) => fetchByYearRange(2000, 2009, page) },
     { id: 'decade_1990', name: 'Кино 90-х', icon: '📼', tier: 3, fetcher: (page) => fetchByYearRange(1990, 1999, page) },
-    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, fetcher: fetchTopTV }
+    { id: 'decade_1980', name: 'Кино 80-х', icon: '📺', tier: 3, fetcher: (page) => fetchByYearRange(1980, 1989, page) },
+    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, fetcher: fetchTopTV },
+    { id: 'tv_airing_today', name: 'Серии сегодня', icon: '🛰️', tier: 3, fetcher: fetchTVAiringToday },
+    { id: 'tv_on_the_air', name: 'Сериалы в эфире', icon: '📡', tier: 3, fetcher: fetchTVOnTheAir }
 ]
 
 /**
