@@ -181,6 +181,18 @@ setTimeout(warmupImageMirrors, 2000)
 const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
 const PROXY_MODE_TS_KEY = 'tmdb_image_proxy_enabled_at'
 const PROXY_MODE_TTL_MS = 6 * 60 * 60 * 1000 // retry mirrors after 6h
+const IMAGE_ROUTE_VERSION_KEY = 'tmdb_image_route_version'
+export const IMAGE_ROUTE_VERSION = 'nl-direct-v2'
+
+function migrateImageRoutingState() {
+    try {
+        if (localStorage.getItem(IMAGE_ROUTE_VERSION_KEY) === IMAGE_ROUTE_VERSION) return
+        localStorage.removeItem('tmdb_img_mirror')
+        localStorage.removeItem(PROXY_MODE_KEY)
+        localStorage.removeItem(PROXY_MODE_TS_KEY)
+        localStorage.setItem(IMAGE_ROUTE_VERSION_KEY, IMAGE_ROUTE_VERSION)
+    } catch { /* localStorage unavailable */ }
+}
 
 /**
  * Proxy mode = posters go straight to the home server proxy, skipping
@@ -255,10 +267,15 @@ IMAGE_MIRRORS.forEach(mirror => {
  * @returns {string} - Current mirror hostname
  */
 export function getCurrentImageMirror() {
+    migrateImageRoutingState()
     const freeMirrors = IMAGE_MIRRORS.filter(m => !mirrorStats[m].banned)
+    const preferredMirror = IMAGE_MIRRORS[0]
     const lastMirror = localStorage.getItem('tmdb_img_mirror') || ''
 
-    if (freeMirrors.includes(lastMirror)) {
+    if (freeMirrors.includes(preferredMirror)) {
+        localStorage.setItem('tmdb_img_mirror', preferredMirror)
+        return preferredMirror
+    } else if (freeMirrors.includes(lastMirror)) {
         return lastMirror
     } else if (freeMirrors.length > 0) {
         localStorage.setItem('tmdb_img_mirror', freeMirrors[0])
@@ -314,6 +331,7 @@ export function reportBrokenImage(url) {
 export function getImageUrl(path, size = 'w342') {
     if (!path) return ''
     if (path.startsWith('http')) return path
+    migrateImageRoutingState()
 
     // 1. Default: direct CDN mirror (e.g. imagetmdb.com), one network hop.
     // Routing posters through the NAS /api/proxy looked attractive (shared

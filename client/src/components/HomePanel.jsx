@@ -65,7 +65,7 @@ const HomePanel = ({
 }) => {
     // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
     // ~40s of background jacred searches on the NAS right after home load.
-    const MAX_HOME_QUALITY_TITLES = 24
+    const MAX_HOME_QUALITY_TITLES = 12
     const [categories, setCategories] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -147,6 +147,7 @@ const HomePanel = ({
             .map(c => rowsByIdRef.current[c.id])
             .filter(row => row?.items?.length > 0)
         setVisibleRows(ordered)
+        if (ordered.length > 0) setLoading(false)
         if (ordered[0]?.items?.[0]) {
             setFocusedItem(prev => prev || ordered[0].items[0])
         }
@@ -536,7 +537,7 @@ const HomePanel = ({
                             watchedIds={watchedIds}
                         />
                     )}
-                    {!loading && DISCOVERY_CATEGORIES.map((cat) => {
+                    {DISCOVERY_CATEGORIES.map((cat) => {
                         const row = loadedById[cat.id]
                         if (row) {
                             return (

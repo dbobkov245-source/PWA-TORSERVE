@@ -9,7 +9,7 @@ vi.mock('@capacitor/core', () => ({
     }
 }))
 
-import { getImageUrl } from './tmdbClient.js'
+import { getImageUrl, IMAGE_ROUTE_VERSION } from './tmdbClient.js'
 
 describe('getImageUrl poster routing', () => {
     beforeEach(() => {
@@ -27,6 +27,7 @@ describe('getImageUrl poster routing', () => {
     })
 
     it('falls back to the server proxy when all mirrors are banned (proxy mode)', () => {
+        localStorage.setItem('tmdb_image_route_version', IMAGE_ROUTE_VERSION)
         localStorage.setItem('tmdb_image_proxy_enabled', 'true')
 
         const url = getImageUrl('/abc123.jpg', 'w342')
@@ -39,11 +40,26 @@ describe('getImageUrl poster routing', () => {
 
     it('falls back to wsrv when proxy mode is on and no server is configured', () => {
         localStorage.removeItem('serverUrl')
+        localStorage.setItem('tmdb_image_route_version', IMAGE_ROUTE_VERSION)
         localStorage.setItem('tmdb_image_proxy_enabled', 'true')
 
         const url = getImageUrl('/abc123.jpg', 'w342')
 
         expect(url).toBe('https://wsrv.nl/?url=ssl:image.tmdb.org/t/p/w342/abc123.jpg&output=webp')
+    })
+
+    it('migrates stale image routing state from old NAS-proxy and degraded mirror paths', () => {
+        localStorage.setItem('tmdb_img_mirror', 'imagetmdb.com')
+        localStorage.setItem('tmdb_image_proxy_enabled', 'true')
+        localStorage.setItem('tmdb_image_proxy_enabled_at', String(Date.now()))
+
+        const url = getImageUrl('/abc123.jpg', 'w342')
+
+        expect(url).toContain('nl.imagetmdb.com')
+        expect(url).not.toContain('/api/proxy')
+        expect(localStorage.getItem('tmdb_img_mirror')).toBe('nl.imagetmdb.com')
+        expect(localStorage.getItem('tmdb_image_proxy_enabled')).toBeNull()
+        expect(localStorage.getItem('tmdb_image_route_version')).toBe(IMAGE_ROUTE_VERSION)
     })
 })
 
