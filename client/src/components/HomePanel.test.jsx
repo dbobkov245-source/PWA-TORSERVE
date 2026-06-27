@@ -16,4 +16,12 @@ describe('HomePanel startup regressions', () => {
     it('keeps home quality badge discovery capped to visible rows', () => {
         expect(src).toContain('const MAX_HOME_QUALITY_TITLES = 12')
     })
+
+    it('does not rely only on IntersectionObserver for tier-3 lazy rows', () => {
+        expect(src).toContain('homeScrollRef')
+        expect(src).toContain('queueLazyLoad')
+        expect(src).toContain('checkLazyRowsNearViewport')
+        expect(src).toContain('setInterval')
+        expect(src).toContain('data-category-id')
+    })
 })

@@ -30,6 +30,10 @@ const LazyRow = ({ category, onVisible }) => {
     useEffect(() => {
         const el = ref.current
         if (!el) return
+        if (typeof IntersectionObserver === 'undefined') {
+            const id = setTimeout(() => onVisible(category), 0)
+            return () => clearTimeout(id)
+        }
         const obs = new IntersectionObserver((entries) => {
             if (entries[0].isIntersecting) {
                 onVisible(category)
@@ -42,7 +46,7 @@ const LazyRow = ({ category, onVisible }) => {
     }, [category.id])
 
     return (
-        <div ref={ref} className="home-row mb-6">
+        <div ref={ref} data-category-id={category.id} className="home-row mb-6">
             <div className="flex items-center gap-2 px-8 mb-3">
                 <span className="text-2xl">{category.icon}</span>
                 <h2 className="text-xl font-bold text-white/70">{category.name}</h2>
@@ -138,7 +142,13 @@ const HomePanel = ({
     // lazily (from a LazyRow sentinel) long after the mount effect finished.
     const rowsByIdRef = useRef({})
     const inflightRef = useRef(new Set())
+    const emptyRowsRef = useRef(new Set())
+    const lazyRetryAtRef = useRef({})
+    const pendingLazyIdsRef = useRef([])
+    const queuedLazyIdsRef = useRef(new Set())
+    const drainingLazyRef = useRef(false)
     const mountedRef = useRef(true)
+    const homeScrollRef = useRef(null)
     useEffect(() => () => { mountedRef.current = false }, [])
 
     const applyRows = useCallback(() => {
@@ -161,16 +171,64 @@ const HomePanel = ({
         try {
             const row = await fetchCategoryWithPages(category)
             const items = row.items || []
-            if (items.length === 0) { inflightRef.current.delete(category.id); return }
+            if (items.length === 0) {
+                emptyRowsRef.current.add(category.id)
+                inflightRef.current.delete(category.id)
+                return
+            }
             if (!mountedRef.current) return
+            emptyRowsRef.current.delete(category.id)
             rowsByIdRef.current[category.id] = { ...row, items }
             setCategories(prev => ({ ...prev, [category.id]: { ...row, items } }))
             applyRows()
         } catch (err) {
             console.error(`[HomePanel] Failed to load ${category.id}:`, err)
+            lazyRetryAtRef.current[category.id] = Date.now() + 60 * 1000
             inflightRef.current.delete(category.id) // allow retry on next intersection
         }
     }, [applyRows])
+
+    const drainLazyQueue = useCallback(async () => {
+        if (drainingLazyRef.current) return
+        drainingLazyRef.current = true
+        try {
+            while (mountedRef.current && pendingLazyIdsRef.current.length > 0) {
+                const id = pendingLazyIdsRef.current.shift()
+                queuedLazyIdsRef.current.delete(id)
+                const category = DISCOVERY_CATEGORIES.find(c => c.id === id)
+                if (!category || rowsByIdRef.current[id] || emptyRowsRef.current.has(id) || inflightRef.current.has(id)) continue
+                await loadRow(category)
+            }
+        } finally {
+            drainingLazyRef.current = false
+        }
+    }, [loadRow])
+
+    const queueLazyLoad = useCallback((category) => {
+        if (!category?.id) return
+        const retryAt = lazyRetryAtRef.current[category.id] || 0
+        if (retryAt > Date.now()) return
+        if (rowsByIdRef.current[category.id] || emptyRowsRef.current.has(category.id) || inflightRef.current.has(category.id)) return
+        if (queuedLazyIdsRef.current.has(category.id)) return
+        queuedLazyIdsRef.current.add(category.id)
+        pendingLazyIdsRef.current.push(category.id)
+        drainLazyQueue()
+    }, [drainLazyQueue])
+
+    const checkLazyRowsNearViewport = useCallback(() => {
+        const scroller = homeScrollRef.current
+        if (!scroller) return
+        const scrollerRect = scroller.getBoundingClientRect()
+        const viewportBottom = scrollerRect.bottom || window.innerHeight || 0
+        const nodes = scroller.querySelectorAll('[data-category-id]')
+        nodes.forEach(node => {
+            const id = node.getAttribute('data-category-id')
+            const category = DISCOVERY_CATEGORIES.find(c => c.id === id)
+            if (!category) return
+            const rect = node.getBoundingClientRect()
+            if (rect.top <= viewportBottom + 800) queueLazyLoad(category)
+        })
+    }, [queueLazyLoad])
 
     // Data Loading — tiered to keep first paint fast and the NAS calm:
     // Tier 1 immediately, Tier 2 after a short delay, Tier 3 lazily on scroll.
@@ -195,6 +253,35 @@ const HomePanel = ({
 
         return () => { cancelled = true; clearTimeout(t) }
     }, [loadRow])
+
+    useEffect(() => {
+        const scroller = homeScrollRef.current
+        if (!scroller) return
+        const handleScroll = () => checkLazyRowsNearViewport()
+        handleScroll()
+        scroller.addEventListener('scroll', handleScroll, { passive: true })
+        window.addEventListener('resize', handleScroll)
+        return () => {
+            scroller.removeEventListener('scroll', handleScroll)
+            window.removeEventListener('resize', handleScroll)
+        }
+    }, [checkLazyRowsNearViewport])
+
+    useEffect(() => {
+        const id = setInterval(() => {
+            checkLazyRowsNearViewport()
+            const next = DISCOVERY_CATEGORIES.find(c =>
+                (c.tier || 1) >= 3 &&
+                !rowsByIdRef.current[c.id] &&
+                !emptyRowsRef.current.has(c.id) &&
+                !inflightRef.current.has(c.id) &&
+                !queuedLazyIdsRef.current.has(c.id) &&
+                (lazyRetryAtRef.current[c.id] || 0) <= Date.now()
+            )
+            if (next) queueLazyLoad(next)
+        }, 1600)
+        return () => clearInterval(id)
+    }, [checkLazyRowsNearViewport, queueLazyLoad])
 
     // Fast id→row lookup for the render (loaded rows vs lazy placeholders).
     const loadedById = useMemo(() => {
@@ -505,7 +592,7 @@ const HomePanel = ({
                 <div className="absolute inset-0 bg-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
-                <div className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
+                <div ref={homeScrollRef} className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
                     {!loading && resumeItems.length > 0 && onResume && (
                         <ContinueWatchingRow items={resumeItems} onResume={onResume} />
                     )}
@@ -558,7 +645,7 @@ const HomePanel = ({
                         }
                         // Tier 3 not yet loaded → lazy sentinel; Tier 1/2 pending → nothing.
                         if ((cat.tier || 1) >= 3) {
-                            return <LazyRow key={cat.id} category={cat} onVisible={loadRow} />
+                            return <LazyRow key={cat.id} category={cat} onVisible={queueLazyLoad} />
                         }
                         return null
                     })}
