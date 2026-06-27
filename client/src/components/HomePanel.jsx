@@ -537,7 +537,10 @@ const HomePanel = ({
                 id: `year_${item.year}`,
                 name: `${item.year} год`,
                 icon: '📅',
-                fetcher: (page) => tmdbClient(`/discover/movie?primary_release_year=${item.year}&sort_by=popularity.desc&include_adult=false&language=ru-RU&page=${page}`)
+                fetcher: (page) => tmdbClient(
+                    `/discover/movie?primary_release_year=${item.year}&sort_by=popularity.desc&include_adult=false&language=ru-RU&page=${page}`,
+                    { useCache: false }
+                )
             })
         } else if (item.categoryId?.startsWith('genre_')) {
             const genreId = parseInt(item.categoryId.split('_')[1])

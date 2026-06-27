@@ -43,6 +43,23 @@ export function shouldFallbackFromAmsterdamStatus(statusCode) {
     return Number.isInteger(statusCode) && statusCode >= 500
 }
 
+export function shouldSkipProxyWrite(res, responseSettled = false) {
+    return Boolean(responseSettled || res.headersSent || res.writableEnded || res.destroyed)
+}
+
+export function withTmdbApiKey(rawUrl, options = {}) {
+    const tmdbApiKey = options.tmdbApiKey ?? process.env.TMDB_API_KEY ?? ''
+    if (!tmdbApiKey) return rawUrl
+
+    const targetUrl = new URL(rawUrl)
+    if (targetUrl.hostname !== 'api.themoviedb.org' || targetUrl.searchParams.has('api_key')) {
+        return rawUrl
+    }
+
+    targetUrl.searchParams.set('api_key', tmdbApiKey)
+    return targetUrl.toString()
+}
+
 function getForwardHeaders(proxyRes) {
     const forwardHeaders = ['content-type', 'content-length', 'cache-control', 'expires', 'last-modified', 'etag']
     return forwardHeaders.reduce((headers, key) => {
@@ -199,21 +216,22 @@ router.get('/', async (req, res) => {
     }
 
     try {
-        const targetUrl = new URL(url);
+        const upstreamUrl = withTmdbApiKey(url);
+        const targetUrl = new URL(upstreamUrl);
 
         if (!ALLOWED_DOMAINS.includes(targetUrl.hostname)) {
             console.warn(`[Proxy] 🚫 Blocked domain: ${targetUrl.hostname}`);
             return res.status(403).json({ error: 'Domain not allowed' });
         }
 
-        const amsterdamHandled = await attemptAmsterdamProxy({ targetUrl, url, req, res })
+        const amsterdamHandled = await attemptAmsterdamProxy({ targetUrl, url: upstreamUrl, req, res })
         if (amsterdamHandled) {
             return
         }
 
         // O2: Check disk cache for images
-        if (isImageRequest(url)) {
-            const cachedPath = await getCachedImage(url);
+        if (isImageRequest(upstreamUrl)) {
+            const cachedPath = await getCachedImage(upstreamUrl);
             if (cachedPath) {
                 // Serve from cache
                 const ext = cachedPath.split('.').pop().toLowerCase();
@@ -228,14 +246,14 @@ router.get('/', async (req, res) => {
         // GeoIP-blocked image hosts: CDN mirrors first, wsrv.nl fallback
         if (WSRV_PROXIED_HOSTS.has(targetUrl.hostname)) {
             try {
-                await streamViaImageMirrors({ url, req, res });
+                await streamViaImageMirrors({ url: upstreamUrl, req, res });
                 return;
             } catch (mirrorErr) {
                 console.warn(`[Proxy] image mirrors failed for ${targetUrl.hostname}: ${mirrorErr.message}`);
                 if (res.headersSent) return;
             }
             try {
-                await streamViaWsrv({ url, req, res });
+                await streamViaWsrv({ url: upstreamUrl, req, res });
                 return;
             } catch (err) {
                 console.warn(`[Proxy] wsrv fallback failed for ${targetUrl.hostname}: ${err.message}`);
@@ -246,10 +264,10 @@ router.get('/', async (req, res) => {
             }
         }
 
-        console.log(`[Proxy] 🔄 Fetching: ${url.replace(/api_key=[^&]+/, 'api_key=***')}`);
+        console.log(`[Proxy] 🔄 Fetching: ${upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***')}`);
 
         // Get DoH resolved config
-        const config = await getSmartConfig(url);
+        const config = await getSmartConfig(upstreamUrl);
 
         const isHttps = targetUrl.protocol === 'https:';
         const options = {
@@ -270,14 +288,14 @@ router.get('/', async (req, res) => {
         }
 
         const transport = isHttps ? https : http;
-        const proxyReq = transport.request(config.resolvedIP ? options : url, (proxyRes) => {
+        const proxyReq = transport.request(config.resolvedIP ? options : upstreamUrl, (proxyRes) => {
             // Surface upstream socket aborts on the response stream so we can
             // close `res` and free the client socket. Without this listener,
             // an upstream RST mid-body either crashes Node ('error' event with
             // no listener) or, in the buffered-image branch below, leaves the
             // client request hanging forever because 'end' never fires.
             proxyRes.on('error', (err) => {
-                console.warn(`[Proxy] upstream stream error: ${err.message} ${url}`);
+                console.warn(`[Proxy] upstream stream error: ${err.message} ${upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***')}`);
                 if (!res.headersSent) {
                     // Direct path failed before any bytes left our process —
                     // hand off to the existing fallback chain.
@@ -300,13 +318,13 @@ router.get('/', async (req, res) => {
             res.set('X-Cache', 'MISS');
 
             // O2: Collect data for caching if image
-            if (isImageRequest(url) && proxyRes.statusCode === 200) {
+            if (isImageRequest(upstreamUrl) && proxyRes.statusCode === 200) {
                 const chunks = [];
                 proxyRes.on('data', chunk => chunks.push(chunk));
                 proxyRes.on('end', () => {
                     const buffer = Buffer.concat(chunks);
                     // Save to cache async (fire-and-forget)
-                    cacheImage(url, buffer).catch(() => { });
+                    cacheImage(upstreamUrl, buffer).catch(() => { });
                     res.end(buffer);
                 });
             } else {
@@ -315,12 +333,12 @@ router.get('/', async (req, res) => {
         });
 
         proxyReq.on('error', (err) => {
-            console.error('[Proxy] Request Error:', err.message, url);
+            console.error('[Proxy] Request Error:', err.message, upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***'));
             tryFallback(err.message);
         });
 
         proxyReq.on('timeout', () => {
-            console.error('[Proxy] Timeout:', url);
+            console.error('[Proxy] Timeout:', upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***'));
             proxyReq.destroy();
             tryFallback('timeout');
         });
@@ -343,11 +361,11 @@ router.get('/', async (req, res) => {
             }
             fallbackTried = true;
             try {
-                const result = await smartFetch(url, { timeout: 20000, responseType: 'arraybuffer' });
+                const result = await smartFetch(upstreamUrl, { timeout: 20000, responseType: 'arraybuffer' });
                 if (res.headersSent) return;
                 const buffer = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data || '');
                 if (buffer.length > FALLBACK_MAX_BYTES) {
-                    console.warn(`[Proxy] Fallback payload too large (${buffer.length} bytes), refusing: ${url}`);
+                    console.warn(`[Proxy] Fallback payload too large (${buffer.length} bytes), refusing: ${upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***')}`);
                     res.status(502).json({ error: 'Proxy fallback payload too large' });
                     return;
                 }
@@ -357,12 +375,12 @@ router.get('/', async (req, res) => {
                 const cl = result.headers?.['content-length'];
                 if (cl) res.set('content-length', cl);
                 res.set('X-Proxy-Source', 'smartfetch-fallback');
-                if (isImageRequest(url) && result.status === 200) {
-                    cacheImage(url, buffer).catch(() => {});
+                if (isImageRequest(upstreamUrl) && result.status === 200) {
+                    cacheImage(upstreamUrl, buffer).catch(() => {});
                 }
                 res.end(buffer);
             } catch (fallErr) {
-                console.error('[Proxy] Fallback failed:', fallErr.message, url);
+                console.error('[Proxy] Fallback failed:', fallErr.message, upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***'));
                 if (!res.headersSent) {
                     res.status(502).json({ error: 'Proxy request failed', details: `${reason}; fallback: ${fallErr.message}` });
                 }

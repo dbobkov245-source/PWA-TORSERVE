@@ -16,6 +16,7 @@
 
 import { CapacitorHttp } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
+import { resolveInitialServerUrl } from './helpers.js'
 
 // ─── Polyfills ────────────────────────────────────────────────
 const timeoutSignal = (ms) => {
@@ -234,7 +235,7 @@ const MIRROR_FALLBACK_THRESHOLD = 3
  * Helper to get the base API URL from localStorage or current origin.
  * Essential for Capacitor native platforms where relative paths fail.
  */
-function getApiBase() {
+function getApiBase({ allowNativeDefault = false } = {}) {
     if (typeof window === 'undefined') return ''
     const stored = localStorage.getItem('serverUrl')
 
@@ -251,6 +252,10 @@ function getApiBase() {
     // For browser/PWA on same origin as server
     if (window.location.protocol.startsWith('http') && !Capacitor.isNativePlatform()) {
         return window.location.origin
+    }
+
+    if (allowNativeDefault && Capacitor.isNativePlatform()) {
+        return resolveInitialServerUrl({ isNative: true, storedUrl: '' }).replace(/\/$/, '')
     }
 
     return ''
@@ -613,6 +618,24 @@ export const resolveMetadata = async (name) => {
  */
 const getSeparator = (url) => url.includes('?') ? '&' : '?'
 
+export function addTmdbQueryParams(url, options = {}) {
+    const apiKey = options.apiKey ?? TMDB_API_KEY
+    const language = options.language ?? 'ru-RU'
+    const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : ''
+    const existing = new URLSearchParams(query)
+    const additions = []
+
+    if (apiKey && !existing.has('api_key')) {
+        additions.push(`api_key=${encodeURIComponent(apiKey)}`)
+    }
+    if (language && !existing.has('language')) {
+        additions.push(`language=${encodeURIComponent(language)}`)
+    }
+
+    if (!additions.length) return url
+    return `${url}${getSeparator(url)}${additions.join('&')}`
+}
+
 /**
  * Strategy 1: Custom Cloudflare Worker
  */
@@ -621,8 +644,7 @@ async function tryCustomWorker(endpoint) {
 
     try {
         // Worker format: /search/multi?... (Worker adds /3 prefix)
-        const separator = getSeparator(endpoint)
-        const url = `${CUSTOM_PROXY}${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+        const url = `${CUSTOM_PROXY}${addTmdbQueryParams(endpoint)}`
         console.log('[TMDB] Trying Custom Worker...')
 
         const res = await fetch(url, { signal: timeoutSignal(getAdaptiveTimeout('worker', 5000)) })
@@ -642,8 +664,7 @@ async function tryCustomWorker(endpoint) {
  */
 async function tryLampaProxy(endpoint) {
     try {
-        const separator = getSeparator(endpoint)
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+        const targetUrl = `https://api.themoviedb.org/3${addTmdbQueryParams(endpoint)}`
         const url = `${LAMPA_PROXY}/${targetUrl}`
         console.log('[TMDB] Trying Lampa Proxy...')
 
@@ -665,10 +686,9 @@ async function tryLampaProxy(endpoint) {
  */
 async function tryServerProxy(endpoint) {
     try {
-        const separator = getSeparator(endpoint)
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+        const targetUrl = `https://api.themoviedb.org/3${addTmdbQueryParams(endpoint)}`
         // Use absolute URL for the proxy
-        const apiBase = getApiBase()
+        const apiBase = getApiBase({ allowNativeDefault: true })
         const proxyUrl = `${apiBase}/api/proxy?url=${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying Server Proxy:', proxyUrl)
 
@@ -694,19 +714,19 @@ async function tryCapacitorWithDoH(endpoint) {
     try {
         const hostname = 'api.themoviedb.org'
         const ip = await resolveClientIP(hostname)
-        const separator = getSeparator(endpoint)
+        const authedEndpoint = addTmdbQueryParams(endpoint)
 
         let targetUrl
         let headers = {}
 
         if (ip) {
             // DoH resolved — use IP directly with Host header
-            targetUrl = `https://${ip}/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+            targetUrl = `https://${ip}/3${authedEndpoint}`
             headers = { 'Host': hostname }
             console.log('[TMDB] Trying CapacitorHttp + DoH...')
         } else {
             // Fallback to direct (might work with VPN)
-            targetUrl = `https://${hostname}/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+            targetUrl = `https://${hostname}/3${authedEndpoint}`
             console.log('[TMDB] Trying CapacitorHttp direct...')
         }
 
@@ -732,8 +752,7 @@ async function tryCapacitorWithDoH(endpoint) {
  */
 async function tryCorsProxy(endpoint) {
     try {
-        const separator = getSeparator(endpoint)
-        const targetUrl = `https://api.themoviedb.org/3${endpoint}${separator}api_key=${TMDB_API_KEY}&language=ru-RU`
+        const targetUrl = `https://api.themoviedb.org/3${addTmdbQueryParams(endpoint)}`
         const url = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         console.log('[TMDB] Trying corsproxy.io...')
 

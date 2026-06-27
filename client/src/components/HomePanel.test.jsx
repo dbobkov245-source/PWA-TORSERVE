@@ -24,4 +24,9 @@ describe('HomePanel startup regressions', () => {
         expect(src).toContain('setInterval')
         expect(src).toContain('data-category-id')
     })
+
+    it('bypasses stale TMDB cache for year sidebar categories', () => {
+        expect(src).toContain('primary_release_year=${item.year}')
+        expect(src).toContain('{ useCache: false }')
+    })
 })

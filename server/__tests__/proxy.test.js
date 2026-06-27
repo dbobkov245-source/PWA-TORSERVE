@@ -1,5 +1,5 @@
 import { test, expect } from './test-runner.js'
-import { shouldSkipProxyWrite } from '../routes/proxy.js'
+import { shouldSkipProxyWrite, withTmdbApiKey } from '../routes/proxy.js'
 
 test('shouldSkipProxyWrite blocks writes after the response is settled', () => {
     expect(shouldSkipProxyWrite({
@@ -23,4 +23,25 @@ test('shouldSkipProxyWrite allows the first upstream response write', () => {
         writableEnded: false,
         destroyed: false
     }, false)).toBe(false)
+})
+
+test('withTmdbApiKey injects server key into TMDB URLs without api_key', () => {
+    const url = withTmdbApiKey(
+        'https://api.themoviedb.org/3/discover/movie?primary_release_year=2025&page=1',
+        { tmdbApiKey: 'server-key' }
+    )
+
+    expect(url).toContain('primary_release_year=2025')
+    expect(url).toContain('page=1')
+    expect(url).toContain('api_key=server-key')
+})
+
+test('withTmdbApiKey preserves existing TMDB api_key', () => {
+    const url = withTmdbApiKey(
+        'https://api.themoviedb.org/3/discover/movie?api_key=client-key&page=1',
+        { tmdbApiKey: 'server-key' }
+    )
+
+    expect(url).toContain('api_key=client-key')
+    expect(url).not.toContain('api_key=server-key')
 })

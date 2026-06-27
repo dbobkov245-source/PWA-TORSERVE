@@ -1,7 +1,7 @@
 {
-    "version": "3.17.1",
-    "versionCode": 36,
+    "version": "3.17.2",
+    "versionCode": 37,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.17.1/pwa-torserve-v3.17.1.apk",
-    "notes": "v3.17.1\n- Принудительная очистка WebView cache после обновления APK\n- Локальный NAS updater отдаёт APK без GitHub release\n- Починены подборки по годам\n- Больше подборок на главной"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.17.2/pwa-torserve-v3.17.2.apk",
+    "notes": "v3.17.2\n- Серверный proxy сам добавляет TMDB API key для TMDB URL без ключа\n- Подборки по годам обходят stale TMDB cache\n- Локальный NAS updater отдаёт APK без GitHub release"
 }

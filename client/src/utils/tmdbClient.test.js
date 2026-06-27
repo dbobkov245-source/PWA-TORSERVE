@@ -3,7 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { saveMetadata, getMetadata } from './tmdbClient.js'
+import fs from 'fs'
+import path from 'path'
+import { addTmdbQueryParams, saveMetadata, getMetadata } from './tmdbClient.js'
 
 const META_PREFIX = 'meta:'
 
@@ -48,5 +50,40 @@ describe('saveMetadata LRU eviction', () => {
         saveMetadata('movie_b', { id: 2 })
 
         expect(countMetaKeys()).toBe(2)
+    })
+})
+
+describe('native server proxy routing', () => {
+    it('uses the native default server URL for metadata proxy when localStorage is empty', () => {
+        const src = fs.readFileSync(path.resolve(import.meta.dirname, './tmdbClient.js'), 'utf8')
+
+        expect(src).toContain("import { resolveInitialServerUrl } from './helpers.js'")
+        expect(src).toContain('function getApiBase({ allowNativeDefault = false } = {})')
+        expect(src).toContain("resolveInitialServerUrl({ isNative: true, storedUrl: '' })")
+        expect(src).toContain('getApiBase({ allowNativeDefault: true })')
+    })
+})
+
+describe('addTmdbQueryParams', () => {
+    it('does not duplicate language when endpoint already has language', () => {
+        const url = addTmdbQueryParams(
+            '/discover/movie?primary_release_year=2025&language=ru-RU&page=1',
+            { apiKey: 'server-key' }
+        )
+
+        expect(url).toContain('primary_release_year=2025')
+        expect(url).toContain('api_key=server-key')
+        expect(url.match(/language=/g)).toHaveLength(1)
+    })
+
+    it('preserves existing api_key and language', () => {
+        const url = addTmdbQueryParams(
+            '/discover/movie?api_key=client-key&language=ru-RU&page=1',
+            { apiKey: 'server-key' }
+        )
+
+        expect(url).toContain('api_key=client-key')
+        expect(url).not.toContain('api_key=server-key')
+        expect(url.match(/language=/g)).toHaveLength(1)
     })
 })
