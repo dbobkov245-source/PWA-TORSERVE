@@ -14,14 +14,20 @@ const TVPlayer = registerPlugin('TVPlayer');
 // URL to raw version.json in your GitHub repo (main branch)
 const VERSION_URL = 'https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/version.json';
 const PENDING_INSTALL_KEY = 'app_update_pending_install';
-const SERVER_URL_KEY = 'server_url';
+const SERVER_URL_KEY = 'serverUrl';
+const LEGACY_SERVER_URL_KEY = 'server_url';
 
 function getLocalUpdaterBase() {
     try {
-        const raw = (localStorage.getItem(SERVER_URL_KEY) || '').trim().replace(/\/+$/, '');
+        const raw = (localStorage.getItem(SERVER_URL_KEY) || localStorage.getItem(LEGACY_SERVER_URL_KEY) || '').trim().replace(/\/+$/, '');
         if (!raw) return '';
         return /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
     } catch { return ''; }
+}
+
+function getLocalApkUrl(localBase, version) {
+    if (!localBase || !version) return '';
+    return `${localBase}/pwa-torserve-v${version}.apk`;
 }
 
 // Fallback version if native call fails (web mode)
@@ -140,18 +146,29 @@ export async function checkForUpdate() {
         // or skewed clock. Fallback to GitHub raw if local server unreachable.
         const localBase = getLocalUpdaterBase();
         let remoteRes = null;
+        let fromLocalStatic = false;
         if (localBase) {
-            try {
-                remoteRes = await CapacitorHttp.get({
-                    url: `${localBase}/api/updater/version.json`,
-                    headers: { 'Cache-Control': 'no-cache' },
-                    connectTimeout: 5000,
-                    readTimeout: 5000
-                });
-                if (remoteRes.status !== 200) remoteRes = null;
-            } catch (e) {
-                console.warn('[Updater] Local version.json failed, falling back to GitHub:', e?.message || e);
-                remoteRes = null;
+            const localCandidates = [
+                { url: `${localBase}/version.json`, static: true },
+                { url: `${localBase}/api/updater/version.json`, static: false }
+            ];
+            for (const candidate of localCandidates) {
+                try {
+                    remoteRes = await CapacitorHttp.get({
+                        url: candidate.url,
+                        headers: { 'Cache-Control': 'no-cache' },
+                        connectTimeout: 5000,
+                        readTimeout: 5000
+                    });
+                    if (remoteRes.status === 200) {
+                        fromLocalStatic = candidate.static;
+                        break;
+                    }
+                    remoteRes = null;
+                } catch (e) {
+                    console.warn('[Updater] Local version.json failed, trying next source:', e?.message || e);
+                    remoteRes = null;
+                }
             }
         }
         if (!remoteRes) {
@@ -187,7 +204,7 @@ export async function checkForUpdate() {
             version: remote.version,
             versionCode: remote.versionCode,
             notes: remote.notes || '',
-            url: remote.url,
+            url: fromLocalStatic ? (getLocalApkUrl(localBase, remote.version) || remote.url) : remote.url,
             currentVersion: local.versionName
         };
     } catch (e) {

@@ -357,10 +357,33 @@ app.use('/api/trakt', traktRouter)
 // ────────────────────────────────────────────────────────
 const UPDATER_VERSION_URL = 'https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/version.json'
 const UPDATER_CACHE_TTL_MS = 5 * 60 * 1000
+const LOCAL_UPDATER_VERSION_PATH = path.join(distPath, 'version.json')
 let updaterVersionCache = { ts: 0, body: null }
+
+function withLocalUpdaterApkUrl(req, text) {
+    const local = JSON.parse(text)
+    if (!local?.version) return text
+
+    const apkName = `pwa-torserve-v${local.version}.apk`
+    if (!fs.existsSync(path.join(distPath, apkName))) {
+        return JSON.stringify(local)
+    }
+
+    const protocol = req.protocol || 'http'
+    const host = req.get('host')
+    local.url = `${protocol}://${host}/${apkName}`
+    return JSON.stringify(local, null, 2)
+}
 
 app.get('/api/updater/version.json', async (req, res) => {
     try {
+        if (fs.existsSync(LOCAL_UPDATER_VERSION_PATH)) {
+            const text = fs.readFileSync(LOCAL_UPDATER_VERSION_PATH, 'utf8')
+            res.setHeader('Content-Type', 'application/json; charset=utf-8')
+            res.setHeader('Cache-Control', 'no-cache')
+            return res.send(withLocalUpdaterApkUrl(req, text))
+        }
+
         const now = Date.now()
         if (!updaterVersionCache.body || now - updaterVersionCache.ts > UPDATER_CACHE_TTL_MS) {
             const response = await fetch(UPDATER_VERSION_URL, { headers: { 'Cache-Control': 'no-cache' } })

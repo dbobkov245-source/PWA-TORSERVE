@@ -36,7 +36,40 @@ vi.mock('@capacitor/filesystem', () => ({
     }
 }))
 
-import { tryInstallPending } from './appUpdater.js'
+import { checkForUpdate, tryInstallPending } from './appUpdater.js'
+
+describe('checkForUpdate', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        vi.clearAllMocks()
+
+        mockCapacitor.isNativePlatform.mockReturnValue(true)
+        mockTVPlayer.getAppVersion.mockResolvedValue({
+            versionName: '3.17.0',
+            versionCode: 35
+        })
+    })
+
+    it('uses the persisted serverUrl for local NAS update metadata', async () => {
+        localStorage.setItem('serverUrl', '192.168.8.203:3000')
+        mockCapacitorHttp.get.mockResolvedValueOnce({
+            status: 200,
+            data: {
+                version: '3.17.1',
+                versionCode: 36,
+                url: 'https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.17.1/pwa-torserve-v3.17.1.apk'
+            }
+        })
+
+        const update = await checkForUpdate()
+
+        expect(mockCapacitorHttp.get).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'http://192.168.8.203:3000/version.json'
+        }))
+        expect(update.available).toBe(true)
+        expect(update.url).toBe('http://192.168.8.203:3000/pwa-torserve-v3.17.1.apk')
+    })
+})
 
 describe('tryInstallPending', () => {
     beforeEach(() => {
