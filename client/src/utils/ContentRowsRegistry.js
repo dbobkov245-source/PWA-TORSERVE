@@ -4,25 +4,54 @@
  */
 
 const LAYOUTS = new Set(['editorial', 'ranked', 'poster', 'personal'])
+const DEFAULT_CACHE_TTL = 60 * 60 * 1000
+
+function isNonEmptyString(value) {
+    return typeof value === 'string' && value.trim().length > 0
+}
 
 export function normalizeRow(config) {
-    if (!config?.id || !config?.title || typeof config.fetcher !== 'function') {
-        throw new Error('Row requires id, title, and fetcher')
+    if (!isNonEmptyString(config?.id)) {
+        throw new Error('Row id must be a non-empty string')
+    }
+    if (!isNonEmptyString(config.title)) {
+        throw new Error('Row title must be a non-empty string')
+    }
+    if (typeof config.fetcher !== 'function') {
+        throw new Error('Row fetcher must be a function')
     }
 
-    const layout = config.layout || 'poster'
+    const icon = config.icon === undefined ? '🎬' : config.icon
+    const layout = config.layout === undefined ? 'poster' : config.layout
+    const source = config.source === undefined ? 'tmdb' : config.source
+    const tier = config.tier === undefined ? 3 : config.tier
+    const order = config.order === undefined ? 100 : config.order
+    const cacheTTL = config.cacheTTL === undefined ? DEFAULT_CACHE_TTL : config.cacheTTL
+
     if (!LAYOUTS.has(layout)) {
         throw new Error(`Unsupported row layout: ${layout}`)
     }
+    if (!isNonEmptyString(source)) {
+        throw new Error('Row source must be a non-empty string')
+    }
+    if (!Number.isInteger(tier) || tier < 1 || tier > 3) {
+        throw new Error('Row tier must be an integer from 1 to 3')
+    }
+    if (!Number.isFinite(order)) {
+        throw new Error('Row order must be a finite number')
+    }
+    if (!Number.isFinite(cacheTTL) || cacheTTL < 0) {
+        throw new Error('Row cacheTTL must be a finite non-negative number')
+    }
 
     return {
-        icon: '🎬',
-        source: 'tmdb',
-        tier: 3,
-        order: 100,
-        cacheTTL: 60 * 60 * 1000,
         ...config,
-        layout
+        icon,
+        layout,
+        source,
+        tier,
+        order,
+        cacheTTL
     }
 }
 
@@ -87,9 +116,9 @@ export class ContentRowsRegistry {
             title: cat.name,
             icon: cat.icon,
             layout: 'poster',
-            source: cat.source ?? 'tmdb',
-            tier: cat.tier ?? 3,
-            cacheTTL: cat.cacheTTL ?? 60 * 60 * 1000,
+            source: cat.source,
+            tier: cat.tier,
+            cacheTTL: cat.cacheTTL,
             fetcher: cat.fetcher,
             order: (index + 1) * 10
         }))
