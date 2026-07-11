@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { getBackdropUrl, getTitle } from '../utils/discover'
+import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 import TVRowShell from './TVRowShell'
 
 const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
@@ -7,6 +9,15 @@ const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
     const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
     const rank = item.rank || index + 1
     const backdropUrl = getBackdropUrl(item, 'w780')
+    const [imageState, setImageState] = useState({ origin: backdropUrl, src: backdropUrl })
+    const imageSrc = imageState.origin === backdropUrl ? imageState.src : backdropUrl
+
+    const handleImageError = () => {
+        if (!imageSrc) return
+
+        reportBrokenImage(imageSrc)
+        setImageState({ origin: backdropUrl, src: getNextImageUrl(imageSrc) })
+    }
 
     return (
         <article className="relative h-[180px] w-[300px] pl-12" aria-label={title}>
@@ -16,14 +27,19 @@ const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
             >
                 {rank}
             </span>
-            <div className={`relative h-full w-full overflow-hidden rounded-xl border-4 bg-[#141821] ${focused ? 'border-[#63F5C7] scale-105' : 'border-transparent'}`}>
-                {backdropUrl && (
+            <div className={`relative h-full w-full overflow-hidden rounded-xl border-4 bg-[#141821] ${focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_28px_rgba(0,0,0,0.55)]' : 'border-transparent'}`}>
+                {imageSrc ? (
                     <img
-                        src={backdropUrl}
+                        src={imageSrc}
                         alt=""
                         loading="lazy"
                         className={`absolute inset-0 h-full w-full object-cover pointer-events-none ${watched ? 'opacity-50' : ''}`}
+                        onError={handleImageError}
                     />
+                ) : (
+                    <div className="absolute inset-0 flex items-center justify-center px-8 text-center text-base font-extrabold text-[#F4F7FA]/70">
+                        {title}
+                    </div>
                 )}
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#080A0F] via-[#080A0F]/85 to-transparent p-3 pt-10 text-[#F4F7FA]">
                     <div className="flex items-center gap-2">
