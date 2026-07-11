@@ -10,6 +10,7 @@
  * @param {React.RefObject[]} options.itemRefs - Array of refs for scrollIntoView
  * @param {boolean} options.loop - Whether to loop at edges (default: false)
  * @param {boolean} options.trapFocus - Prevent focus from leaving (default: true)
+ * @param {boolean} options.isActive - Whether the hook handles key presses (default: true)
  */
 import { useState, useCallback, useEffect } from 'react'
 
@@ -21,7 +22,8 @@ export const useTVNavigation = ({
     itemRefs,
     loop = false,
     trapFocus = true,
-    initialIndex = -1
+    initialIndex = -1,
+    isActive = true
 }) => {
     const [focusedIndex, setFocusedIndex] = useState(initialIndex)
 
@@ -29,7 +31,7 @@ export const useTVNavigation = ({
     const rows = Math.ceil(itemCount / columns)
 
     const handleKeyDown = useCallback((e) => {
-        if (itemCount === 0) return
+        if (!isActive || itemCount === 0) return
 
         let newIndex = focusedIndex
         let handled = false
@@ -125,7 +127,7 @@ export const useTVNavigation = ({
                 setFocusedIndex(newIndex)
             }
         }
-    }, [focusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack])
+    }, [focusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack, isActive])
 
     // Scroll into view when focused index changes
     // FIX-01a: Use 'center' instead of 'nearest' for better TV UX
