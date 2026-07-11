@@ -92,25 +92,40 @@ export function normalizeTraktDiscovery(entries, type) {
     }).filter(item => item.id)
 }
 
+export function createDiscoveryHandler({
+    getClientId = () => creds().clientId,
+    fetchDiscovery = traktFetch
+} = {}) {
+    return async (req, res) => {
+        const type = req.query.type || 'movies'
+        let path
+        try {
+            path = buildDiscoveryPath(req.params.kind, type)
+        } catch (error) {
+            return res.status(400).json({ error: error.message })
+        }
+
+        if (!getClientId()) return res.status(503).json({ error: 'trakt_not_configured' })
+
+        try {
+            const upstream = await fetchDiscovery(path)
+            if (!upstream.ok) {
+                return res.status(502).json({ error: 'trakt_discovery_failed', status: upstream.status })
+            }
+            res.json({
+                results: normalizeTraktDiscovery(await upstream.json(), type),
+                source: 'trakt',
+                method: 'server_proxy'
+            })
+        } catch {
+            res.status(502).json({ error: 'trakt_discovery_failed' })
+        }
+    }
+}
+
 // Public discovery lists require only the Trakt client id; no user token or
 // catalog persistence is involved.
-router.get('/discovery/:kind', async (req, res) => {
-    if (!creds().clientId) return res.status(503).json({ error: 'trakt_not_configured' })
-    try {
-        const type = req.query.type || 'movies'
-        const upstream = await traktFetch(buildDiscoveryPath(req.params.kind, type))
-        if (!upstream.ok) {
-            return res.status(502).json({ error: 'trakt_discovery_failed', status: upstream.status })
-        }
-        res.json({
-            results: normalizeTraktDiscovery(await upstream.json(), type),
-            source: 'trakt',
-            method: 'server_proxy'
-        })
-    } catch (error) {
-        res.status(error.message.startsWith('bad ') ? 400 : 500).json({ error: error.message })
-    }
-})
+router.get('/discovery/:kind', createDiscoveryHandler())
 
 /** Persist token payload from an OAuth response into db.data.trakt. */
 async function storeTokens(tokenJson) {
