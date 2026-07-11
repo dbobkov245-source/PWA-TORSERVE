@@ -1,19 +1,32 @@
-import React, { useRef, useState, forwardRef } from 'react'
+import React, { useCallback, useRef, useState, forwardRef } from 'react'
 import { getPosterUrl, getTitle } from '../utils/discover'
 import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getBadgeStyle } from '../hooks/useQualityBadges'
+import useTVNavigation from '../hooks/useTVNavigation'
+
+const createImageErrorCache = () => {
+    const urls = new Set()
+    return {
+        has: url => urls.has(url),
+        add: url => urls.add(url)
+    }
+}
 
 // O3: MovieCard now has local isBroken state to prevent full row re-renders
-const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, watched }) => {
+const MovieCard = ({ item, index, registerItem, onItemClick, onFocus, imageErrors, qualityBadges, watched, focused }) => {
     const spatialRef = useSpatialItem('main')
     const posterUrl = getPosterUrl(item)
     const title = getTitle(item)
     // Per-image fallback chain: mirror → server proxy → wsrv → broken
     const [imgSrc, setImgSrc] = useState(posterUrl)
-    const [isBroken, setIsBroken] = useState(() => imageErrorsRef.current.has(posterUrl))
+    const [isBroken, setIsBroken] = useState(() => imageErrors.has(posterUrl))
     const originalTitle = item?.original_title || item?.original_name
     const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
+    const setCardRef = useCallback((node) => {
+        spatialRef(node)
+        registerItem(index, node)
+    }, [index, registerItem, spatialRef])
 
     const handleImageError = () => {
         if (!imgSrc) return
@@ -23,7 +36,7 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, 
             setImgSrc(next)
             return
         }
-        imageErrorsRef.current.add(posterUrl)
+        imageErrors.add(posterUrl)
         setIsBroken(true)
     }
 
@@ -31,12 +44,12 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, 
         // Using div instead of button to allow touch scroll on mobile
         // TV remote works via focus/Enter key which works on any focusable element
         <div
-            ref={spatialRef}
+            ref={setCardRef}
             role="button"
-            tabIndex={0}
-            className="focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border border-transparent overflow-hidden relative"
+            aria-label={title}
+            tabIndex={focused ? 0 : -1}
+            className={`focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border overflow-hidden relative ${focused ? 'focused border-white scale-[1.05]' : 'border-transparent'}`}
             onClick={() => onItemClick?.(item)}
-            onKeyDown={(e) => { if (e.key === 'Enter') onItemClick?.(item) }}
             onFocus={onFocus}
         >
             {imgSrc && !isBroken ? (
@@ -83,9 +96,32 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, 
     )
 }
 
+const RowAction = ({ index, registerItem, focused, label, icon, onClick, onFocus }) => {
+    const spatialRef = useSpatialItem('main')
+    const setActionRef = useCallback((node) => {
+        spatialRef(node)
+        registerItem(index, node)
+    }, [index, registerItem, spatialRef])
+
+    return (
+        <button
+            ref={setActionRef}
+            type="button"
+            tabIndex={focused ? 0 : -1}
+            onClick={onClick}
+            onFocus={onFocus}
+            className={`focusable snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800/60 border-2 flex flex-col items-center justify-center gap-2 ${focused ? 'focused border-white scale-[1.05]' : 'border-gray-600'}`}
+        >
+            <span className="text-5xl text-gray-300" aria-hidden="true">{icon}</span>
+            <span className="text-gray-300 text-sm font-semibold">{label}</span>
+        </button>
+    )
+}
+
 const HomeRow = forwardRef(({
     title,
     icon,
+    source,
     items = [],
     categoryId,
     onItemClick,
@@ -93,12 +129,62 @@ const HomeRow = forwardRef(({
     onMoreClick,
     qualityBadges,
     qualityDebug,
-    watchedIds
+    watchedIds,
+    isActive = true,
+    initialIndex = -1
 }, ref) => {
     // O3: useRef instead of useState to prevent row re-renders on image errors
-    const imageErrorsRef = useRef(new Set())
-    const moreRef = useSpatialItem('main')
+    const [imageErrors] = useState(createImageErrorCache)
     const scrollRef = useRef(null)
+    const itemRefs = useRef([])
+    const registerItem = useCallback((index, node) => {
+        itemRefs.current[index] = node
+    }, [])
+    const [showStart, setShowStart] = useState(false)
+    const actionCount = (showStart ? 1 : 0) + (onMoreClick ? 1 : 0)
+    const itemCount = items.length + actionCount
+    const startIndex = items.length
+    const moreIndex = items.length + (showStart ? 1 : 0)
+
+    function goToStart() {
+        if (!scrollRef.current) return
+        scrollRef.current.scrollLeft = 0
+        setShowStart(false)
+        setFocusedIndex(0)
+        itemRefs.current[0]?.focus()
+    }
+
+    function handleSelect(index) {
+        if (index < items.length) {
+            onItemClick?.(items[index])
+            return
+        }
+        if (showStart && index === startIndex) {
+            goToStart()
+            return
+        }
+        if (onMoreClick && index === moreIndex) onMoreClick(categoryId)
+    }
+
+    const { setFocusedIndex, containerProps, isFocused } = useTVNavigation({
+        itemCount,
+        columns: Math.max(itemCount, 1),
+        itemRefs,
+        initialIndex,
+        trapFocus: false,
+        isActive,
+        onSelect: handleSelect
+    })
+
+    const handleScroll = () => {
+        const el = scrollRef.current
+        setShowStart(Boolean(el && el.scrollLeft > el.clientWidth))
+    }
+
+    const handleKeyDown = (event) => {
+        containerProps.onKeyDown(event)
+        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+    }
 
     // Touch scroll handler for mobile
     const touchStartX = useRef(0)
@@ -118,7 +204,7 @@ const HomeRow = forwardRef(({
     if (items.length === 0) return null
 
     return (
-        <div className="home-row mb-6">
+        <div ref={ref} className="home-row mb-6">
             {/* Row Title */}
             <div className="flex items-center justify-between px-8 mb-3">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2 drop-shadow-lg">
@@ -131,12 +217,20 @@ const HomeRow = forwardRef(({
                         </span>
                     )}
                 </h2>
+                {source && (
+                    <span className="rounded bg-[#141821] px-2 py-1 text-[11px] font-medium tracking-[0.14em] text-white/60 uppercase">
+                        {source}
+                    </span>
+                )}
             </div>
 
             {/* Snap Container (with touch scroll support) */}
             <div
                 ref={scrollRef}
+                tabIndex={containerProps.tabIndex}
                 className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4"
+                onKeyDown={handleKeyDown}
+                onScroll={handleScroll}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
             >
@@ -144,24 +238,42 @@ const HomeRow = forwardRef(({
                     <MovieCard
                         key={item.id || index}
                         item={item}
+                        index={index}
+                        registerItem={registerItem}
                         onItemClick={onItemClick}
-                        onFocus={() => onFocusChange?.(item)}
-                        imageErrorsRef={imageErrorsRef}
+                        onFocus={() => {
+                            setFocusedIndex(index)
+                            onFocusChange?.(item)
+                        }}
+                        imageErrors={imageErrors}
                         qualityBadges={qualityBadges}
                         watched={watchedIds?.has(item.id)}
+                        focused={isFocused(index)}
                     />
                 ))}
 
-                {/* "More" Card */}
+                {showStart && (
+                    <RowAction
+                        index={startIndex}
+                        registerItem={registerItem}
+                        focused={isFocused(startIndex)}
+                        label="В начало"
+                        icon="←"
+                        onClick={goToStart}
+                        onFocus={() => setFocusedIndex(startIndex)}
+                    />
+                )}
+
                 {onMoreClick && (
-                    <button
+                    <RowAction
+                        index={moreIndex}
+                        registerItem={registerItem}
+                        focused={isFocused(moreIndex)}
+                        label="Показать все"
+                        icon="→"
                         onClick={() => onMoreClick(categoryId)}
-                        className="focusable snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800/60 border-2 border-gray-600 flex flex-col items-center justify-center gap-2"
-                        ref={moreRef}
-                    >
-                        <span className="text-5xl text-gray-300">→</span>
-                        <span className="text-gray-300 text-sm font-semibold">Ещё</span>
-                    </button>
+                        onFocus={() => setFocusedIndex(moreIndex)}
+                    />
                 )}
             </div>
         </div>
