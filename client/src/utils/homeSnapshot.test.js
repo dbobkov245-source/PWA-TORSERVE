@@ -26,17 +26,54 @@ it('accepts a snapshot at the 24-hour boundary and rejects it after', () => {
   expect(readHomeSnapshot(1000 + DAY_MS + 1)).toBeNull()
 })
 
-it('writes a JSON-safe snapshot without functions or fetchers', () => {
-  writeHomeSnapshot([
-    {
-      id: 'x',
-      fetcher: () => Promise.resolve([]),
-      items: [{ id: 1, onSelect: () => {} }],
+it('drops every fetcher property regardless of depth or value without mutating rows', () => {
+  const rows = [{
+    id: 'x',
+    fetcher: 'serializable-but-private',
+    metadata: {
+      label: 'keep',
+      fetcher: { endpoint: '/hidden' },
+      nested: { fetcher: 42, count: 3 },
     },
-  ], 1000)
+    items: [{ id: 1, fetcher: ['hidden'] }],
+  }]
+
+  writeHomeSnapshot(rows, 1000)
+
+  expect(readHomeSnapshot(1000).rows).toEqual([{
+    id: 'x',
+    metadata: { label: 'keep', nested: { count: 3 } },
+    items: [{ id: 1 }],
+  }])
+  expect(rows[0].fetcher).toBe('serializable-but-private')
+  expect(rows[0].metadata.nested.fetcher).toBe(42)
+})
+
+it('drops nested functions from objects and arrays without null placeholders', () => {
+  const callback = () => {}
+  const rows = [{
+    id: 'x',
+    callbacks: [callback, { label: 'keep', onSelect: callback }, 7],
+    items: [
+      { id: 1, actions: [callback, 'play', callback] },
+      callback,
+      { id: 2, nested: { callback, value: true } },
+    ],
+  }]
+
+  writeHomeSnapshot(rows, 1000)
 
   const snapshot = readHomeSnapshot(1000)
-  expect(snapshot.rows).toEqual([{ id: 'x', items: [{ id: 1 }] }])
+  expect(snapshot.rows).toEqual([{
+    id: 'x',
+    callbacks: [{ label: 'keep' }, 7],
+    items: [
+      { id: 1, actions: ['play'] },
+      { id: 2, nested: { value: true } },
+    ],
+  }])
+  expect(rows[0].callbacks).toHaveLength(3)
+  expect(rows[0].items).toHaveLength(3)
   expect(() => JSON.stringify(snapshot)).not.toThrow()
 })
 
