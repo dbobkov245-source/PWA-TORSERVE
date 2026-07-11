@@ -55,6 +55,36 @@ it('shows source, start shortcut, and show-all action', () => {
     expect(onMoreClick).toHaveBeenCalledWith('g')
 })
 
+it('keeps the start shortcut visible until scroll returns exactly to zero', () => {
+    const view = render(
+        <HomeRow
+            title="Жанр"
+            items={items}
+            onItemClick={vi.fn()}
+            onMoreClick={vi.fn()}
+            isActive
+        />
+    )
+    const scroller = view.container.querySelector('.snap-container')
+    Object.defineProperty(scroller, 'clientWidth', { value: 500 })
+
+    scroller.scrollLeft = 501
+    fireEvent.scroll(scroller)
+    expect(screen.getByText('В начало')).toBeTruthy()
+
+    scroller.scrollLeft = 500
+    fireEvent.scroll(scroller)
+    expect(screen.getByText('В начало')).toBeTruthy()
+
+    scroller.scrollLeft = 1
+    fireEvent.scroll(scroller)
+    expect(screen.getByText('В начало')).toBeTruthy()
+
+    scroller.scrollLeft = 0
+    fireEvent.scroll(scroller)
+    expect(screen.queryByText('В начало')).toBeNull()
+})
+
 it('uses one horizontal navigation index for media and the final action', () => {
     const onMoreClick = vi.fn()
     const view = render(
@@ -97,6 +127,34 @@ it('ignores row navigation while inactive', () => {
     expect(document.activeElement).toBe(firstCard)
     expect(fireEvent.keyDown(scroller, { key: 'ArrowRight' })).toBe(true)
     expect(document.activeElement).toBe(firstCard)
+})
+
+it('leaves inactive Enter and Space untouched for parent navigation', () => {
+    const onItemClick = vi.fn()
+    const onMoreClick = vi.fn()
+    const parentKeyDown = vi.fn()
+    document.addEventListener('keydown', parentKeyDown)
+
+    const view = render(
+        <HomeRow
+            title="Жанр"
+            categoryId="g"
+            items={items}
+            onItemClick={onItemClick}
+            onMoreClick={onMoreClick}
+            initialIndex={0}
+            isActive={false}
+        />
+    )
+    const scroller = view.container.querySelector('.snap-container')
+
+    expect(fireEvent.keyDown(scroller, { key: 'Enter' })).toBe(true)
+    expect(fireEvent.keyDown(scroller, { key: ' ' })).toBe(true)
+
+    document.removeEventListener('keydown', parentKeyDown)
+    expect(parentKeyDown).toHaveBeenCalledTimes(2)
+    expect(onItemClick).not.toHaveBeenCalled()
+    expect(onMoreClick).not.toHaveBeenCalled()
 })
 
 it('preserves image fallback, badges, watched state, and touch scrolling', () => {

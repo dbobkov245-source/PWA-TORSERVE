@@ -178,12 +178,15 @@ const HomeRow = forwardRef(({
 
     const handleScroll = () => {
         const el = scrollRef.current
-        setShowStart(Boolean(el && el.scrollLeft > el.clientWidth))
+        if (!el) return
+        setShowStart(wasShown => (
+            wasShown ? el.scrollLeft !== 0 : el.scrollLeft > el.clientWidth
+        ))
     }
 
     const handleKeyDown = (event) => {
         containerProps.onKeyDown(event)
-        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+        if (event.defaultPrevented) event.stopPropagation()
     }
 
     // Touch scroll handler for mobile
