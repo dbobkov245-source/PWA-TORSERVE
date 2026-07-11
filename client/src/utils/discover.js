@@ -83,7 +83,12 @@ export const DISCOVERY_CATEGORIES = [
     { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, fetcher: fetchTopTV },
     { id: 'tv_airing_today', name: 'Серии сегодня', icon: '🛰️', tier: 3, fetcher: fetchTVAiringToday },
     { id: 'tv_on_the_air', name: 'Сериалы в эфире', icon: '📡', tier: 3, fetcher: fetchTVOnTheAir }
-]
+].map(category => ({
+    source: 'tmdb',
+    layout: 'poster',
+    cacheTTL: 60 * 60 * 1000,
+    ...category
+}))
 
 /**
  * Fetch a single category with limited pagination (top-up to ~20 items).

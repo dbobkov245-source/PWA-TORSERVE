@@ -3,7 +3,30 @@
  * Allows decoupled registration of content sources.
  */
 
-class ContentRowsRegistry {
+const LAYOUTS = new Set(['editorial', 'ranked', 'poster', 'personal'])
+
+export function normalizeRow(config) {
+    if (!config?.id || !config?.title || typeof config.fetcher !== 'function') {
+        throw new Error('Row requires id, title, and fetcher')
+    }
+
+    const layout = config.layout || 'poster'
+    if (!LAYOUTS.has(layout)) {
+        throw new Error(`Unsupported row layout: ${layout}`)
+    }
+
+    return {
+        icon: '🎬',
+        source: 'tmdb',
+        tier: 3,
+        order: 100,
+        cacheTTL: 60 * 60 * 1000,
+        ...config,
+        layout
+    }
+}
+
+export class ContentRowsRegistry {
     constructor() {
         this.rows = []
         this.initialized = false
@@ -14,7 +37,7 @@ class ContentRowsRegistry {
      * @param {Object|Array} config 
      * @param {string} config.id - Unique ID (e.g. 'trending')
      * @param {string} config.title - Display title
-     * @param {string} config.type - 'list' | 'hero' | 'continue'
+     * @param {'editorial'|'ranked'|'poster'|'personal'} config.layout - Row presentation
      * @param {Function} config.fetcher - Async function returning { items: [] }
      * @param {number} config.order - Display order (default: 100)
      */
@@ -22,15 +45,13 @@ class ContentRowsRegistry {
         const items = Array.isArray(config) ? config : [config]
 
         items.forEach(row => {
-            const existing = this.rows.find(r => r.id === row.id)
+            const normalizedRow = normalizeRow(row)
+            const existing = this.rows.find(r => r.id === normalizedRow.id)
             if (existing) {
-                console.warn(`[Registry] Overwriting row: ${row.id}`)
-                Object.assign(existing, row)
+                console.warn(`[Registry] Overwriting row: ${normalizedRow.id}`)
+                Object.assign(existing, normalizedRow)
             } else {
-                this.rows.push({
-                    order: 100,
-                    ...row
-                })
+                this.rows.push(normalizedRow)
             }
         })
 
@@ -65,7 +86,10 @@ class ContentRowsRegistry {
             id: cat.id,
             title: cat.name,
             icon: cat.icon,
-            type: 'list',
+            layout: 'poster',
+            source: cat.source ?? 'tmdb',
+            tier: cat.tier ?? 3,
+            cacheTTL: cat.cacheTTL ?? 60 * 60 * 1000,
             fetcher: cat.fetcher,
             order: (index + 1) * 10
         }))
