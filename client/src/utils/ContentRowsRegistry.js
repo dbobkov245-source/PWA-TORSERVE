@@ -95,6 +95,11 @@ export class ContentRowsRegistry {
         return this.rows
     }
 
+    reset() {
+        this.rows = []
+        this.initialized = false
+    }
+
     /**
      * Get row by ID
      */
