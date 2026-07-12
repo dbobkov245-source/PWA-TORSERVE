@@ -8,7 +8,7 @@
  * - No double event processing
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import HomeRow from './HomeRow'
 import EditorialRow from './EditorialRow'
 import RankedRow from './RankedRow'
@@ -79,31 +79,31 @@ const HomePanel = ({
     showSidebar, setShowSidebar,
     torrentSession,
     onOpenMovieTorrents,
-    onSearch, onClose,
+    onSearch, onClose: ON_CLOSE,
     resumeItems = [],
     onResume
 }) => {
+    // Kept for public API compatibility; Sidebar Close only collapses the sidebar.
+    void ON_CLOSE
     // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
     // ~40s of background jacred searches on the NAS right after home load.
     const MAX_HOME_QUALITY_TITLES = 12
-    const registryRows = useMemo(() => {
-        contentRowsRegistry.reset()
-        contentRowsRegistry.add(createHybridRows({ getHistory }))
-        return contentRowsRegistry.getAll()
-    }, [])
+    const factoryRows = useMemo(() => createHybridRows({ getHistory }), [])
+    const [registryRows, setRegistryRows] = useState(factoryRows)
+    const [registryReady, setRegistryReady] = useState(false)
     const savedFocusRef = useRef()
     if (savedFocusRef.current === undefined) savedFocusRef.current = readHomeFocus()
     const cachedRowsRef = useRef()
     if (cachedRowsRef.current === undefined) {
         const snapshotRows = readHomeSnapshot()?.rows || []
         const cachedById = Object.fromEntries(snapshotRows.map(row => [row.id, row]))
-        cachedRowsRef.current = registryRows
+        cachedRowsRef.current = factoryRows
             .filter(row => cachedById[row.id]?.items?.length > 0)
             .map(row => ({ ...cachedById[row.id], ...row, items: cachedById[row.id].items }))
     }
     const cachedRows = cachedRowsRef.current
     const [categories, setCategories] = useState(() => Object.fromEntries(
-        registryRows.map(row => [row.id, row])
+        factoryRows.map(row => [row.id, row])
     ))
     const [loading, setLoading] = useState(cachedRows.length === 0)
     const [focusedItem, setFocusedItem] = useState(cachedRows[0]?.items?.[0] || null)
@@ -138,6 +138,10 @@ const HomePanel = ({
         [displayRows, watchedIds]
     )
     const pickerActive = pickerOpen && swipeCandidates.length > 0
+
+    useEffect(() => {
+        if (pickerOpen && swipeCandidates.length === 0) setPickerOpen(false)
+    }, [pickerOpen, swipeCandidates.length])
 
     // Share one quality queue for all rows to avoid request storms and duplicated fetches.
     const homeQualityTitles = useMemo(() => {
@@ -207,6 +211,8 @@ const HomePanel = ({
     const pendingTierOneRef = useRef([])
     const activeTierOneRef = useRef(0)
     const queueTierOneLoadRef = useRef(null)
+    const rowFocusCallbacksRef = useRef(new Map())
+    const rankedNearEndCallbacksRef = useRef(new Map())
     const mountedRef = useRef(true)
     const homeScrollRef = useRef(null)
     const restorePendingRef = useRef(true)
@@ -219,6 +225,26 @@ const HomePanel = ({
             retryTimers.clear()
         }
     }, [])
+
+    useLayoutEffect(() => {
+        contentRowsRegistry.reset()
+        contentRowsRegistry.add(factoryRows)
+        const normalizedRows = [...contentRowsRegistry.getAll()]
+        const cachedById = Object.fromEntries(cachedRows.map(row => [row.id, row]))
+        const attachedRows = normalizedRows
+            .filter(row => cachedById[row.id]?.items?.length > 0)
+            .map(row => ({ ...cachedById[row.id], ...row, items: cachedById[row.id].items }))
+
+        rowsByIdRef.current = Object.fromEntries(attachedRows.map(row => [row.id, row]))
+        rowFocusCallbacksRef.current.clear()
+        rankedNearEndCallbacksRef.current.clear()
+        setRegistryRows(normalizedRows)
+        setCategories(Object.fromEntries(normalizedRows.map(row => [row.id, row])))
+        setVisibleRows(attachedRows)
+        setFocusedItem(attachedRows[0]?.items?.[0] || null)
+        setLoading(attachedRows.length === 0)
+        setRegistryReady(true)
+    }, [cachedRows, factoryRows])
 
     const applyRows = useCallback(() => {
         if (!mountedRef.current) return
@@ -352,6 +378,7 @@ const HomePanel = ({
     // Data Loading — tiered to keep first paint fast and the NAS calm:
     // Tier 1 immediately, Tier 2 after a short delay, Tier 3 lazily on scroll.
     useEffect(() => {
+        if (!registryReady) return
         let cancelled = false
         if (cachedRows.length === 0) setLoading(true)
 
@@ -368,7 +395,7 @@ const HomePanel = ({
         }, 2000)
 
         return () => { cancelled = true; clearTimeout(t) }
-    }, [cachedRows.length, loadRow, queueTierOneLoad, registryRows])
+    }, [cachedRows.length, loadRow, queueTierOneLoad, registryReady, registryRows])
 
     useEffect(() => {
         const scroller = homeScrollRef.current
@@ -620,6 +647,30 @@ const HomePanel = ({
         writeHomeFocus(focus)
     }, [])
 
+    const getRowFocusCallback = useCallback((rowId) => {
+        if (!rowFocusCallbacksRef.current.has(rowId)) {
+            rowFocusCallbacksRef.current.set(rowId, (item, reportedIndex) => {
+                const row = rowsByIdRef.current[rowId]
+                const itemIndex = Number.isInteger(reportedIndex)
+                    ? reportedIndex
+                    : (row?.items || []).findIndex(candidate => candidate.id === item?.id)
+                const savedFocus = savedFocusRef.current
+                if (restorePendingRef.current && savedFocus) {
+                    if (savedFocus.rowId !== rowId) return
+                    if (savedFocus.itemIndex === itemIndex) {
+                        setFocusedItem(item)
+                        return
+                    }
+                }
+                const wrapper = [...(homeScrollRef.current?.querySelectorAll('[data-row-id]') || [])]
+                    .find(node => node.dataset.rowId === rowId)
+                const horizontalScroll = wrapper?.querySelector('.snap-container')?.scrollLeft || 0
+                handleRowFocus(item, Math.max(itemIndex, 0), rowId, horizontalScroll)
+            })
+        }
+        return rowFocusCallbacksRef.current.get(rowId)
+    }, [handleRowFocus])
+
     const restoreHomeFocus = useCallback((saved) => {
         const scroller = homeScrollRef.current
         if (!scroller || !saved?.rowId) return false
@@ -677,24 +728,14 @@ const HomePanel = ({
         }
     }, [applyRows])
 
-    const renderRow = (row) => {
-        const onFocusChange = (item, reportedIndex) => {
-            const savedFocus = savedFocusRef.current
-            const itemIndex = Number.isInteger(reportedIndex)
-                ? reportedIndex
-                : row.items.findIndex(candidate => candidate.id === item?.id)
-            if (restorePendingRef.current && savedFocus) {
-                if (savedFocus.rowId !== row.id) return
-                if (savedFocus.itemIndex === itemIndex) {
-                    setFocusedItem(item)
-                    return
-                }
-            }
-            const wrapper = [...(homeScrollRef.current?.querySelectorAll('[data-row-id]') || [])]
-                .find(node => node.dataset.rowId === row.id)
-            const horizontalScroll = wrapper?.querySelector('.snap-container')?.scrollLeft || 0
-            handleRowFocus(item, Math.max(itemIndex, 0), row.id, horizontalScroll)
+    const getRankedNearEndCallback = useCallback((rowId) => {
+        if (!rankedNearEndCallbacksRef.current.has(rowId)) {
+            rankedNearEndCallbacksRef.current.set(rowId, () => enrichNextRankedBatch(rowId))
         }
+        return rankedNearEndCallbacksRef.current.get(rowId)
+    }, [enrichNextRankedBatch])
+
+    const renderRow = (row) => {
         const props = {
             ...row,
             items: row.items,
@@ -703,7 +744,7 @@ const HomePanel = ({
                 : 0,
             isActive: !showSidebar && !pickerActive,
             onSelect: handleItemClick,
-            onFocusChange,
+            onFocusChange: getRowFocusCallback(row.id),
             qualityBadges,
             watchedIds
         }
@@ -711,7 +752,7 @@ const HomePanel = ({
         if (row.layout === 'editorial') {
             component = <EditorialRow {...props} />
         } else if (row.layout === 'ranked') {
-            component = <RankedRow {...props} onNearEnd={() => enrichNextRankedBatch(row.id)} />
+            component = <RankedRow {...props} onNearEnd={getRankedNearEndCallback(row.id)} />
         } else {
             component = (
                 <HomeRow
@@ -730,7 +771,6 @@ const HomePanel = ({
     const handleSidebarSelect = (item) => {
         if (item.id === 'close') {
             setShowSidebar(false)
-            onClose?.()
             return
         }
         if (item.id === 'search') {

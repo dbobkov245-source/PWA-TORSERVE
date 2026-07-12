@@ -143,3 +143,24 @@ it('fires near-end once per actual index movement, not callback or item rerender
 
     expect(onNearEnd).toHaveBeenCalledTimes(1)
 })
+
+it('does not report focus again when only parent callbacks rerender', () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
+    const onFocusChange = vi.fn()
+    const props = {
+        id: 'stable-focus-report',
+        title: 'Stable focus report',
+        items,
+        initialIndex: 1,
+        isActive: true,
+        onFocusChange,
+        renderItem: item => <span>{item.id}</span>
+    }
+    const view = render(<TVRowShell {...props} />)
+    expect(onFocusChange).toHaveBeenCalledTimes(1)
+
+    view.rerender(<TVRowShell {...props} onFocusChange={vi.fn(onFocusChange)} />)
+    view.rerender(<TVRowShell {...props} onFocusChange={vi.fn(onFocusChange)} />)
+
+    expect(onFocusChange).toHaveBeenCalledTimes(1)
+})

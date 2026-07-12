@@ -15,7 +15,7 @@ const TVRowShell = ({
     renderItem
 }) => {
     const refs = useRef([])
-    const previousFocusedIndexRef = useRef(initialIndex)
+    const lastReportedIndexRef = useRef(null)
     const { focusedIndex, setFocusedIndex, containerProps, isFocused } = useTVNavigation({
         itemCount: items.length,
         columns: Math.max(items.length, 1),
@@ -29,9 +29,11 @@ const TVRowShell = ({
     useEffect(() => {
         if (focusedIndex < 0 || !items[focusedIndex]) return
 
+        const previousIndex = lastReportedIndexRef.current
+        if (previousIndex === focusedIndex) return
+        lastReportedIndexRef.current = focusedIndex
         onFocusChange?.(items[focusedIndex], focusedIndex)
-        const moved = previousFocusedIndexRef.current !== focusedIndex
-        previousFocusedIndexRef.current = focusedIndex
+        const moved = previousIndex !== null
         if (moved && focusedIndex >= items.length - 3) onNearEnd?.(focusedIndex)
     }, [focusedIndex, items, onFocusChange, onNearEnd])
 

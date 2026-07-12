@@ -3,8 +3,6 @@
 import React from 'react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import fs from 'fs'
-import path from 'path'
 
 const mocks = vi.hoisted(() => ({
     addFavorite: vi.fn(async () => ({})),
@@ -34,8 +32,12 @@ const mocks = vi.hoisted(() => ({
     tmdbClient: vi.fn(async id => ({ id: Number(id.match(/\d+/)?.[0]), title: 'Trakt item' })),
 }))
 
-const RowMock = ({ id, items = [], source, isActive, initialIndex, onSelect, onFocusChange, onNearEnd, onMoreClick, testId }) => (
-    <section data-testid={testId} data-row-id={id} data-source={source} data-active={String(isActive)}>
+const RowMock = ({ id, items = [], source, isActive, initialIndex = 0, onSelect, onFocusChange, onNearEnd, onMoreClick, testId }) => {
+    React.useEffect(() => {
+        if (items[initialIndex]) onFocusChange?.(items[initialIndex], initialIndex)
+    }, [initialIndex, items, onFocusChange])
+
+    return <section data-testid={testId} data-row-id={id} data-source={source} data-active={String(isActive)}>
         <div className="snap-container">
             {items.map((item, index) => (
                 <button
@@ -53,7 +55,7 @@ const RowMock = ({ id, items = [], source, isActive, initialIndex, onSelect, onF
         {onMoreClick && <button type="button" onClick={() => onMoreClick(id)}>more-{id}</button>}
         <output data-testid={`initial-${id}`}>{initialIndex}</output>
     </section>
-)
+}
 
 vi.mock('../utils/homeRows.js', () => ({
     createHybridRows: mocks.createHybridRows,
@@ -126,7 +128,7 @@ vi.mock('./MovieDetail', () => ({
 }))
 vi.mock('./Sidebar', () => ({
     default: Object.assign(
-        () => <div data-testid="sidebar" />,
+        ({ onClose }) => <button type="button" data-testid="sidebar-close" onClick={onClose}>sidebar</button>,
         { getItemsCount: () => 10 }
     ),
 }))
@@ -402,6 +404,53 @@ describe('picker, enrichment, and focus persistence', () => {
         expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(55)
         expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(77)
     })
+
+    it('does not rewrite restored focus when the HomePanel parent rerenders', async () => {
+        const saved = { rowId: 'x', itemIndex: 1, verticalScroll: 55, horizontalScroll: 77 }
+        mocks.readHomeFocus.mockReturnValue(saved)
+        mocks.createHybridRows.mockReturnValue([row('x', 'editorial', {
+            fetcher: vi.fn(async () => ({ results: [item(1), item(2)] }))
+        })])
+
+        const view = render(<HomePanel {...baseProps} />)
+        await view.findByText('Item 2')
+        await waitFor(() => expect(document.activeElement?.textContent).toContain('Item 2'))
+        mocks.writeHomeFocus.mockClear()
+
+        view.rerender(<HomePanel {...baseProps} showSidebar />)
+        view.rerender(<HomePanel {...baseProps} showSidebar={false} />)
+
+        expect(mocks.writeHomeFocus).not.toHaveBeenCalled()
+        expect(mocks.readHomeFocus).toHaveBeenCalledTimes(1)
+        expect(view.getByTestId('initial-x').textContent).toBe('1')
+    })
+
+    it('resets picker state when candidates disappear instead of reopening later', async () => {
+        let resolveTrakt
+        let resolveRefresh
+        mocks.getTraktSynced.mockReturnValue(new Promise(resolve => { resolveTrakt = resolve }))
+        mocks.buildSwipeCandidates.mockImplementation((rows, watchedIds) => (
+            rows.flatMap(value => value.items).filter(value => !watchedIds.has(value.id))
+        ))
+        mocks.createHybridRows.mockReturnValue([row('x', 'poster', {
+            fetcher: vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+        })])
+        mocks.readHomeSnapshot.mockReturnValue({
+            rows: [{ id: 'x', title: 'x', layout: 'poster', items: [item(1)] }],
+            savedAt: 1,
+        })
+
+        const view = render(<HomePanel {...baseProps} />)
+        fireEvent.click(view.getByTestId('swipe-hero'))
+        expect(view.getByRole('dialog')).toBeTruthy()
+
+        await act(async () => { resolveTrakt({ watched: [1], watchlist: [] }) })
+        await waitFor(() => expect(view.queryByRole('dialog')).toBeNull())
+        await act(async () => { resolveRefresh({ results: [item(2)] }) })
+        expect(await view.findByTestId('swipe-hero')).toBeTruthy()
+
+        expect(view.queryByRole('dialog')).toBeNull()
+    })
 })
 
 describe('home composition and public contract', () => {
@@ -438,9 +487,21 @@ describe('home composition and public contract', () => {
         ])
     })
 
-    it('keeps onClose in the destructured HomePanel public props', () => {
-        const source = fs.readFileSync(path.resolve(import.meta.dirname, 'HomePanel.jsx'), 'utf8')
-        expect(source).toMatch(/onSearch,\s*onClose,/)
+    it('keeps Sidebar Close behavior identical for click and D-Pad without leaving Home', async () => {
+        const clickProps = { ...baseProps, showSidebar: true, setShowSidebar: vi.fn(), onClose: vi.fn() }
+        const clickView = render(<HomePanel {...clickProps} />)
+        await act(async () => { await Promise.resolve(); await Promise.resolve() })
+        fireEvent.click(clickView.getByTestId('sidebar-close'))
+        expect(clickProps.setShowSidebar).toHaveBeenCalledWith(false)
+        expect(clickProps.onClose).not.toHaveBeenCalled()
+        clickView.unmount()
+
+        const dpadProps = { ...baseProps, showSidebar: true, setShowSidebar: vi.fn(), onClose: vi.fn() }
+        render(<HomePanel {...dpadProps} />)
+        await act(async () => { await Promise.resolve(); await Promise.resolve() })
+        fireEvent.keyDown(window, { key: 'Enter' })
+        expect(dpadProps.setShowSidebar).toHaveBeenCalledWith(false)
+        expect(dpadProps.onClose).not.toHaveBeenCalled()
     })
 })
 
