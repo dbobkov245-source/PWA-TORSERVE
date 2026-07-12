@@ -38,13 +38,6 @@ import {
     writeHomeSnapshot
 } from '../utils/homeSnapshot'
 
-async function runWithLimit(values, limit, worker) {
-    const queue = [...values]
-    await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, async () => {
-        while (queue.length) await worker(queue.shift())
-    }))
-}
-
 // Tier-3 lazy row placeholder: fetches its category only once it scrolls near
 // the viewport, then the parent swaps it for a real HomeRow. Keeps the home page
 // from firing 30+ cascade requests (and NAS quality-badge work) on first paint.
@@ -86,21 +79,31 @@ const HomePanel = ({
     showSidebar, setShowSidebar,
     torrentSession,
     onOpenMovieTorrents,
-    onSearch,
+    onSearch, onClose,
     resumeItems = [],
     onResume
 }) => {
     // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
     // ~40s of background jacred searches on the NAS right after home load.
     const MAX_HOME_QUALITY_TITLES = 12
-    const registryRows = useMemo(() => createHybridRows({ getHistory }), [])
+    const registryRows = useMemo(() => {
+        contentRowsRegistry.reset()
+        contentRowsRegistry.add(createHybridRows({ getHistory }))
+        return contentRowsRegistry.getAll()
+    }, [])
+    const savedFocusRef = useRef()
+    if (savedFocusRef.current === undefined) savedFocusRef.current = readHomeFocus()
     const cachedRowsRef = useRef()
     if (cachedRowsRef.current === undefined) {
-        cachedRowsRef.current = readHomeSnapshot()?.rows || []
+        const snapshotRows = readHomeSnapshot()?.rows || []
+        const cachedById = Object.fromEntries(snapshotRows.map(row => [row.id, row]))
+        cachedRowsRef.current = registryRows
+            .filter(row => cachedById[row.id]?.items?.length > 0)
+            .map(row => ({ ...cachedById[row.id], ...row, items: cachedById[row.id].items }))
     }
     const cachedRows = cachedRowsRef.current
     const [categories, setCategories] = useState(() => Object.fromEntries(
-        cachedRows.map(row => [row.id, row])
+        registryRows.map(row => [row.id, row])
     ))
     const [loading, setLoading] = useState(cachedRows.length === 0)
     const [focusedItem, setFocusedItem] = useState(cachedRows[0]?.items?.[0] || null)
@@ -116,11 +119,6 @@ const HomePanel = ({
     const [activeArea, setActiveArea] = useState('content') // 'content' | 'sidebar'
     const [sidebarIndex, setSidebarIndex] = useState(0)
     const sidebarItemsCount = Sidebar.getItemsCount()
-
-    useEffect(() => {
-        contentRowsRegistry.reset()
-        contentRowsRegistry.add(registryRows)
-    }, [registryRows])
 
     const displayRows = useMemo(() => {
         const excludedIds = new Set(
@@ -139,6 +137,7 @@ const HomePanel = ({
         () => buildSwipeCandidates(displayRows, watchedIds),
         [displayRows, watchedIds]
     )
+    const pickerActive = pickerOpen && swipeCandidates.length > 0
 
     // Share one quality queue for all rows to avoid request storms and duplicated fetches.
     const homeQualityTitles = useMemo(() => {
@@ -196,6 +195,7 @@ const HomePanel = ({
     const rowsByIdRef = useRef(Object.fromEntries(cachedRows.map(row => [row.id, row])))
     const inflightRef = useRef(new Set())
     const emptyRowsRef = useRef(new Set())
+    const refreshedRowsRef = useRef(new Set())
     const exhaustedRowsRef = useRef(new Set())
     const retryCountsRef = useRef({})
     const retryTimersRef = useRef(new Set())
@@ -204,6 +204,9 @@ const HomePanel = ({
     const queuedLazyIdsRef = useRef(new Set())
     const drainingLazyRef = useRef(false)
     const queueLazyLoadRef = useRef(null)
+    const pendingTierOneRef = useRef([])
+    const activeTierOneRef = useRef(0)
+    const queueTierOneLoadRef = useRef(null)
     const mountedRef = useRef(true)
     const homeScrollRef = useRef(null)
     const restorePendingRef = useRef(true)
@@ -234,11 +237,11 @@ const HomePanel = ({
         }
     }, [registryRows])
 
-    // Load one category. Idempotent: skips already-loaded or in-flight rows so
-    // both the tiered mount load and lazy sentinels can call it freely.
+    // Load one registry row once per mount. Cached rows remain visible while
+    // their current registry fetcher refreshes them in the background.
     const loadRow = useCallback(async function loadRegistryRow(category) {
         if (
-            rowsByIdRef.current[category.id] ||
+            refreshedRowsRef.current.has(category.id) ||
             inflightRef.current.has(category.id) ||
             exhaustedRowsRef.current.has(category.id)
         ) return
@@ -253,10 +256,12 @@ const HomePanel = ({
             const items = responseItems || results || []
             if (items.length === 0) {
                 emptyRowsRef.current.add(category.id)
+                refreshedRowsRef.current.add(category.id)
                 return
             }
             if (!mountedRef.current) return
             emptyRowsRef.current.delete(category.id)
+            refreshedRowsRef.current.add(category.id)
             const loadedRow = { ...category, ...responseMetadata, items }
             rowsByIdRef.current[category.id] = loadedRow
             setCategories(prev => ({ ...prev, [category.id]: loadedRow }))
@@ -270,6 +275,8 @@ const HomePanel = ({
                     retryTimersRef.current.delete(timer)
                     if ((category.tier || 1) >= 3) {
                         queueLazyLoadRef.current?.(category)
+                    } else if ((category.tier || 1) === 1) {
+                        queueTierOneLoadRef.current?.(category)
                     } else {
                         loadRegistryRow(category)
                     }
@@ -283,6 +290,24 @@ const HomePanel = ({
         }
     }, [applyRows])
 
+    const drainTierOneQueue = useCallback(function drainQueue() {
+        while (mountedRef.current && activeTierOneRef.current < 3 && pendingTierOneRef.current.length > 0) {
+            const task = pendingTierOneRef.current.shift()
+            activeTierOneRef.current++
+            loadRow(task.category).finally(() => {
+                activeTierOneRef.current--
+                task.resolve()
+                drainQueue()
+            })
+        }
+    }, [loadRow])
+
+    const queueTierOneLoad = useCallback((category) => new Promise(resolve => {
+        pendingTierOneRef.current.push({ category, resolve })
+        drainTierOneQueue()
+    }), [drainTierOneQueue])
+    queueTierOneLoadRef.current = queueTierOneLoad
+
     const drainLazyQueue = useCallback(async () => {
         if (drainingLazyRef.current) return
         drainingLazyRef.current = true
@@ -291,7 +316,7 @@ const HomePanel = ({
                 const id = pendingLazyIdsRef.current.shift()
                 queuedLazyIdsRef.current.delete(id)
                 const category = registryRows.find(c => c.id === id)
-                if (!category || rowsByIdRef.current[id] || emptyRowsRef.current.has(id) || exhaustedRowsRef.current.has(id) || inflightRef.current.has(id)) continue
+                if (!category || refreshedRowsRef.current.has(id) || emptyRowsRef.current.has(id) || exhaustedRowsRef.current.has(id) || inflightRef.current.has(id)) continue
                 await loadRow(category)
             }
         } finally {
@@ -301,7 +326,7 @@ const HomePanel = ({
 
     const queueLazyLoad = useCallback((category) => {
         if (!category?.id) return
-        if (rowsByIdRef.current[category.id] || emptyRowsRef.current.has(category.id) || exhaustedRowsRef.current.has(category.id) || inflightRef.current.has(category.id)) return
+        if (refreshedRowsRef.current.has(category.id) || emptyRowsRef.current.has(category.id) || exhaustedRowsRef.current.has(category.id) || inflightRef.current.has(category.id)) return
         if (queuedLazyIdsRef.current.has(category.id)) return
         queuedLazyIdsRef.current.add(category.id)
         pendingLazyIdsRef.current.push(category.id)
@@ -333,7 +358,7 @@ const HomePanel = ({
         const tier1 = registryRows.filter(c => (c.tier || 1) === 1)
         const tier2 = registryRows.filter(c => c.tier === 2)
 
-        runWithLimit(tier1, 3, loadRow).then(() => {
+        Promise.allSettled(tier1.map(queueTierOneLoad)).then(() => {
             if (cancelled) return
             setLoading(false)
         })
@@ -343,7 +368,7 @@ const HomePanel = ({
         }, 2000)
 
         return () => { cancelled = true; clearTimeout(t) }
-    }, [cachedRows.length, loadRow, registryRows])
+    }, [cachedRows.length, loadRow, queueTierOneLoad, registryRows])
 
     useEffect(() => {
         const scroller = homeScrollRef.current
@@ -363,7 +388,7 @@ const HomePanel = ({
             checkLazyRowsNearViewport()
             const next = registryRows.find(c =>
                 (c.tier || 1) >= 3 &&
-                !rowsByIdRef.current[c.id] &&
+                !refreshedRowsRef.current.has(c.id) &&
                 !emptyRowsRef.current.has(c.id) &&
                 !exhaustedRowsRef.current.has(c.id) &&
                 !inflightRef.current.has(c.id) &&
@@ -579,18 +604,20 @@ const HomePanel = ({
     }
 
     const handleMoreClick = (categoryId) => {
-        const cat = categories[categoryId]
-        if (cat) setActiveCategory(cat)
+        const cat = registryRows.find(row => row.id === categoryId)
+        if (cat) setActiveCategory({ ...cat, name: cat.name || cat.title })
     }
 
     const handleRowFocus = useCallback((item, itemIndex, rowId, horizontalScroll = 0) => {
         setFocusedItem(item)
-        writeHomeFocus({
+        const focus = {
             rowId,
             itemIndex,
             verticalScroll: homeScrollRef.current?.scrollTop || 0,
             horizontalScroll
-        })
+        }
+        savedFocusRef.current = focus
+        writeHomeFocus(focus)
     }, [])
 
     const restoreHomeFocus = useCallback((saved) => {
@@ -619,7 +646,7 @@ const HomePanel = ({
         }
         if (!restorePendingRef.current) return
 
-        const saved = readHomeFocus()
+        const saved = savedFocusRef.current
         if (!saved) {
             restorePendingRef.current = false
             return
@@ -652,9 +679,17 @@ const HomePanel = ({
 
     const renderRow = (row) => {
         const onFocusChange = (item, reportedIndex) => {
+            const savedFocus = savedFocusRef.current
             const itemIndex = Number.isInteger(reportedIndex)
                 ? reportedIndex
                 : row.items.findIndex(candidate => candidate.id === item?.id)
+            if (restorePendingRef.current && savedFocus) {
+                if (savedFocus.rowId !== row.id) return
+                if (savedFocus.itemIndex === itemIndex) {
+                    setFocusedItem(item)
+                    return
+                }
+            }
             const wrapper = [...(homeScrollRef.current?.querySelectorAll('[data-row-id]') || [])]
                 .find(node => node.dataset.rowId === row.id)
             const horizontalScroll = wrapper?.querySelector('.snap-container')?.scrollLeft || 0
@@ -663,7 +698,10 @@ const HomePanel = ({
         const props = {
             ...row,
             items: row.items,
-            isActive: !showSidebar && !pickerOpen,
+            initialIndex: savedFocusRef.current?.rowId === row.id
+                ? savedFocusRef.current.itemIndex
+                : 0,
+            isActive: !showSidebar && !pickerActive,
             onSelect: handleItemClick,
             onFocusChange,
             qualityBadges,
@@ -692,6 +730,7 @@ const HomePanel = ({
     const handleSidebarSelect = (item) => {
         if (item.id === 'close') {
             setShowSidebar(false)
+            onClose?.()
             return
         }
         if (item.id === 'search') {
@@ -796,20 +835,20 @@ const HomePanel = ({
                     {!loading && resumeItems.length > 0 && onResume && (
                         <ContinueWatchingRow items={resumeItems} onResume={onResume} />
                     )}
-                    {!loading && traktWatchlist.length > 0 && (
-                        <HomeRow
-                            key="trakt-watchlist"
-                            title="Trakt: смотреть позже"
-                            icon="📋"
-                            items={traktWatchlist}
-                            categoryId="trakt-watchlist"
-                            onItemClick={handleItemClick}
-                            onFocusChange={setFocusedItem}
-                            qualityBadges={qualityBadges}
-                            qualityDebug={qualityDebug}
-                            watchedIds={watchedIds}
+                    {swipeCandidates.length > 0 && (
+                        <SwipeHero
+                            onOpen={() => {
+                                if (swipeCandidates.length > 0) setPickerOpen(true)
+                            }}
+                            isActive={!showSidebar && !pickerActive}
                         />
                     )}
+                    {registryRows
+                        .filter(cat => cat.layout !== 'poster')
+                        .map((cat) => {
+                            const row = loadedById[cat.id]
+                            return row ? renderRow(row) : null
+                        })}
                     {!loading && fourKItems.length > 0 && (
                         <HomeRow
                             key="has-4k"
@@ -822,13 +861,25 @@ const HomePanel = ({
                             qualityBadges={qualityBadges}
                             qualityDebug={qualityDebug}
                             watchedIds={watchedIds}
+                            isActive={!showSidebar && !pickerActive}
                         />
                     )}
-                    <SwipeHero
-                        onOpen={() => setPickerOpen(true)}
-                        isActive={!showSidebar && !pickerOpen}
-                    />
-                    {registryRows.map((cat) => {
+                    {!loading && traktWatchlist.length > 0 && (
+                        <HomeRow
+                            key="trakt-watchlist"
+                            title="Trakt: смотреть позже"
+                            icon="📋"
+                            items={traktWatchlist}
+                            categoryId="trakt-watchlist"
+                            onItemClick={handleItemClick}
+                            onFocusChange={setFocusedItem}
+                            qualityBadges={qualityBadges}
+                            qualityDebug={qualityDebug}
+                            watchedIds={watchedIds}
+                            isActive={!showSidebar && !pickerActive}
+                        />
+                    )}
+                    {registryRows.filter(cat => cat.layout === 'poster').map((cat) => {
                         const row = loadedById[cat.id]
                         if (row) return renderRow(row)
                         // Tier 3 not yet loaded → lazy sentinel; Tier 1/2 pending → nothing.
@@ -839,7 +890,7 @@ const HomePanel = ({
                     })}
                 </div>
 
-                {pickerOpen && (
+                {pickerActive && (
                     <SwipePicker
                         items={swipeCandidates}
                         onFavorite={addFavorite}

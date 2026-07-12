@@ -3,6 +3,8 @@
 import React from 'react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'fs'
+import path from 'path'
 
 const mocks = vi.hoisted(() => ({
     addFavorite: vi.fn(async () => ({})),
@@ -25,12 +27,14 @@ const mocks = vi.hoisted(() => ({
     writeHomeFocus: vi.fn(),
     registryReset: vi.fn(),
     registryAdd: vi.fn(),
+    registryGetAll: vi.fn(),
     useQualityBadges: vi.fn(() => ({ badges: {}, debug: {} })),
     getHistory: vi.fn(async () => []),
     getTraktSynced: vi.fn(async () => ({ watched: [], watchlist: [] })),
+    tmdbClient: vi.fn(async id => ({ id: Number(id.match(/\d+/)?.[0]), title: 'Trakt item' })),
 }))
 
-const RowMock = ({ id, items = [], source, isActive, onSelect, onFocusChange, onNearEnd, testId }) => (
+const RowMock = ({ id, items = [], source, isActive, initialIndex, onSelect, onFocusChange, onNearEnd, onMoreClick, testId }) => (
     <section data-testid={testId} data-row-id={id} data-source={source} data-active={String(isActive)}>
         <div className="snap-container">
             {items.map((item, index) => (
@@ -46,6 +50,8 @@ const RowMock = ({ id, items = [], source, isActive, onSelect, onFocusChange, on
             ))}
         </div>
         {onNearEnd && <button type="button" onClick={onNearEnd}>near-end-{id}</button>}
+        {onMoreClick && <button type="button" onClick={() => onMoreClick(id)}>more-{id}</button>}
+        <output data-testid={`initial-${id}`}>{initialIndex}</output>
     </section>
 )
 
@@ -66,6 +72,7 @@ vi.mock('../utils/ContentRowsRegistry.js', () => ({
     contentRowsRegistry: {
         reset: mocks.registryReset,
         add: mocks.registryAdd,
+        getAll: mocks.registryGetAll,
     }
 }))
 vi.mock('../utils/discover', () => ({
@@ -73,7 +80,7 @@ vi.mock('../utils/discover', () => ({
     getBackdropUrl: vi.fn(() => null),
 }))
 vi.mock('../utils/tmdbClient', () => ({
-    default: vi.fn(async () => ({})),
+    default: mocks.tmdbClient,
     getDiscoverByGenre: vi.fn(),
 }))
 vi.mock('../utils/serverApi', () => ({
@@ -106,7 +113,13 @@ vi.mock('./SwipePicker', () => ({
     )
 }))
 vi.mock('./ContinueWatchingRow', () => ({ default: () => <div data-testid="continue-row" /> }))
-vi.mock('./CategoryPage', () => ({ default: () => <div data-testid="category-page" /> }))
+vi.mock('./CategoryPage', () => ({
+    default: ({ customCategory }) => (
+        <div data-testid="category-page" data-has-fetcher={String(typeof customCategory?.fetcher === 'function')}>
+            <button type="button" onClick={() => customCategory.fetcher(1)}>fetch-category</button>
+        </div>
+    )
+}))
 vi.mock('./PersonDetail', () => ({ default: () => <div data-testid="person-detail" /> }))
 vi.mock('./MovieDetail', () => ({
     default: ({ onBack }) => <button type="button" onClick={onBack}>back-from-detail</button>
@@ -143,6 +156,7 @@ const baseProps = {
     showSidebar: false,
     setShowSidebar: vi.fn(),
     onSearch: vi.fn(),
+    onClose: vi.fn(),
 }
 
 beforeEach(() => {
@@ -150,11 +164,13 @@ beforeEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
     mocks.createHybridRows.mockReturnValue([])
+    mocks.registryGetAll.mockImplementation(() => mocks.createHybridRows.mock.results.at(-1)?.value || [])
     mocks.readHomeSnapshot.mockReturnValue(null)
     mocks.readHomeFocus.mockReturnValue(null)
     mocks.getHistory.mockResolvedValue([])
     mocks.getTraktSynced.mockResolvedValue({ watched: [], watchlist: [] })
     mocks.useQualityBadges.mockReturnValue({ badges: {}, debug: {} })
+    mocks.tmdbClient.mockImplementation(async id => ({ id: Number(id.match(/\d+/)?.[0]), title: 'Trakt item' }))
 })
 
 describe('hybrid row orchestration', () => {
@@ -191,6 +207,66 @@ describe('hybrid row orchestration', () => {
         const view = render(<HomePanel {...baseProps} />)
 
         expect(view.getByText('Item 9')).toBeTruthy()
+    })
+
+    it('paints cached items immediately and replaces them after background refresh', async () => {
+        let resolveRefresh
+        const fetcher = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve }))
+        mocks.createHybridRows.mockReturnValue([row('cached', 'poster', { fetcher })])
+        mocks.readHomeSnapshot.mockReturnValue({
+            rows: [{ id: 'cached', title: 'cached', layout: 'poster', items: [item(9)] }],
+            savedAt: 1,
+        })
+
+        const view = render(<HomePanel {...baseProps} />)
+        expect(view.getByText('Item 9')).toBeTruthy()
+        await waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+
+        await act(async () => { resolveRefresh({ results: [item(10)] }) })
+        expect(await view.findByText('Item 10')).toBeTruthy()
+        expect(view.queryByText('Item 9')).toBeNull()
+    })
+
+    it('opens cached poster Show All with the current registry fetcher', async () => {
+        const fetcher = vi.fn(async () => ({ results: [item(10)] }))
+        mocks.createHybridRows.mockReturnValue([row('cached', 'poster', { fetcher })])
+        mocks.readHomeSnapshot.mockReturnValue({
+            rows: [{ id: 'cached', title: 'cached', layout: 'poster', items: [item(9)] }],
+            savedAt: 1,
+        })
+        const Harness = () => {
+            const [activeCategory, setActiveCategory] = React.useState(null)
+            return <HomePanel {...baseProps} activeCategory={activeCategory} setActiveCategory={setActiveCategory} />
+        }
+
+        const view = render(<Harness />)
+        fireEvent.click(view.getByText('more-cached'))
+
+        const category = await view.findByTestId('category-page')
+        expect(category.dataset.hasFetcher).toBe('true')
+        fireEvent.click(view.getByText('fetch-category'))
+        expect(fetcher).toHaveBeenCalled()
+    })
+
+    it('uses normalized registry getAll rows as the source of load and render order', async () => {
+        const raw = [
+            row('raw-a', 'poster', { order: 20 }),
+            row('raw-b', 'poster', { order: 10 }),
+        ]
+        const normalized = [
+            row('raw-b', 'poster', { title: 'Normalized B', order: 10, fetcher: vi.fn(async () => ({ results: [item(2)] })) }),
+            row('raw-a', 'poster', { title: 'Normalized A', order: 20, fetcher: vi.fn(async () => ({ results: [item(1)] })) }),
+        ]
+        mocks.createHybridRows.mockReturnValue(raw)
+        mocks.registryGetAll.mockReturnValue(normalized)
+
+        const view = render(<HomePanel {...baseProps} />)
+        await view.findByText('Item 1')
+        const rowIds = [...view.container.querySelectorAll('.custom-scrollbar > [data-row-id]')]
+            .map(node => node.dataset.rowId)
+
+        expect(mocks.registryGetAll).toHaveBeenCalled()
+        expect(rowIds).toEqual(['raw-b', 'raw-a'])
     })
 
     it('keeps registry order, filters personal rows, and softly dedupes lower rows', async () => {
@@ -235,6 +311,19 @@ describe('hybrid row orchestration', () => {
 })
 
 describe('picker, enrichment, and focus persistence', () => {
+    it('does not render a dead picker hero when there are no candidates', async () => {
+        mocks.buildSwipeCandidates.mockReturnValue([])
+        mocks.createHybridRows.mockReturnValue([row('empty', 'poster', {
+            fetcher: vi.fn(async () => ({ results: [] }))
+        })])
+
+        const view = render(<HomePanel {...baseProps} />)
+        await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+        expect(view.queryByTestId('swipe-hero')).toBeNull()
+        expect(view.queryByRole('dialog')).toBeNull()
+    })
+
     it('opens the picker with unwatched candidates and wires favorite/open/close actions', async () => {
         mocks.getTraktSynced.mockResolvedValue({ watched: [2], watchlist: [] })
         mocks.buildSwipeCandidates.mockReturnValue([item(1)])
@@ -291,12 +380,18 @@ describe('picker, enrichment, and focus persistence', () => {
         }
         const view = render(<Harness />)
         const second = await view.findByText('Item 2')
+        await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 2'))
+        expect(view.getByTestId('initial-x').textContent).toBe('1')
+        expect(mocks.writeHomeFocus).not.toHaveBeenCalledWith(expect.objectContaining({
+            rowId: 'x', itemIndex: 0,
+        }))
         const scroller = second.closest('.snap-container')
         const homeScroller = view.container.querySelector('.custom-scrollbar')
         scroller.scrollLeft = 77
         homeScroller.scrollTop = 55
 
-        second.focus()
+        fireEvent.focus(view.getByText('Item 1'))
+        fireEvent.focus(second)
         expect(mocks.writeHomeFocus).toHaveBeenLastCalledWith({
             rowId: 'x', itemIndex: 1, verticalScroll: 55, horizontalScroll: 77,
         })
@@ -306,6 +401,46 @@ describe('picker, enrichment, and focus persistence', () => {
         await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 2'))
         expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(55)
         expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(77)
+    })
+})
+
+describe('home composition and public contract', () => {
+    it('renders special and registry rows in the required TV order', async () => {
+        const rows = [
+            row('editorial', 'editorial', { order: 10 }),
+            row('ranked', 'ranked', { order: 20 }),
+            row('for_you', 'personal', { order: 30 }),
+            row('legacy', 'poster', { order: 40 }),
+        ].map((config, index) => ({ ...config, fetcher: vi.fn(async () => ({ results: [item(index + 1)] })) }))
+        mocks.createHybridRows.mockReturnValue(rows)
+        mocks.readHomeSnapshot.mockReturnValue({
+            rows: rows.map((config, index) => ({ ...config, fetcher: undefined, items: [item(index + 1)] })),
+            savedAt: 1,
+        })
+        mocks.buildSwipeCandidates.mockReturnValue([item(50)])
+        mocks.useQualityBadges.mockReturnValue({ badges: { 'Item 1': ['4K'] }, debug: {} })
+        mocks.getTraktSynced.mockResolvedValue({ watched: [], watchlist: [{ tmdbId: 99 }] })
+
+        const view = render(
+            <HomePanel {...baseProps} resumeItems={[item(100)]} onResume={vi.fn()} />
+        )
+        await view.findByText('Trakt item')
+
+        const scroller = view.container.querySelector('.custom-scrollbar')
+        const order = [...scroller.children].map(node => (
+            node.dataset.testid === 'continue-row' ? 'continue'
+                : node.dataset.testid === 'swipe-hero' ? 'hero'
+                    : node.dataset.rowId
+        )).filter(Boolean)
+        expect(order).toEqual([
+            'continue', 'hero', 'editorial', 'ranked', 'for_you',
+            'has-4k', 'trakt-watchlist', 'legacy'
+        ])
+    })
+
+    it('keeps onClose in the destructured HomePanel public props', () => {
+        const source = fs.readFileSync(path.resolve(import.meta.dirname, 'HomePanel.jsx'), 'utf8')
+        expect(source).toMatch(/onSearch,\s*onClose,/)
     })
 })
 
@@ -371,6 +506,39 @@ describe('bounded loading', () => {
         expect(maximum).toBe(3)
         view.unmount()
         resolvers.splice(0).forEach(resolve => resolve())
+    })
+
+    it('keeps delayed tier-one retries inside the same global concurrency limit', async () => {
+        vi.useFakeTimers()
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        let active = 0
+        let maximum = 0
+        let firstAttempt = true
+        const pending = []
+        const makePending = () => new Promise(resolve => pending.push(resolve))
+        const rows = Array.from({ length: 5 }, (_, index) => row(`global-${index}`, 'poster', {
+            fetcher: vi.fn(async () => {
+                active++
+                maximum = Math.max(maximum, active)
+                try {
+                    if (index === 0 && firstAttempt) {
+                        firstAttempt = false
+                        throw new Error('retry me')
+                    }
+                    return await makePending()
+                } finally {
+                    active--
+                }
+            })
+        }))
+        mocks.createHybridRows.mockReturnValue(rows)
+
+        render(<HomePanel {...baseProps} />)
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+        expect(active).toBe(3)
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+
+        expect(maximum).toBeLessThanOrEqual(3)
     })
 
     it('retries a failed row exactly once after one second', async () => {

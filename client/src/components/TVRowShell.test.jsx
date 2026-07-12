@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, render } from '@testing-library/react'
+import { fireEvent, render, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import TVRowShell from './TVRowShell'
 
@@ -70,4 +70,76 @@ it('reports focused items and proximity to the row end', () => {
 
     expect(onFocusChange).toHaveBeenLastCalledWith(items[1], 1)
     expect(onNearEnd).toHaveBeenCalledWith(1)
+})
+
+it('starts from a restored index and keeps selection aligned after moving right', async () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
+    const onSelect = vi.fn()
+    const onFocusChange = vi.fn()
+    const view = render(
+        <TVRowShell
+            id="restored"
+            title="Restored"
+            items={items}
+            initialIndex={2}
+            isActive
+            onSelect={onSelect}
+            onFocusChange={onFocusChange}
+            renderItem={item => <span>{item.id}</span>}
+        />
+    )
+    const row = view.getByRole('group', { name: 'Restored' })
+
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('3'))
+    expect(onFocusChange.mock.calls[0]).toEqual([items[2], 2])
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[2])
+
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[3])
+})
+
+it('synchronizes the logical index when an item receives DOM focus', () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
+    const onSelect = vi.fn()
+    const view = render(
+        <TVRowShell
+            id="dom-focus"
+            title="DOM focus"
+            items={items}
+            isActive
+            onSelect={onSelect}
+            renderItem={item => <span>{item.id}</span>}
+        />
+    )
+
+    const cards = view.container.querySelectorAll('.snap-item')
+    fireEvent.focus(cards[2])
+    fireEvent.keyDown(view.getByRole('group', { name: 'DOM focus' }), { key: 'Enter' })
+
+    expect(onSelect).toHaveBeenCalledWith(items[2])
+})
+
+it('fires near-end once per actual index movement, not callback or item rerenders', () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
+    const onNearEnd = vi.fn()
+    const props = {
+        id: 'stable-near-end',
+        title: 'Stable near end',
+        items,
+        initialIndex: 0,
+        isActive: true,
+        onNearEnd,
+        renderItem: item => <span>{item.id}</span>
+    }
+    const view = render(<TVRowShell {...props} />)
+    const row = view.getByRole('group', { name: 'Stable near end' })
+
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+    expect(onNearEnd).toHaveBeenCalledTimes(1)
+    view.rerender(<TVRowShell {...props} items={[...items]} onFocusChange={vi.fn()} />)
+    view.rerender(<TVRowShell {...props} items={[...items]} onNearEnd={vi.fn(onNearEnd)} />)
+
+    expect(onNearEnd).toHaveBeenCalledTimes(1)
 })

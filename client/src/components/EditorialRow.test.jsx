@@ -83,3 +83,30 @@ it('keeps editorial cards fixed and adds shadow to the focused signature', () =>
     expect(cardClasses).toMatch(/shadow/)
     expect(screen.getByText('Сериал', { selector: 'span' })).toBeTruthy()
 })
+
+it('restores a non-zero initial item and selects it before moving right', () => {
+    const items = [{ id: 31, title: 'Zero' }, { id: 32, title: 'Saved' }, { id: 33, title: 'Next' }]
+    const onFocusChange = vi.fn()
+    const onSelect = vi.fn()
+
+    const view = render(
+        <EditorialRow
+            id="restored-editorial"
+            title="Restored editorial"
+            items={items}
+            initialIndex={1}
+            isActive
+            onFocusChange={onFocusChange}
+            onSelect={onSelect}
+        />
+    )
+
+    expect(onFocusChange.mock.calls[0]).toEqual([items[1], 1])
+    expect(onFocusChange).not.toHaveBeenCalledWith(items[0], 0)
+    const row = view.getByRole('group', { name: 'Restored editorial' })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[1])
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[2])
+})

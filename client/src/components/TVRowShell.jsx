@@ -7,6 +7,7 @@ const TVRowShell = ({
     icon,
     source,
     items = [],
+    initialIndex = 0,
     isActive = true,
     onSelect,
     onFocusChange,
@@ -14,11 +15,12 @@ const TVRowShell = ({
     renderItem
 }) => {
     const refs = useRef([])
-    const { focusedIndex, containerProps, isFocused } = useTVNavigation({
+    const previousFocusedIndexRef = useRef(initialIndex)
+    const { focusedIndex, setFocusedIndex, containerProps, isFocused } = useTVNavigation({
         itemCount: items.length,
         columns: Math.max(items.length, 1),
         itemRefs: refs,
-        initialIndex: 0,
+        initialIndex,
         trapFocus: false,
         isActive,
         onSelect: index => onSelect?.(items[index])
@@ -28,7 +30,9 @@ const TVRowShell = ({
         if (focusedIndex < 0 || !items[focusedIndex]) return
 
         onFocusChange?.(items[focusedIndex], focusedIndex)
-        if (focusedIndex >= items.length - 3) onNearEnd?.(focusedIndex)
+        const moved = previousFocusedIndexRef.current !== focusedIndex
+        previousFocusedIndexRef.current = focusedIndex
+        if (moved && focusedIndex >= items.length - 3) onNearEnd?.(focusedIndex)
     }, [focusedIndex, items, onFocusChange, onNearEnd])
 
     if (items.length === 0) return null
@@ -56,6 +60,7 @@ const TVRowShell = ({
                     <div
                         key={item.id ?? index}
                         ref={element => { refs.current[index] = element }}
+                        onFocus={() => setFocusedIndex(index)}
                         tabIndex={isFocused(index) ? 0 : -1}
                         className={`snap-item shrink-0 outline-none ${isFocused(index) ? 'focused' : ''}`}
                     >

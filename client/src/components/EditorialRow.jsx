@@ -76,6 +76,7 @@ const EditorialRow = ({
     icon,
     source = 'TMDB',
     items = [],
+    initialIndex = 0,
     isActive,
     onSelect,
     onFocusChange,
@@ -89,6 +90,7 @@ const EditorialRow = ({
         icon={icon}
         source={source}
         items={items}
+        initialIndex={initialIndex}
         isActive={isActive}
         onSelect={onSelect}
         onFocusChange={onFocusChange}

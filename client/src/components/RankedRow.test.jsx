@@ -76,3 +76,30 @@ it('keeps ranked cards fixed and adds shadow to the focused signature', () => {
     expect(backdropClasses).toContain('scale-105')
     expect(backdropClasses).toMatch(/shadow/)
 })
+
+it('restores a non-zero initial item and selects it before moving right', () => {
+    const items = [{ id: 41, title: 'Zero' }, { id: 42, title: 'Saved' }, { id: 43, title: 'Next' }]
+    const onFocusChange = vi.fn()
+    const onSelect = vi.fn()
+
+    const view = render(
+        <RankedRow
+            id="restored-ranked"
+            title="Restored ranked"
+            items={items}
+            initialIndex={1}
+            isActive
+            onFocusChange={onFocusChange}
+            onSelect={onSelect}
+        />
+    )
+
+    expect(onFocusChange.mock.calls[0]).toEqual([items[1], 1])
+    expect(onFocusChange).not.toHaveBeenCalledWith(items[0], 0)
+    const row = view.getByRole('group', { name: 'Restored ranked' })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[1])
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenLastCalledWith(items[2])
+})

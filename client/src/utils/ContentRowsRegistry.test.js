@@ -73,6 +73,17 @@ describe('ContentRowsRegistry', () => {
         expect(registry.getAll().map(x => x.title)).toEqual(['B', 'A2'])
     })
 
+    it('reset clears registered rows and initialization state', () => {
+        const registry = new ContentRowsRegistry()
+        registry.add(validRow)
+        registry.initialized = true
+
+        registry.reset()
+
+        expect(registry.getAll()).toEqual([])
+        expect(registry.initialized).toBe(false)
+    })
+
     it('rejects unsupported layouts', () => {
         expect(() => normalizeRow({ ...validRow, layout: 'grid' }))
             .toThrow('Unsupported row layout: grid')
