@@ -95,6 +95,8 @@ const EditorialRow = ({
         onSelect={onSelect}
         onFocusChange={onFocusChange}
         onNearEnd={onNearEnd}
+        itemWidth="31vw"
+        itemHalfWidth="15.5vw"
         renderItem={(item, _index, focused) => (
             <EditorialCard
                 item={item}

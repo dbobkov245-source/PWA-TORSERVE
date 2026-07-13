@@ -1,11 +1,49 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useTVNavigation } from './useTVNavigation'
 
 const key = (name) => ({ key: name, preventDefault: vi.fn(), stopPropagation: vi.fn() })
 
+afterEach(() => vi.unstubAllGlobals())
+
 describe('useTVNavigation activation', () => {
+  it('focuses and centers once without mutating container geometry', () => {
+    const scrollTo = vi.fn()
+    const container = {
+      clientWidth: 1000,
+      scrollLeft: 120,
+      style: {},
+      getBoundingClientRect: () => ({ left: 0, width: 1000 }),
+      scrollTo
+    }
+    const node = {
+      offsetWidth: 200,
+      focus: vi.fn(),
+      closest: vi.fn(() => container),
+      getBoundingClientRect: () => ({ left: 700, width: 200 }),
+      scrollIntoView: vi.fn()
+    }
+    let frameCallback
+    vi.stubGlobal('requestAnimationFrame', callback => {
+      frameCallback = callback
+      return 1
+    })
+
+    renderHook(() => useTVNavigation({
+      itemCount: 1,
+      columns: 1,
+      itemRefs: { current: [node] },
+      initialIndex: 0
+    }))
+
+    expect(node.focus).toHaveBeenCalledWith({ preventScroll: true })
+    act(() => frameCallback())
+    expect(container.style.paddingInline).toBeUndefined()
+    expect(scrollTo).toHaveBeenCalledOnce()
+    expect(scrollTo).toHaveBeenCalledWith({ left: 420, behavior: 'auto' })
+  })
+
   it('ignores every key while inactive', () => {
     const onSelect = vi.fn()
     const itemRefs = { current: [] }

@@ -26,6 +26,11 @@ it('accepts a snapshot at the 24-hour boundary and rejects it after', () => {
   expect(readHomeSnapshot(1000 + DAY_MS + 1)).toBeNull()
 })
 
+it('rejects snapshots saved in the future', () => {
+  writeHomeSnapshot([{ id: 'x' }], 2000)
+  expect(readHomeSnapshot(1999)).toBeNull()
+})
+
 it('drops every fetcher property regardless of depth or value without mutating rows', () => {
   const rows = [{
     id: 'x',

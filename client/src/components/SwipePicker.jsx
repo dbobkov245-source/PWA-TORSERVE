@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { getBackdropUrl, getPosterUrl } from '../utils/discover'
+import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 
 const noop = () => {}
 
@@ -11,6 +13,10 @@ export default function SwipePicker({
 }) {
     const [index, setIndex] = useState(0)
     const dialogRef = useRef(null)
+    const item = items.length > 0 ? items[index % items.length] : null
+    const imageUrl = getPosterUrl(item) || getBackdropUrl(item, 'w780')
+    const [imageState, setImageState] = useState({ origin: imageUrl, src: imageUrl })
+    const imageSrc = imageState.origin === imageUrl ? imageState.src : imageUrl
 
     useEffect(() => {
         dialogRef.current?.focus()
@@ -18,30 +24,32 @@ export default function SwipePicker({
 
     if (items.length === 0) return null
 
-    const item = items[index % items.length]
     const title = item.title || item.name || 'Без названия'
-    const poster = item.poster || item.posterUrl || item.backdrop || item.backdropUrl
     const advance = () => setIndex((value) => (value + 1) % items.length)
 
     const handleKeyDown = async (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Backspace'].includes(event.key)) return
+        event.preventDefault()
+        event.stopPropagation()
         if (event.key === 'ArrowLeft') {
-            event.preventDefault()
             onSkip(item)
-            advance()
         }
         if (event.key === 'ArrowRight') {
-            event.preventDefault()
             await onFavorite(item)
             advance()
         }
         if (event.key === 'Enter') {
-            event.preventDefault()
             onOpenItem(item)
         }
         if (event.key === 'Escape' || event.key === 'Backspace') {
-            event.preventDefault()
             onClose()
         }
+    }
+
+    const handleImageError = () => {
+        if (!imageSrc) return
+        reportBrokenImage(imageSrc)
+        setImageState({ origin: imageUrl, src: getNextImageUrl(imageSrc) })
     }
 
     const keepFocus = (event) => {
@@ -64,8 +72,8 @@ export default function SwipePicker({
             >
                 <div className="flex min-h-[24rem] items-center gap-10">
                     <div className="h-80 w-56 shrink-0 overflow-hidden rounded-2xl bg-violet-950">
-                        {poster ? (
-                            <img src={poster} alt="" className="h-full w-full object-cover" />
+                        {imageSrc ? (
+                            <img src={imageSrc} alt="" className="h-full w-full object-cover" onError={handleImageError} />
                         ) : (
                             <div className="flex h-full items-center justify-center p-6 text-center text-violet-200">
                                 Постер недоступен

@@ -23,11 +23,11 @@ const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
         <article className="relative h-[180px] w-[300px] pl-12" aria-label={title}>
             <span
                 aria-label={`Место ${rank}`}
-                className="absolute bottom-[-10px] left-0 z-10 w-24 text-right text-[112px] font-extrabold leading-none tabular-nums text-[#080A0F] [-webkit-text-stroke:2px_#F4F7FA]"
+                className="absolute bottom-[-10px] left-0 z-0 w-24 text-right text-[112px] font-extrabold leading-none tabular-nums text-[#080A0F] [-webkit-text-stroke:2px_#F4F7FA]"
             >
                 {rank}
             </span>
-            <div className={`relative h-full w-full overflow-hidden rounded-xl border-4 bg-[#141821] ${focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_28px_rgba(0,0,0,0.55)]' : 'border-transparent'}`}>
+            <div className={`relative z-10 h-full w-full overflow-hidden rounded-xl border-4 bg-[#141821] ${focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_28px_rgba(0,0,0,0.55)]' : 'border-transparent'}`}>
                 {imageSrc ? (
                     <img
                         src={imageSrc}
@@ -89,6 +89,8 @@ const RankedRow = ({
         onSelect={onSelect}
         onFocusChange={onFocusChange}
         onNearEnd={onNearEnd}
+        itemWidth="300px"
+        itemHalfWidth="150px"
         renderItem={(item, index, focused) => (
             <RankedCard
                 item={item}

@@ -1,5 +1,25 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import useTVNavigation from '../hooks/useTVNavigation'
+import { useSpatialItem } from '../hooks/useSpatialNavigation'
+
+const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, renderItem }) => {
+    const spatialRef = useSpatialItem('main')
+    const setComboRef = useCallback((node) => {
+        spatialRef(node)
+        registerRef(index, node)
+    }, [index, registerRef, spatialRef])
+
+    return (
+        <div
+            ref={setComboRef}
+            onFocus={() => setFocusedIndex(index)}
+            tabIndex={isFocused ? 0 : -1}
+            className={`focusable snap-item shrink-0 outline-none ${isFocused ? 'focused' : ''}`}
+        >
+            {renderItem(item, index, isFocused)}
+        </div>
+    )
+}
 
 const TVRowShell = ({
     id,
@@ -12,6 +32,8 @@ const TVRowShell = ({
     onSelect,
     onFocusChange,
     onNearEnd,
+    itemWidth = '130px',
+    itemHalfWidth = '65px',
     renderItem
 }) => {
     const refs = useRef([])
@@ -56,19 +78,27 @@ const TVRowShell = ({
                 {...containerProps}
                 role="group"
                 aria-label={title}
-                className="snap-container px-8 gap-4 py-6 -my-4 overflow-x-auto scrollbar-hide"
+                className="snap-container tv-center-row gap-4 py-6 -my-4 overflow-x-auto scrollbar-hide"
+                style={{
+                    '--tv-row-card-width': itemWidth,
+                    '--tv-row-card-half-width': itemHalfWidth
+                }}
             >
+                <div className="tv-row-edge-spacer tv-row-leading-spacer" aria-hidden="true" />
+
                 {items.map((item, index) => (
-                    <div
+                    <TVRowItem
                         key={item.id ?? index}
-                        ref={element => { refs.current[index] = element }}
-                        onFocus={() => setFocusedIndex(index)}
-                        tabIndex={isFocused(index) ? 0 : -1}
-                        className={`snap-item shrink-0 outline-none ${isFocused(index) ? 'focused' : ''}`}
-                    >
-                        {renderItem(item, index, isFocused(index))}
-                    </div>
+                        item={item}
+                        index={index}
+                        isFocused={isFocused(index)}
+                        setFocusedIndex={setFocusedIndex}
+                        registerRef={(idx, node) => { refs.current[idx] = node }}
+                        renderItem={renderItem}
+                    />
                 ))}
+
+                <div className="tv-row-edge-spacer tv-row-trailing-spacer" aria-hidden="true" />
             </div>
         </section>
     )

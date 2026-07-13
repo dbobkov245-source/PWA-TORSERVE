@@ -51,7 +51,8 @@ export function readHomeSnapshot(now = Date.now()) {
     const value = JSON.parse(rawValue)
     if (!Array.isArray(value?.rows) || !Number.isFinite(value?.savedAt)) return null
 
-    return now - value.savedAt <= MAX_STALE_MS ? value : null
+    const age = now - value.savedAt
+    return age >= 0 && age <= MAX_STALE_MS ? value : null
   } catch {
     return null
   }

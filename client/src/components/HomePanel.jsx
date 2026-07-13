@@ -38,6 +38,16 @@ import {
     writeHomeSnapshot
 } from '../utils/homeSnapshot'
 
+const getHomeRowItemCap = layout => layout === 'ranked' ? 10 : 20
+
+const attachCappedItems = (cachedRow, registryRow) => ({
+    ...cachedRow,
+    ...registryRow,
+    items: (cachedRow.items || []).slice(0, getHomeRowItemCap(registryRow.layout))
+})
+
+const getProviderKey = category => category.provider || category.source || null
+
 // Tier-3 lazy row placeholder: fetches its category only once it scrolls near
 // the viewport, then the parent swaps it for a real HomeRow. Keeps the home page
 // from firing 30+ cascade requests (and NAS quality-badge work) on first paint.
@@ -99,7 +109,7 @@ const HomePanel = ({
         const cachedById = Object.fromEntries(snapshotRows.map(row => [row.id, row]))
         cachedRowsRef.current = factoryRows
             .filter(row => cachedById[row.id]?.items?.length > 0)
-            .map(row => ({ ...cachedById[row.id], ...row, items: cachedById[row.id].items }))
+            .map(row => attachCappedItems(cachedById[row.id], row))
     }
     const cachedRows = cachedRowsRef.current
     const [categories, setCategories] = useState(() => Object.fromEntries(
@@ -109,6 +119,7 @@ const HomePanel = ({
     const [focusedItem, setFocusedItem] = useState(cachedRows[0]?.items?.[0] || null)
     const [visibleRows, setVisibleRows] = useState(cachedRows)
     const [pickerOpen, setPickerOpen] = useState(false)
+    const [rejectedIds, setRejectedIds] = useState(() => new Set())
     // Set of TMDB ids the user already opened/watched — drives the "seen" marker
     // on catalog posters. Merged from server view-history + Trakt watched.
     const [watchedIds, setWatchedIds] = useState(() => new Set())
@@ -134,8 +145,9 @@ const HomePanel = ({
     }, [visibleRows, watchedIds])
 
     const swipeCandidates = useMemo(
-        () => buildSwipeCandidates(displayRows, watchedIds),
-        [displayRows, watchedIds]
+        () => buildSwipeCandidates(displayRows, watchedIds)
+            .filter(item => !rejectedIds.has(item.id)),
+        [displayRows, watchedIds, rejectedIds]
     )
     const pickerActive = pickerOpen && swipeCandidates.length > 0
 
@@ -201,6 +213,7 @@ const HomePanel = ({
     const emptyRowsRef = useRef(new Set())
     const refreshedRowsRef = useRef(new Set())
     const exhaustedRowsRef = useRef(new Set())
+    const openProviderCircuitsRef = useRef(new Set())
     const retryCountsRef = useRef({})
     const retryTimersRef = useRef(new Set())
     const rankedInflightRef = useRef(new Set())
@@ -233,7 +246,7 @@ const HomePanel = ({
         const cachedById = Object.fromEntries(cachedRows.map(row => [row.id, row]))
         const attachedRows = normalizedRows
             .filter(row => cachedById[row.id]?.items?.length > 0)
-            .map(row => ({ ...cachedById[row.id], ...row, items: cachedById[row.id].items }))
+            .map(row => attachCappedItems(cachedById[row.id], row))
 
         rowsByIdRef.current = Object.fromEntries(attachedRows.map(row => [row.id, row]))
         rowFocusCallbacksRef.current.clear()
@@ -266,20 +279,30 @@ const HomePanel = ({
     // Load one registry row once per mount. Cached rows remain visible while
     // their current registry fetcher refreshes them in the background.
     const loadRow = useCallback(async function loadRegistryRow(category) {
+        const providerKey = getProviderKey(category)
+        const isCriticalProvider = providerKey === 'tmdb'
         if (
             refreshedRowsRef.current.has(category.id) ||
             inflightRef.current.has(category.id) ||
             exhaustedRowsRef.current.has(category.id)
         ) return
+        if (providerKey && !isCriticalProvider && openProviderCircuitsRef.current.has(providerKey)) {
+            exhaustedRowsRef.current.add(category.id)
+            return
+        }
         inflightRef.current.add(category.id)
         try {
-            const response = await category.fetcher(1)
+            const response = await (category.homeFetcher || category.fetcher)(1)
+            if (response?.method === 'failed' || response?.error) {
+                throw new Error(response.error || `${category.id} metadata cascade failed`)
+            }
             const {
                 items: responseItems,
                 results,
                 ...responseMetadata
             } = response || {}
-            const items = responseItems || results || []
+            const itemCap = getHomeRowItemCap(category.layout)
+            const items = (responseItems || results || []).slice(0, itemCap)
             if (items.length === 0) {
                 emptyRowsRef.current.add(category.id)
                 refreshedRowsRef.current.add(category.id)
@@ -310,6 +333,9 @@ const HomePanel = ({
                 retryTimersRef.current.add(timer)
             } else {
                 exhaustedRowsRef.current.add(category.id)
+                if (providerKey && !isCriticalProvider) {
+                    openProviderCircuitsRef.current.add(providerKey)
+                }
             }
         } finally {
             inflightRef.current.delete(category.id)
@@ -615,6 +641,11 @@ const HomePanel = ({
         setActiveMovie(item)
     }
 
+    const handlePickerSkip = useCallback((item) => {
+        if (!item?.id) return
+        setRejectedIds(previous => new Set(previous).add(item.id))
+    }, [])
+
     const handlePersonClick = (person) => {
         setActiveMovie(null)
         setActivePerson(person)
@@ -649,23 +680,26 @@ const HomePanel = ({
 
     const getRowFocusCallback = useCallback((rowId) => {
         if (!rowFocusCallbacksRef.current.has(rowId)) {
-            rowFocusCallbacksRef.current.set(rowId, (item, reportedIndex) => {
-                const row = rowsByIdRef.current[rowId]
+            rowFocusCallbacksRef.current.set(rowId, (item, reportedIndex, reportedRowId, reportedScroll) => {
+                const focusRowId = reportedRowId || rowId
+                const row = rowsByIdRef.current[focusRowId]
                 const itemIndex = Number.isInteger(reportedIndex)
                     ? reportedIndex
                     : (row?.items || []).findIndex(candidate => candidate.id === item?.id)
                 const savedFocus = savedFocusRef.current
                 if (restorePendingRef.current && savedFocus) {
-                    if (savedFocus.rowId !== rowId) return
+                    if (savedFocus.rowId !== focusRowId) return
                     if (savedFocus.itemIndex === itemIndex) {
                         setFocusedItem(item)
                         return
                     }
                 }
                 const wrapper = [...(homeScrollRef.current?.querySelectorAll('[data-row-id]') || [])]
-                    .find(node => node.dataset.rowId === rowId)
-                const horizontalScroll = wrapper?.querySelector('.snap-container')?.scrollLeft || 0
-                handleRowFocus(item, Math.max(itemIndex, 0), rowId, horizontalScroll)
+                    .find(node => node.dataset.rowId === focusRowId)
+                const horizontalScroll = Number.isFinite(reportedScroll)
+                    ? reportedScroll
+                    : wrapper?.querySelector('.snap-container')?.scrollLeft || 0
+                handleRowFocus(item, Math.max(itemIndex, 0), focusRowId, horizontalScroll)
             })
         }
         return rowFocusCallbacksRef.current.get(rowId)
@@ -682,7 +716,6 @@ const HomePanel = ({
         scroller.scrollTop = Number(saved.verticalScroll) || 0
         const horizontalScroller = row.querySelector('.snap-container')
         if (!horizontalScroller) return false
-        horizontalScroller.scrollLeft = Number(saved.horizontalScroll) || 0
         const items = horizontalScroller.querySelectorAll('[data-item-id], .snap-item')
         const itemNode = items[Number(saved.itemIndex) || 0]
         if (!itemNode) return false
@@ -867,11 +900,11 @@ const HomePanel = ({
                 onClose={() => setShowSidebar(false)}
             />
 
-            <div className={`flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
+            <div className={`min-w-0 flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
                 <div className="absolute inset-0 bg-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
-                <div ref={homeScrollRef} className="relative z-10 pt-4 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar">
+                <div ref={homeScrollRef} className="relative z-10 pt-12 pb-20 h-full overflow-y-auto overflow-x-hidden custom-scrollbar" style={{ scrollPaddingTop: '120px' }}>
                     {!loading && resumeItems.length > 0 && onResume && (
                         <ContinueWatchingRow items={resumeItems} onResume={onResume} />
                     )}
@@ -884,55 +917,64 @@ const HomePanel = ({
                         />
                     )}
                     {registryRows
-                        .filter(cat => cat.layout !== 'poster')
+                        .filter(cat => !['poster', 'poster_below', 'backdrop_below'].includes(cat.layout))
                         .map((cat) => {
                             const row = loadedById[cat.id]
                             return row ? renderRow(row) : null
                         })}
                     {!loading && fourKItems.length > 0 && (
-                        <HomeRow
-                            key="has-4k"
-                            title="Есть в 4K"
-                            icon="💎"
-                            items={fourKItems}
-                            categoryId="has-4k"
-                            onItemClick={handleItemClick}
-                            onFocusChange={setFocusedItem}
-                            qualityBadges={qualityBadges}
-                            qualityDebug={qualityDebug}
-                            watchedIds={watchedIds}
-                            isActive={!showSidebar && !pickerActive}
-                        />
+                        <div key="has-4k" data-row-id="has-4k">
+                            <HomeRow
+                                title="Есть в 4K"
+                                icon="💎"
+                                source="TMDB"
+                                items={fourKItems}
+                                categoryId="has-4k"
+                                initialIndex={savedFocusRef.current?.rowId === 'has-4k' ? savedFocusRef.current.itemIndex : 0}
+                                onItemClick={handleItemClick}
+                                onFocusChange={getRowFocusCallback('has-4k')}
+                                qualityBadges={qualityBadges}
+                                qualityDebug={qualityDebug}
+                                watchedIds={watchedIds}
+                                isActive={!showSidebar && !pickerActive}
+                            />
+                        </div>
                     )}
                     {!loading && traktWatchlist.length > 0 && (
-                        <HomeRow
-                            key="trakt-watchlist"
-                            title="Trakt: смотреть позже"
-                            icon="📋"
-                            items={traktWatchlist}
-                            categoryId="trakt-watchlist"
-                            onItemClick={handleItemClick}
-                            onFocusChange={setFocusedItem}
-                            qualityBadges={qualityBadges}
-                            qualityDebug={qualityDebug}
-                            watchedIds={watchedIds}
-                            isActive={!showSidebar && !pickerActive}
-                        />
+                        <div key="trakt-watchlist" data-row-id="trakt-watchlist">
+                            <HomeRow
+                                title="Trakt: смотреть позже"
+                                icon="📋"
+                                source="Trakt"
+                                items={traktWatchlist}
+                                categoryId="trakt-watchlist"
+                                initialIndex={savedFocusRef.current?.rowId === 'trakt-watchlist' ? savedFocusRef.current.itemIndex : 0}
+                                onItemClick={handleItemClick}
+                                onFocusChange={getRowFocusCallback('trakt-watchlist')}
+                                qualityBadges={qualityBadges}
+                                qualityDebug={qualityDebug}
+                                watchedIds={watchedIds}
+                                isActive={!showSidebar && !pickerActive}
+                            />
+                        </div>
                     )}
-                    {registryRows.filter(cat => cat.layout === 'poster').map((cat) => {
-                        const row = loadedById[cat.id]
-                        if (row) return renderRow(row)
-                        // Tier 3 not yet loaded → lazy sentinel; Tier 1/2 pending → nothing.
-                        if ((cat.tier || 1) >= 3) {
-                            return <LazyRow key={cat.id} category={cat} onVisible={queueLazyLoad} />
-                        }
-                        return null
-                    })}
+                    {registryRows
+                        .filter(cat => ['poster', 'poster_below', 'backdrop_below'].includes(cat.layout))
+                        .map((cat) => {
+                            const row = loadedById[cat.id]
+                            if (row) return renderRow(row)
+                            // Tier 3 not yet loaded → lazy sentinel; Tier 1/2 pending → nothing.
+                            if ((cat.tier || 1) >= 3) {
+                                return <LazyRow key={cat.id} category={cat} onVisible={queueLazyLoad} />
+                            }
+                            return null
+                        })}
                 </div>
 
                 {pickerActive && (
                     <SwipePicker
                         items={swipeCandidates}
+                        onSkip={handlePickerSkip}
                         onFavorite={addFavorite}
                         onOpenItem={handleItemClick}
                         onClose={() => setPickerOpen(false)}

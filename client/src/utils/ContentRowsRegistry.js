@@ -3,7 +3,7 @@
  * Allows decoupled registration of content sources.
  */
 
-const LAYOUTS = new Set(['editorial', 'ranked', 'poster', 'personal'])
+const LAYOUTS = new Set(['editorial', 'ranked', 'poster', 'personal', 'backdrop_below', 'poster_below'])
 const DEFAULT_CACHE_TTL = 60 * 60 * 1000
 
 function isNonEmptyString(value) {

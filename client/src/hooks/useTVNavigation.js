@@ -12,7 +12,7 @@
  * @param {boolean} options.trapFocus - Prevent focus from leaving (default: true)
  * @param {boolean} options.isActive - Whether the hook handles key presses (default: true)
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
 export const useTVNavigation = ({
     itemCount,
@@ -26,6 +26,7 @@ export const useTVNavigation = ({
     isActive = true
 }) => {
     const [focusedIndex, setFocusedIndex] = useState(initialIndex)
+    const scrollFrameRef = useRef(null)
 
     // Calculate grid navigation
     const rows = Math.ceil(itemCount / columns)
@@ -129,15 +130,38 @@ export const useTVNavigation = ({
         }
     }, [focusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack, isActive])
 
-    // Scroll into view when focused index changes
-    // FIX-01a: Use 'center' instead of 'nearest' for better TV UX
-    // Scroll into view logic removed: relying on focus() native behavior prevents "fighting" and lag.
-    // If explicit scrolling is needed later, use 'scroll-margin' CSS on items instead.
-
-    // Focus the element when index changes
+    // Keep one deterministic horizontal scroll owner. Native focus scrolling and
+    // queued smooth animations fight each other under rapid TV remote repeats.
     useEffect(() => {
-        if (focusedIndex >= 0 && itemRefs?.current?.[focusedIndex]) {
-            itemRefs.current[focusedIndex].focus()
+        const node = itemRefs?.current?.[focusedIndex]
+        if (focusedIndex < 0 || !node) return
+
+        node.focus({ preventScroll: true })
+        const container = node.closest?.('.snap-container')
+        if (!container?.scrollTo) return
+
+        if (scrollFrameRef.current !== null) {
+            cancelAnimationFrame(scrollFrameRef.current)
+        }
+
+        scrollFrameRef.current = requestAnimationFrame(() => {
+            const itemRect = node.getBoundingClientRect()
+            const containerRect = container.getBoundingClientRect()
+            const itemCenter = itemRect.left + itemRect.width / 2
+            const containerCenter = containerRect.left + containerRect.width / 2
+
+            container.scrollTo({
+                left: container.scrollLeft + itemCenter - containerCenter,
+                behavior: 'auto'
+            })
+            scrollFrameRef.current = null
+        })
+
+        return () => {
+            if (scrollFrameRef.current !== null) {
+                cancelAnimationFrame(scrollFrameRef.current)
+                scrollFrameRef.current = null
+            }
         }
     }, [focusedIndex, itemRefs])
 

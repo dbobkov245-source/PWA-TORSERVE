@@ -1,5 +1,5 @@
-import React, { useCallback, useRef, useState, forwardRef } from 'react'
-import { getPosterUrl, getTitle } from '../utils/discover'
+import React, { useCallback, useRef, useState, useEffect, forwardRef } from 'react'
+import { getPosterUrl, getTitle, getBackdropUrl, getYear } from '../utils/discover'
 import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getBadgeStyle } from '../hooks/useQualityBadges'
@@ -14,15 +14,23 @@ const createImageErrorCache = () => {
 }
 
 // O3: MovieCard now has local isBroken state to prevent full row re-renders
-const MovieCard = ({ item, index, registerItem, onItemClick, onFocus, imageErrors, qualityBadges, watched, focused }) => {
+const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, imageErrors, qualityBadges, watched, focused }) => {
     const spatialRef = useSpatialItem('main')
-    const posterUrl = getPosterUrl(item)
+    const isBackdrop = layout === 'backdrop_below'
+    const isPosterBelow = layout === 'poster_below'
+
+    const imageUrl = isBackdrop ? getBackdropUrl(item, 'w500') : getPosterUrl(item)
     const title = getTitle(item)
-    // Per-image fallback chain: mirror → server proxy → wsrv → broken
-    const [imgSrc, setImgSrc] = useState(posterUrl)
-    const [isBroken, setIsBroken] = useState(() => imageErrors.has(posterUrl))
+    const [imgSrc, setImgSrc] = useState(imageUrl)
+    const [isBroken, setIsBroken] = useState(() => imageErrors.has(imageUrl))
     const originalTitle = item?.original_title || item?.original_name
     const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
+
+    useEffect(() => {
+        setImgSrc(imageUrl)
+        setIsBroken(imageErrors.has(imageUrl))
+    }, [imageUrl, imageErrors])
+
     const setCardRef = useCallback((node) => {
         spatialRef(node)
         registerItem(index, node)
@@ -36,8 +44,74 @@ const MovieCard = ({ item, index, registerItem, onItemClick, onFocus, imageError
             setImgSrc(next)
             return
         }
-        imageErrors.add(posterUrl)
+        imageErrors.add(imageUrl)
         setIsBroken(true)
+    }
+    if (isBackdrop || isPosterBelow) {
+        return (
+            <div
+                ref={setCardRef}
+                role="button"
+                aria-label={title}
+                tabIndex={focused ? 0 : -1}
+                className={`focusable tv-card snap-item rounded-lg relative outline-none cursor-pointer transition-all duration-300 ${
+                    isBackdrop ? 'w-[240px]' : 'w-[130px]'
+                }`}
+                onClick={() => onItemClick?.(item)}
+                onFocus={onFocus}
+            >
+                {/* Image Container with focus scaling and mint border */}
+                <div className={`relative w-full overflow-hidden rounded-lg bg-gray-800 border transition-all duration-300 ${
+                    isBackdrop ? 'aspect-[16/9]' : 'aspect-[2/3]'
+                } ${
+                    focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_24px_rgba(0,0,0,0.55)] z-10' : 'border-transparent'
+                }`}>
+                    {imgSrc && !isBroken ? (
+                        <img
+                            src={imgSrc}
+                            alt={title}
+                            className={`w-full h-full object-cover pointer-events-none ${watched ? 'opacity-50' : ''}`}
+                            loading="lazy"
+                            onError={handleImageError}
+                        />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center p-2 text-center text-xs text-white">
+                            {title}
+                        </div>
+                    )}
+
+                    {/* Overlay with title, rating, year — same style for both backdrop and poster_below */}
+                    <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#080A0F] via-[#080A0F]/70 to-transparent flex flex-col justify-end ${
+                        isBackdrop ? 'p-2.5' : 'p-1.5 pt-8'
+                    }`}>
+                        <h3 className={`min-w-0 truncate font-extrabold text-[#F4F7FA] leading-tight mb-0.5 ${
+                            isBackdrop ? 'text-[11px]' : 'text-[10px]'
+                        }`}>{title}</h3>
+                        {isBackdrop && item.overview && (
+                            <p className="line-clamp-1 text-[9px] text-[#F4F7FA]/75 mb-1 leading-normal font-medium">
+                                {item.overview}
+                            </p>
+                        )}
+                        <div className={`flex items-center gap-1.5 font-semibold text-[#F4F7FA]/70 ${
+                            isBackdrop ? 'text-[8px]' : 'text-[7px]'
+                        }`}>
+                            {item.vote_average > 0 && (
+                                <span className="text-[#63F5C7] font-bold">★ {item.vote_average.toFixed(1)}</span>
+                            )}
+                            {getYear(item) && <span>{getYear(item)}</span>}
+                            {badges.slice(0, 1).map((badge, i) => (
+                                <span key={i} className="rounded bg-[#F6D365]/90 px-1 py-0.2 font-black text-[#080A0F] text-[7px]">
+                                    {badge}
+                                </span>
+                            ))}
+                            {watched && (
+                                <span className="text-blue-400 font-extrabold ml-auto">✓</span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )
     }
 
     return (
@@ -48,7 +122,7 @@ const MovieCard = ({ item, index, registerItem, onItemClick, onFocus, imageError
             role="button"
             aria-label={title}
             tabIndex={focused ? 0 : -1}
-            className={`focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border overflow-hidden relative ${focused ? 'focused border-white scale-[1.05]' : 'border-transparent'}`}
+            className={`focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border overflow-hidden relative ${focused ? 'focused border-[#63F5C7] scale-[1.05]' : 'border-transparent'}`}
             onClick={() => onItemClick?.(item)}
             onFocus={onFocus}
         >
@@ -122,6 +196,7 @@ const HomeRow = forwardRef(({
     title,
     icon,
     source,
+    layout,
     items = [],
     categoryId,
     onItemClick,
@@ -143,24 +218,35 @@ const HomeRow = forwardRef(({
     const [showStart, setShowStart] = useState(false)
     const actionCount = (showStart ? 1 : 0) + (onMoreClick ? 1 : 0)
     const itemCount = items.length + actionCount
-    const startIndex = items.length
-    const moreIndex = items.length + (showStart ? 1 : 0)
+    const startIndex = 0
+    const mediaOffset = showStart ? 1 : 0
+    const moreIndex = items.length + mediaOffset
+    const rowCardWidth = layout === 'backdrop_below' ? 240 : 130
+    const centerRowStyle = {
+        '--tv-row-card-width': `${rowCardWidth}px`,
+        '--tv-row-card-half-width': `${rowCardWidth / 2}px`
+    }
 
     function goToStart() {
         if (!scrollRef.current) return
+        const firstMedia = itemRefs.current[mediaOffset]
         scrollRef.current.scrollLeft = 0
+        firstMedia?.focus()
         setShowStart(false)
-        setFocusedIndex(0)
-        itemRefs.current[0]?.focus()
+        requestAnimationFrame(() => {
+            setFocusedIndex(0)
+            itemRefs.current[0]?.focus()
+        })
     }
 
     function handleSelect(index) {
-        if (index < items.length) {
-            onItemClick?.(items[index])
-            return
-        }
         if (showStart && index === startIndex) {
             goToStart()
+            return
+        }
+        const mediaIndex = index - mediaOffset
+        if (mediaIndex >= 0 && mediaIndex < items.length) {
+            onItemClick?.(items[mediaIndex])
             return
         }
         if (onMoreClick && index === moreIndex) onMoreClick(categoryId)
@@ -179,9 +265,10 @@ const HomeRow = forwardRef(({
     const handleScroll = () => {
         const el = scrollRef.current
         if (!el) return
-        setShowStart(wasShown => (
-            wasShown ? el.scrollLeft !== 0 : el.scrollLeft > el.clientWidth
-        ))
+        const shouldShow = showStart ? el.scrollLeft !== 0 : el.scrollLeft > el.clientWidth
+        if (shouldShow === showStart) return
+        setFocusedIndex(index => index < 0 ? index : Math.max(0, index + (shouldShow ? 1 : -1)))
+        setShowStart(shouldShow)
     }
 
     const handleKeyDown = (event) => {
@@ -231,29 +318,14 @@ const HomeRow = forwardRef(({
             <div
                 ref={scrollRef}
                 tabIndex={containerProps.tabIndex}
-                className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4"
+                className="snap-container tv-center-row gap-4 overflow-x-auto scrollbar-hide py-6 -my-4"
+                style={centerRowStyle}
                 onKeyDown={handleKeyDown}
                 onScroll={handleScroll}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
             >
-                {items.map((item, index) => (
-                    <MovieCard
-                        key={item.id || index}
-                        item={item}
-                        index={index}
-                        registerItem={registerItem}
-                        onItemClick={onItemClick}
-                        onFocus={() => {
-                            setFocusedIndex(index)
-                            onFocusChange?.(item)
-                        }}
-                        imageErrors={imageErrors}
-                        qualityBadges={qualityBadges}
-                        watched={watchedIds?.has(item.id)}
-                        focused={isFocused(index)}
-                    />
-                ))}
+                <div className="tv-row-edge-spacer tv-row-leading-spacer" aria-hidden="true" />
 
                 {showStart && (
                     <RowAction
@@ -267,6 +339,25 @@ const HomeRow = forwardRef(({
                     />
                 )}
 
+                {items.map((item, index) => (
+                    <MovieCard
+                        key={item.id || index}
+                        item={item}
+                        index={index + mediaOffset}
+                        layout={layout}
+                        registerItem={registerItem}
+                        onItemClick={onItemClick}
+                        onFocus={() => {
+                            setFocusedIndex(index + mediaOffset)
+                            onFocusChange?.(item, index, categoryId, scrollRef.current?.scrollLeft || 0)
+                        }}
+                        imageErrors={imageErrors}
+                        qualityBadges={qualityBadges}
+                        watched={watchedIds?.has(item.id)}
+                        focused={isFocused(index + mediaOffset)}
+                    />
+                ))}
+
                 {onMoreClick && (
                     <RowAction
                         index={moreIndex}
@@ -278,6 +369,8 @@ const HomeRow = forwardRef(({
                         onFocus={() => setFocusedIndex(moreIndex)}
                     />
                 )}
+
+                <div className="tv-row-edge-spacer tv-row-trailing-spacer" aria-hidden="true" />
             </div>
         </div>
     )

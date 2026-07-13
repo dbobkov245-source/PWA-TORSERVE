@@ -3,6 +3,31 @@ import { fireEvent, render, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import TVRowShell from './TVRowShell'
 
+it('adds inert edge spacers with explicit item geometry', () => {
+    const view = render(
+        <TVRowShell
+            id="centered"
+            title="Centered"
+            items={[{ id: 1 }]}
+            itemWidth="300px"
+            itemHalfWidth="150px"
+            renderItem={item => <span>{item.id}</span>}
+        />
+    )
+    const row = view.getByRole('group', { name: 'Centered' })
+    const spacers = row.querySelectorAll('.tv-row-edge-spacer')
+
+    expect(spacers).toHaveLength(2)
+    expect(row.firstElementChild).toBe(spacers[0])
+    expect(row.lastElementChild).toBe(spacers[1])
+    expect(spacers[0].classList.contains('tv-row-leading-spacer')).toBe(true)
+    expect(spacers[1].classList.contains('tv-row-trailing-spacer')).toBe(true)
+    expect([...spacers].every(node => node.getAttribute('aria-hidden') === 'true')).toBe(true)
+    expect([...spacers].every(node => !node.hasAttribute('tabindex'))).toBe(true)
+    expect(row.style.getPropertyValue('--tv-row-card-width')).toBe('300px')
+    expect(row.style.getPropertyValue('--tv-row-card-half-width')).toBe('150px')
+})
+
 it('selects the focused horizontal item by D-Pad', () => {
     const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
     const onSelect = vi.fn()

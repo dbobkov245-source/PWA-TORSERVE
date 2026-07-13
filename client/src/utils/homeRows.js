@@ -4,22 +4,16 @@ import {
     getRecommendations,
     getTrending
 } from './tmdbClient.js'
-import { DISCOVERY_CATEGORIES } from './discover.js'
+import { DISCOVERY_CATEGORIES, fetchCategoryWithPages } from './discover.js'
 
 /**
  * Remove items already shown in a higher-priority row.
  * Row order and the winning item's position remain stable.
  */
 export function softDedupeRows(rows) {
-    const seen = new Set()
-
     return rows.map(row => ({
         ...row,
-        items: (row.items || []).filter(item => {
-            if (!item?.id || seen.has(item.id)) return false
-            seen.add(item.id)
-            return true
-        })
+        items: row.items || []
     }))
 }
 
@@ -30,6 +24,7 @@ export function buildSwipeCandidates(rows, watchedIds = new Set()) {
     const seen = new Set()
 
     return rows
+        .filter(row => ['editorial', 'ranked', 'personal'].includes(row.layout))
         .flatMap(row => row.items || [])
         .filter(item => {
             if (!item?.id || watchedIds.has(item.id) || seen.has(item.id)) return false
@@ -137,8 +132,9 @@ export function createHybridRows({ getHistory }) {
         ...DISCOVERY_CATEGORIES.map((row, index) => ({
             ...row,
             title: row.name,
-            layout: 'poster',
-            source: 'tmdb',
+            layout: row.layout || 'poster',
+            source: row.source || 'tmdb',
+            homeFetcher: () => fetchCategoryWithPages(row),
             order: 100 + index * 10
         }))
     ]
