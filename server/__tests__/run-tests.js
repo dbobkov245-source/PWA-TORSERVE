@@ -26,6 +26,7 @@ await import('./search-magnet.test.js')
 await import('./magnet-preflight.test.js')
 await import('./ts-download.test.js')
 await import('./proxy.test.js')
+await import('./trakt-discovery.test.js')
 
 // Run all registered tests
 await runTests()

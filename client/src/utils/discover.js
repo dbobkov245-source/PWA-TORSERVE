@@ -35,23 +35,31 @@ const fetchGenre = (id, page = 1) => tmdbClient(`/discover/movie?with_genres=${i
 const fetchTVGenre = (id, page = 1) => tmdbClient(`/discover/tv?with_genres=${id}&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 const fetchByLanguage = (lang, page = 1) => tmdbClient(`/discover/movie?with_original_language=${lang}&sort_by=popularity.desc&vote_count.gte=50&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 const fetchByYearRange = (gte, lte, page = 1) => tmdbClient(`/discover/movie?primary_release_date.gte=${gte}-01-01&primary_release_date.lte=${lte}-12-31&sort_by=popularity.desc&vote_count.gte=100&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchAppleTVPlus = (page = 1) => tmdbClient(`/discover/tv?with_networks=2552&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchFox = (page = 1) => tmdbClient(`/discover/tv?with_networks=19&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchComicsAdaptations = (page = 1) => tmdbClient(`/discover/movie?with_keywords=180547|849|9715&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
+const fetchHeistsRobberies = (page = 1) => tmdbClient(`/discover/movie?with_keywords=9748&sort_by=popularity.desc&language=ru-RU&page=${page}`, { cacheTTL: 60 * 60 * 1000 })
 
 // `tier` controls home-load timing (HomePanel): 1 = immediate, 2 = short delay,
 // 3 = lazy (fetch only when the row scrolls into view). Keeps NAS/cascade calm.
 export const DISCOVERY_CATEGORIES = [
     // ── Tier 1: load immediately (above the fold) ──
     { id: 'now_playing', name: 'Сейчас смотрят', icon: '🎬', tier: 1, fetcher: fetchNowPlaying },
+    { id: 'apple_tv_plus', name: 'Apple TV+', icon: '🍎', tier: 1, layout: 'editorial', fetcher: fetchAppleTVPlus, source: 'Apple TV+' },
+    { id: 'fox', name: 'FOX', icon: '🦊', tier: 1, layout: 'editorial', fetcher: fetchFox, source: 'FOX' },
     { id: 'trending_day', name: 'Тренды дня', icon: '📈', tier: 1, fetcher: fetchTrendingDay },
     { id: 'genre_28', name: 'Боевики', icon: '👊', tier: 1, fetcher: (page) => fetchGenre(28, page) },
     { id: 'trending', name: 'Тренды недели', icon: '🔥', tier: 1, fetcher: (page) => getTrending('week', page) },
     { id: 'genre_35', name: 'Комедии', icon: '😂', tier: 1, fetcher: (page) => fetchGenre(35, page) },
     { id: 'movies', name: 'Популярные фильмы', icon: '⭐', tier: 1, fetcher: getPopularMovies },
     // ── Tier 2: load after a short delay ──
+    { id: 'comics_adaptations', name: 'Экранизации комиксов', icon: '🦸', tier: 2, layout: 'editorial', fetcher: fetchComicsAdaptations },
+    { id: 'heists_robberies', name: 'Ограбления и аферы', icon: '💰', tier: 2, layout: 'editorial', fetcher: fetchHeistsRobberies },
     { id: 'genre_878', name: 'Фантастика', icon: '👽', tier: 2, fetcher: (page) => fetchGenre(878, page) },
     { id: 'genre_27', name: 'Ужасы', icon: '👻', tier: 2, fetcher: (page) => fetchGenre(27, page) },
     { id: 'genre_18', name: 'Драмы', icon: '🎭', tier: 2, fetcher: (page) => fetchGenre(18, page) },
     { id: 'genre_53', name: 'Триллеры', icon: '🔪', tier: 2, fetcher: (page) => fetchGenre(53, page) },
-    { id: 'tv', name: 'Популярные сериалы', icon: '📺', tier: 2, fetcher: getPopularTV },
+    { id: 'tv', name: 'Популярные сериалы', icon: '📺', tier: 2, layout: 'poster_below', fetcher: getPopularTV },
     { id: 'genre_16', name: 'Мультфильмы', icon: '🎨', tier: 2, fetcher: (page) => fetchGenre(16, page) },
     { id: 'upcoming', name: 'Скоро в кино', icon: '📅', tier: 2, fetcher: fetchUpcoming },
     { id: 'top', name: 'Топ фильмов', icon: '🏆', tier: 2, fetcher: getTopRated },
@@ -80,10 +88,15 @@ export const DISCOVERY_CATEGORIES = [
     { id: 'decade_2000', name: 'Кино 2000-х', icon: '💿', tier: 3, fetcher: (page) => fetchByYearRange(2000, 2009, page) },
     { id: 'decade_1990', name: 'Кино 90-х', icon: '📼', tier: 3, fetcher: (page) => fetchByYearRange(1990, 1999, page) },
     { id: 'decade_1980', name: 'Кино 80-х', icon: '📺', tier: 3, fetcher: (page) => fetchByYearRange(1980, 1989, page) },
-    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, fetcher: fetchTopTV },
-    { id: 'tv_airing_today', name: 'Серии сегодня', icon: '🛰️', tier: 3, fetcher: fetchTVAiringToday },
-    { id: 'tv_on_the_air', name: 'Сериалы в эфире', icon: '📡', tier: 3, fetcher: fetchTVOnTheAir }
-]
+    { id: 'top_tv', name: 'Топ сериалов', icon: '🏆', tier: 3, layout: 'poster_below', fetcher: fetchTopTV },
+    { id: 'tv_airing_today', name: 'Серии сегодня', icon: '🛰️', tier: 3, layout: 'poster_below', fetcher: fetchTVAiringToday },
+    { id: 'tv_on_the_air', name: 'Сериалы в эфире', icon: '📡', tier: 3, layout: 'poster_below', fetcher: fetchTVOnTheAir }
+].map(category => ({
+    source: 'tmdb',
+    layout: 'poster',
+    cacheTTL: 60 * 60 * 1000,
+    ...category
+}))
 
 /**
  * Fetch a single category with limited pagination (top-up to ~20 items).
@@ -99,6 +112,17 @@ export async function fetchCategoryWithPages(category, maxPages = 2) {
     let items = filterDiscoveryResults(response.results || [])
     const source = response.source
     const method = response.method
+
+    if (method === 'failed' || response.error) {
+        return {
+            ...category,
+            items: [],
+            fetcher: category.fetcher,
+            source,
+            method,
+            error: response.error || 'Discovery cascade failed'
+        }
+    }
 
     while (items.length < 20 && page < maxPages) {
         try {

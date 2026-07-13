@@ -489,6 +489,52 @@ function setCache(endpoint, data, ttl = CACHE_TTL) {
     }
 }
 
+/**
+ * Request JSON metadata from the configured TorServe backend.
+ * Server metadata intentionally stays outside the TMDB/DoH image cascade.
+ *
+ * @param {string} path - Absolute backend route beginning with `/`.
+ * @param {Object} options - Cache controls for the metadata response.
+ * @returns {Promise<Object>} Parsed server response or a stable empty result.
+ */
+export async function requestServerMetadata(
+    path,
+    { cacheTTL = DISCOVERY_CACHE_TTL, useCache = true } = {}
+) {
+    const key = `server:${path}`
+    if (useCache) {
+        const cached = getCached(key)
+        if (cached) return cached
+    }
+
+    try {
+        const response = await fetch(`${getApiBase({ allowNativeDefault: true })}${path}`, {
+            signal: timeoutSignal(8000)
+        })
+        if (!response.ok) throw new Error(`metadata HTTP ${response.status}`)
+
+        const result = await response.json()
+        if (useCache) setCache(key, result, cacheTTL)
+        return result
+    } catch (error) {
+        return {
+            results: [],
+            source: 'none',
+            method: 'failed',
+            error: error.message
+        }
+    }
+}
+
+/**
+ * Read-only Trakt discovery through the self-hosted server adapter.
+ */
+export function fetchTraktDiscovery(kind = 'trending', type = 'movies') {
+    return requestServerMetadata(`/api/trakt/discovery/${kind}?type=${type}`, {
+        cacheTTL: 15 * 60 * 1000
+    })
+}
+
 // ─── Metadata Cache (Consolidated) ────────────────────────────
 
 /**
@@ -1073,9 +1119,9 @@ export async function getVideos(id, type = 'movie') {
  * @param {string} type - 'movie' or 'tv'
  * @returns {Promise<{results: Array}>}
  */
-export async function getRecommendations(id, type = 'movie') {
+export async function getRecommendations(id, type = 'movie', cacheTTL = 6 * 60 * 60 * 1000) {
     const endpoint = `/${type}/${id}/recommendations?`
-    return tmdbClient(endpoint, { cacheTTL: DISCOVERY_CACHE_TTL })
+    return tmdbClient(endpoint, { cacheTTL })
 }
 
 /**

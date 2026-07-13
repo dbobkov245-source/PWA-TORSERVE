@@ -63,7 +63,7 @@ body {
   display: flex;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   -ms-overflow-style: none;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -72,6 +72,25 @@ body {
 
 .snap-container::-webkit-scrollbar {
   display: none;
+}
+
+.tv-center-row {
+  --tv-row-gap: 1rem;
+}
+
+.tv-row-edge-spacer {
+  height: 1px;
+  pointer-events: none;
+}
+
+.tv-row-leading-spacer {
+  flex: 0 0 1rem;
+  width: 1rem;
+}
+
+.tv-row-trailing-spacer {
+  flex: 0 0 max(2rem, calc(50% - var(--tv-row-card-half-width) - var(--tv-row-gap)));
+  width: max(2rem, calc(50% - var(--tv-row-card-half-width) - var(--tv-row-gap)));
 }
 
 .snap-item {
@@ -148,9 +167,9 @@ body {
    ───────────────────────────────────────────────────────────── */
 
 .home-row .overflow-x-auto {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   -webkit-overflow-scrolling: touch;
-  will-change: scroll-position;
+  will-change: auto;
 }
 
 /* Hide scrollbar but keep functionality */

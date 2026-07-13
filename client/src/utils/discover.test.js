@@ -10,7 +10,8 @@ import {
     getTitle,
     getYear,
     getSearchQuery,
-    DISCOVERY_CATEGORIES
+    DISCOVERY_CATEGORIES,
+    fetchCategoryWithPages
 } from './discover.js'
 
 // ─── Helper Function Tests ─────────────────────────────────────
@@ -121,11 +122,17 @@ describe('DISCOVERY_CATEGORIES', () => {
     })
 
     it('each category has required fields', () => {
+        const allowedSources = new Set(['tmdb', 'Apple TV+', 'FOX'])
+        const allowedLayouts = new Set(['poster', 'editorial', 'backdrop_below', 'poster_below'])
         DISCOVERY_CATEGORIES.forEach(cat => {
             expect(cat).toHaveProperty('id')
             expect(cat).toHaveProperty('name')
             expect(cat).toHaveProperty('icon')
             expect(cat).toHaveProperty('tier')
+            expect(cat.source).toSatisfy(s => allowedSources.has(s))
+            expect(cat.layout).toSatisfy(l => allowedLayouts.has(l))
+            expect(cat).toHaveProperty('cacheTTL')
+            expect(Number.isFinite(cat.cacheTTL)).toBe(true)
             expect(cat).toHaveProperty('fetcher')
             expect(typeof cat.fetcher).toBe('function')
         })
@@ -162,5 +169,47 @@ describe('DISCOVERY_CATEGORIES', () => {
 
         expect(tier1Count).toBeLessThanOrEqual(8)
         expect(tier3Count).toBeGreaterThanOrEqual(15)
+    })
+
+    it('uses Apple TV-style editorial cards for comics and heist rows', () => {
+        const byId = Object.fromEntries(DISCOVERY_CATEGORIES.map(row => [row.id, row]))
+
+        expect(byId.comics_adaptations.layout).toBe('editorial')
+        expect(byId.heists_robberies.layout).toBe('editorial')
+    })
+})
+
+describe('fetchCategoryWithPages', () => {
+    it('does not fan out to page two after a cascade failure sentinel', async () => {
+        const fetcher = vi.fn().mockResolvedValue({
+            results: [], source: 'none', method: 'failed', error: 'offline'
+        })
+
+        const result = await fetchCategoryWithPages({ id: 'failed', fetcher })
+
+        expect(fetcher).toHaveBeenCalledOnce()
+        expect(result).toEqual(expect.objectContaining({ method: 'failed', error: 'offline', items: [] }))
+    })
+
+    it('filters people and missing posters, tops up page two, dedupes, and caps twenty', async () => {
+        const pageOne = [
+            { id: 1, media_type: 'person', poster_path: '/person.jpg' },
+            { id: 2, title: 'No poster' },
+            ...Array.from({ length: 12 }, (_, index) => ({ id: index + 3, poster_path: `/${index}.jpg` }))
+        ]
+        const pageTwo = [
+            { id: 3, poster_path: '/duplicate.jpg' },
+            ...Array.from({ length: 15 }, (_, index) => ({ id: index + 20, poster_path: `/p2-${index}.jpg` }))
+        ]
+        const fetcher = vi.fn()
+            .mockResolvedValueOnce({ results: pageOne, source: 'tmdb', method: 'worker' })
+            .mockResolvedValueOnce({ results: pageTwo, source: 'tmdb', method: 'worker' })
+
+        const result = await fetchCategoryWithPages({ id: 'legacy', fetcher })
+
+        expect(fetcher).toHaveBeenCalledTimes(2)
+        expect(result.items).toHaveLength(20)
+        expect(result.items.some(item => item.id === 1 || item.id === 2)).toBe(false)
+        expect(result.items.filter(item => item.id === 3)).toHaveLength(1)
     })
 })

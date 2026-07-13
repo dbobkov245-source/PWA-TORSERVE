@@ -5,7 +5,13 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
-import { addTmdbQueryParams, saveMetadata, getMetadata } from './tmdbClient.js'
+import {
+    addTmdbQueryParams,
+    fetchTraktDiscovery,
+    getMetadata,
+    requestServerMetadata,
+    saveMetadata
+} from './tmdbClient.js'
 
 const META_PREFIX = 'meta:'
 
@@ -61,6 +67,57 @@ describe('native server proxy routing', () => {
         expect(src).toContain('function getApiBase({ allowNativeDefault = false } = {})')
         expect(src).toContain("resolveInitialServerUrl({ isNative: true, storedUrl: '' })")
         expect(src).toContain('getApiBase({ allowNativeDefault: true })')
+    })
+})
+
+describe('server metadata adapter', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        vi.restoreAllMocks()
+    })
+
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it('requests Trakt discovery through configured server base', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+        const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ results: [] })
+        })
+
+        await fetchTraktDiscovery('trending', 'movies')
+
+        expect(spy).toHaveBeenCalledWith(
+            'http://192.168.1.70:3000/api/trakt/discovery/trending?type=movies',
+            expect.objectContaining({ signal: expect.any(AbortSignal) })
+        )
+    })
+
+    it('reuses cached server metadata unless cache is disabled', async () => {
+        localStorage.setItem('serverUrl', 'http://media.local')
+        const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ results: [{ id: 1 }] })
+        })
+
+        await requestServerMetadata('/api/example')
+        await requestServerMetadata('/api/example')
+        await requestServerMetadata('/api/example', { useCache: false })
+
+        expect(spy).toHaveBeenCalledTimes(2)
+    })
+
+    it('returns a stable empty result when server metadata fails', async () => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+
+        await expect(requestServerMetadata('/api/example', { useCache: false })).resolves.toEqual({
+            results: [],
+            source: 'none',
+            method: 'failed',
+            error: 'offline'
+        })
     })
 })
 
