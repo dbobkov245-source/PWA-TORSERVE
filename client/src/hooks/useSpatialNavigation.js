@@ -102,7 +102,7 @@ const SpatialEngine = {
         const next = this.findNearest(current, elements, direction);
         if (next) {
             next.focus();
-            next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            next.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         } else {
             console.warn(`[SpatialNav] Edge reached for ${direction} in zone ${this.activeZone}`);
         }
