@@ -136,7 +136,7 @@ const HomeRow = memo(forwardRef(({
             {/* Snap Container (with touch scroll support) */}
             <div
                 ref={scrollRef}
-                className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4"
+                className="snap-container home-row-cards px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
             >

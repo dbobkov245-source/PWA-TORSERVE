@@ -90,7 +90,7 @@ const ContinueWatchingRow = ({ items = [], onResume }) => {
                     <span className="text-gray-500 text-sm font-normal">({items.length})</span>
                 </h2>
             </div>
-            <div className="snap-container px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4 flex">
+            <div className="snap-container resume-row-cards px-8 gap-4 overflow-x-auto scroll-smooth scrollbar-hide py-6 -my-4 flex">
                 {items.map((item) => (
                     <ResumeCard
                         key={`${item.infoHash}:${item.fileIndex}`}
