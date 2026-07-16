@@ -38,4 +38,9 @@ describe('HomePanel startup regressions', () => {
     it('constrains the home content flex child to the viewport width', () => {
         expect(src).toContain('flex-1 min-w-0 relative transition-all')
     })
+
+    it('keeps row action callbacks stable across focus-driven parent renders', () => {
+        expect(src).toContain('const handleItemClick = useCallback')
+        expect(src).toContain('const handleMoreClick = useCallback')
+    })
 })
