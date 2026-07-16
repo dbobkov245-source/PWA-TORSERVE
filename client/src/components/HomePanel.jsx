@@ -591,7 +591,7 @@ const HomePanel = ({
                 onClose={() => setShowSidebar(false)}
             />
 
-            <div className={`flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
+            <div className={`flex-1 min-w-0 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
                 <div className="absolute inset-0 bg-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
