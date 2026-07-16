@@ -270,18 +270,9 @@ const HomePanel = ({
     useEffect(() => {
         const id = setInterval(() => {
             checkLazyRowsNearViewport()
-            const next = DISCOVERY_CATEGORIES.find(c =>
-                (c.tier || 1) >= 3 &&
-                !rowsByIdRef.current[c.id] &&
-                !emptyRowsRef.current.has(c.id) &&
-                !inflightRef.current.has(c.id) &&
-                !queuedLazyIdsRef.current.has(c.id) &&
-                (lazyRetryAtRef.current[c.id] || 0) <= Date.now()
-            )
-            if (next) queueLazyLoad(next)
         }, 1600)
         return () => clearInterval(id)
-    }, [checkLazyRowsNearViewport, queueLazyLoad])
+    }, [checkLazyRowsNearViewport])
 
     // Fast id→row lookup for the render (loaded rows vs lazy placeholders).
     const loadedById = useMemo(() => {
