@@ -25,6 +25,11 @@ describe('HomePanel startup regressions', () => {
         expect(src).toContain('data-category-id')
     })
 
+    it('does not load the next tier-3 row while the home page is idle', () => {
+        expect(src).not.toContain('const next = DISCOVERY_CATEGORIES.find')
+        expect(src).not.toContain('if (next) queueLazyLoad(next)')
+    })
+
     it('bypasses stale TMDB cache for year sidebar categories', () => {
         expect(src).toContain('primary_release_year=${item.year}')
         expect(src).toContain('{ useCache: false }')
