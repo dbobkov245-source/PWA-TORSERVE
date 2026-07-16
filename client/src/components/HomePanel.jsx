@@ -479,9 +479,9 @@ const HomePanel = ({
     }
 
     const handleMoreClick = useCallback((categoryId) => {
-        const cat = categories[categoryId]
+        const cat = rowsByIdRef.current[categoryId]
         if (cat) setActiveCategory(cat)
-    }, [categories, setActiveCategory])
+    }, [setActiveCategory])
 
     const handleSidebarSelect = (item) => {
         if (item.id === 'close') {
