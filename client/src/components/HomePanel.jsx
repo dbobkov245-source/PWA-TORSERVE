@@ -147,6 +147,7 @@ const HomePanel = ({
     const pendingLazyIdsRef = useRef([])
     const queuedLazyIdsRef = useRef(new Set())
     const drainingLazyRef = useRef(false)
+    const lazyInteractionStartedRef = useRef(false)
     const mountedRef = useRef(true)
     const homeScrollRef = useRef(null)
     useEffect(() => () => { mountedRef.current = false }, [])
@@ -205,6 +206,7 @@ const HomePanel = ({
     }, [loadRow])
 
     const queueLazyLoad = useCallback((category) => {
+        if (!lazyInteractionStartedRef.current) return
         if (!category?.id) return
         const retryAt = lazyRetryAtRef.current[category.id] || 0
         if (retryAt > Date.now()) return
@@ -257,7 +259,13 @@ const HomePanel = ({
     useEffect(() => {
         const scroller = homeScrollRef.current
         if (!scroller) return
-        const handleScroll = () => checkLazyRowsNearViewport()
+        const handleScroll = () => {
+            if (!lazyInteractionStartedRef.current) {
+                if (scroller.scrollTop <= 0) return
+                lazyInteractionStartedRef.current = true
+            }
+            checkLazyRowsNearViewport()
+        }
         handleScroll()
         scroller.addEventListener('scroll', handleScroll, { passive: true })
         window.addEventListener('resize', handleScroll)
@@ -269,7 +277,7 @@ const HomePanel = ({
 
     useEffect(() => {
         const id = setInterval(() => {
-            checkLazyRowsNearViewport()
+            if (lazyInteractionStartedRef.current) checkLazyRowsNearViewport()
         }, 1600)
         return () => clearInterval(id)
     }, [checkLazyRowsNearViewport])

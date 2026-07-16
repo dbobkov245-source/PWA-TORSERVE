@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 const discoverMocks = vi.hoisted(() => ({
@@ -74,7 +74,7 @@ describe('HomePanel tier-3 lazy loading', () => {
         )
 
         await waitFor(() => expect(discoverMocks.fetchCategoryWithPages).toHaveBeenCalled())
-        await new Promise(resolve => setTimeout(resolve, 30))
+        await act(() => new Promise(resolve => setTimeout(resolve, 30)))
 
         expect(discoverMocks.fetchCategoryWithPages.mock.calls.map(([category]) => category.id))
             .toEqual(['tier-1'])
