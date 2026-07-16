@@ -49,4 +49,27 @@ describe('SpatialEngine TV navigation', () => {
             inline: 'center'
         })
     })
+
+    it('does not measure cards from other rows during horizontal movement', () => {
+        const currentRow = document.createElement('div')
+        currentRow.className = 'snap-container'
+        const otherRow = document.createElement('div')
+        otherRow.className = 'snap-container'
+        const current = createFocusable({ left: 32 })
+        const next = createFocusable({ left: 178 })
+        const otherRowCard = createFocusable({ left: 178, top: 240 })
+        currentRow.append(current, next)
+        otherRow.append(otherRowCard)
+        document.body.append(currentRow, otherRow)
+
+        SpatialEngine.register('test', current)
+        SpatialEngine.register('test', next)
+        SpatialEngine.register('test', otherRowCard)
+        current.focus()
+
+        SpatialEngine.move('ArrowRight')
+
+        expect(document.activeElement).toBe(next)
+        expect(otherRowCard.getBoundingClientRect).not.toHaveBeenCalled()
+    })
 })
