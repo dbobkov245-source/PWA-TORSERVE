@@ -29,4 +29,8 @@ describe('HomePanel startup regressions', () => {
         expect(src).toContain('primary_release_year=${item.year}')
         expect(src).toContain('{ useCache: false }')
     })
+
+    it('constrains the home content flex child to the viewport width', () => {
+        expect(src).toContain('flex-1 min-w-0 relative transition-all')
+    })
 })
