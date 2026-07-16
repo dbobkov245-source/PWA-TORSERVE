@@ -278,7 +278,9 @@ export function getCurrentImageMirror() {
     const lastMirror = localStorage.getItem('tmdb_img_mirror') || ''
 
     if (freeMirrors.includes(preferredMirror)) {
-        localStorage.setItem('tmdb_img_mirror', preferredMirror)
+        if (lastMirror !== preferredMirror) {
+            localStorage.setItem('tmdb_img_mirror', preferredMirror)
+        }
         return preferredMirror
     } else if (freeMirrors.includes(lastMirror)) {
         return lastMirror
