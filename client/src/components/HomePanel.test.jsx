@@ -43,4 +43,9 @@ describe('HomePanel startup regressions', () => {
         expect(src).toContain('const handleItemClick = useCallback')
         expect(src).toContain('const handleMoreClick = useCallback')
     })
+
+    it('keeps the more callback stable while category rows stream in', () => {
+        expect(src).toContain('const cat = rowsByIdRef.current[categoryId]')
+        expect(src).not.toContain('}, [categories, setActiveCategory])')
+    })
 })
