@@ -1,4 +1,4 @@
-import React, { useRef, useState, forwardRef } from 'react'
+import React, { useRef, useState, forwardRef, memo } from 'react'
 import { getPosterUrl, getTitle } from '../utils/discover'
 import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -83,7 +83,7 @@ const MovieCard = ({ item, onItemClick, onFocus, imageErrorsRef, qualityBadges, 
     )
 }
 
-const HomeRow = forwardRef(({
+const HomeRow = memo(forwardRef(({
     title,
     icon,
     items = [],
@@ -166,7 +166,7 @@ const HomeRow = forwardRef(({
             </div>
         </div>
     )
-})
+}))
 
 HomeRow.displayName = 'HomeRow'
 

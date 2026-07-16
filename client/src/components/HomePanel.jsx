@@ -461,7 +461,7 @@ const HomePanel = ({
     }
 
     // Handlers
-    const handleItemClick = (item) => setActiveMovie(item)
+    const handleItemClick = useCallback((item) => setActiveMovie(item), [setActiveMovie])
 
     const handlePersonClick = (person) => {
         setActiveMovie(null)
@@ -478,10 +478,10 @@ const HomePanel = ({
         })
     }
 
-    const handleMoreClick = (categoryId) => {
+    const handleMoreClick = useCallback((categoryId) => {
         const cat = categories[categoryId]
         if (cat) setActiveCategory(cat)
-    }
+    }, [categories, setActiveCategory])
 
     const handleSidebarSelect = (item) => {
         if (item.id === 'close') {
