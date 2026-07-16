@@ -153,6 +153,11 @@ body {
   will-change: scroll-position;
 }
 
+/* Keep fixed 130px cards centerable through the end of every TV row. */
+.home-row .snap-container {
+  padding-right: max(32px, calc(50% - 65px));
+}
+
 /* Hide scrollbar but keep functionality */
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
