@@ -80,8 +80,16 @@ const SpatialEngine = {
 
     move(direction) {
         const current = document.activeElement;
-        const allZoneElements = Array.from(this.zones[this.activeZone] || []);
-        const elements = allZoneElements
+        const zoneElements = this.zones[this.activeZone] || new Set();
+        const allZoneElements = Array.from(zoneElements);
+        const isHorizontal = direction === 'ArrowLeft' || direction === 'ArrowRight';
+        const currentRow = isHorizontal && zoneElements.has(current)
+            ? current.closest?.('.snap-container')
+            : null;
+        const candidates = currentRow
+            ? Array.from(currentRow.querySelectorAll('.focusable')).filter(el => zoneElements.has(el))
+            : allZoneElements;
+        const elements = candidates
             .filter(el => document.body.contains(el) && el.offsetParent !== null); // Filter valid + visible
 
         // Debug logging: track focus and zone state
