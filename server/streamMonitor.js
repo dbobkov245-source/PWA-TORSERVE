@@ -14,6 +14,8 @@
 // ────────────────────────────────────────────────────────
 import os from 'os'
 import fs from 'fs'
+import { monitorEventLoopDelay, performance } from 'perf_hooks'
+import { createSystemPressureReader } from './diagnostics/systemPressure.js'
 
 const SAMPLE_INTERVAL_MS = parseInt(process.env.MONITOR_SAMPLE_MS, 10) || 2000
 const TIMELINE_MAX = parseInt(process.env.MONITOR_TIMELINE_MAX, 10) || 900 // ~30min @2s
@@ -28,6 +30,42 @@ let samplerId = null
 let prevCpu = null
 let prevDiskSectors = null
 let prevDiskAt = 0
+const readSystemPressure = createSystemPressureReader()
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 })
+
+function nsToMs(value) {
+    return Number.isFinite(value) ? Math.round((value / 1e6) * 100) / 100 : 0
+}
+
+function readEventLoopWindow() {
+    const result = {
+        p99Ms: nsToMs(eventLoopDelay.percentile(99)),
+        maxMs: nsToMs(eventLoopDelay.max)
+    }
+    eventLoopDelay.reset()
+    return result
+}
+
+export function buildRuntimePressureFields({ memory, resources, eventLoop, host }) {
+    const toMB = value => Math.round(Number(value || 0) / 1024 / 1024)
+    return {
+        rssMB: toMB(memory.rss),
+        heapUsedMB: toMB(memory.heapUsed),
+        heapTotalMB: toMB(memory.heapTotal),
+        externalMB: toMB(memory.external),
+        arrayBuffersMB: toMB(memory.arrayBuffers),
+        processMajorFaults: Number(resources.majorPageFault || 0),
+        processMinorFaults: Number(resources.minorPageFault || 0),
+        eventLoopP99Ms: Number(eventLoop.p99Ms || 0),
+        eventLoopMaxMs: Number(eventLoop.maxMs || 0),
+        memAvailableMB: host?.memAvailableMB ?? null,
+        swapUsedMB: host?.swapUsedMB ?? null,
+        swapInPagesPerSec: host?.swapInPagesPerSec ?? null,
+        swapOutPagesPerSec: host?.swapOutPagesPerSec ?? null,
+        hostMajorFaultsPerSec: host?.majorFaultsPerSec ?? null,
+        iowaitPct: host?.iowaitPct ?? null
+    }
+}
 
 // ── CPU ──────────────────────────────────────────────────
 function readCpu() {
@@ -94,6 +132,8 @@ function startSampler() {
     prevCpu = readCpu()
     prevDiskSectors = readDiskSectors()
     prevDiskAt = Date.now()
+    eventLoopDelay.reset()
+    eventLoopDelay.enable()
     samplerId = setInterval(sample, SAMPLE_INTERVAL_MS)
     if (samplerId.unref) samplerId.unref()
 }
@@ -102,9 +142,17 @@ function stopSampler() {
     if (!samplerId) return
     clearInterval(samplerId)
     samplerId = null
+    eventLoopDelay.disable()
 }
 
 function sample() {
+    const sampleStartedAt = performance.now()
+    const runtimePressure = buildRuntimePressureFields({
+        memory: process.memoryUsage(),
+        resources: process.resourceUsage(),
+        eventLoop: readEventLoopWindow(),
+        host: readSystemPressure()
+    })
     const cpuPct = cpuPercentDelta()
     const diskRead = diskReadMBs()
     const load1 = (os.loadavg()[0] || 0)
@@ -130,7 +178,9 @@ function sample() {
         ramTotalMB: totalMB,
         diskReadMBs: diskRead,
         streamMBs: +(streamBps / 1024 / 1024).toFixed(2),
-        activeStreams: activeConns
+        activeStreams: activeConns,
+        ...runtimePressure,
+        samplerDurationMs: Math.round((performance.now() - sampleStartedAt) * 100) / 100
     })
     if (timeline.length > TIMELINE_MAX) timeline.shift()
 
