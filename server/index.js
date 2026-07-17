@@ -17,7 +17,7 @@ import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary, evictLocalLibraryItemByName } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
-import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex } from './streamSource.js'
+import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex, shouldCreateStreamBody } from './streamSource.js'
 import * as streamMonitor from './streamMonitor.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
@@ -1224,6 +1224,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             'Content-Type': contentType,
         }
         res.writeHead(200, head)
+        if (!shouldCreateStreamBody(req.method)) return res.end()
 
         // Use disk or torrent-stream
         const stream = servingFromDisk
@@ -1286,6 +1287,7 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         }
 
         res.writeHead(206, head)
+        if (!shouldCreateStreamBody(req.method)) return res.end()
 
         // O7: Configurable stream buffer for better 4K streaming on HDD (default 512KB)
         const hwm = parseInt(process.env.STREAM_HIGHWATERMARK) || 1024 * 512

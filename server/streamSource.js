@@ -49,3 +49,13 @@ export function getStartPieceIndex(fileOffset, byteWithinFile, pieceLength) {
     const len = Number.isFinite(pieceLength) && pieceLength > 0 ? pieceLength : 1
     return Math.floor((offset + within) / len)
 }
+
+/**
+ * HEAD must return GET-equivalent headers without opening the media source.
+ *
+ * @param {string} method
+ * @returns {boolean}
+ */
+export function shouldCreateStreamBody(method) {
+    return String(method || '').toUpperCase() !== 'HEAD'
+}
