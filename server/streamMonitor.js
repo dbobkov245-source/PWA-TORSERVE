@@ -16,6 +16,7 @@ import os from 'os'
 import fs from 'fs'
 import { monitorEventLoopDelay, performance } from 'perf_hooks'
 import { createSystemPressureReader } from './diagnostics/systemPressure.js'
+import { createOperationTracker } from './diagnostics/operationTracker.js'
 
 const SAMPLE_INTERVAL_MS = parseInt(process.env.MONITOR_SAMPLE_MS, 10) || 2000
 const TIMELINE_MAX = parseInt(process.env.MONITOR_TIMELINE_MAX, 10) || 900 // ~30min @2s
@@ -32,6 +33,7 @@ let prevDiskSectors = null
 let prevDiskAt = 0
 const readSystemPressure = createSystemPressureReader()
 const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 })
+const operationTracker = createOperationTracker()
 
 function nsToMs(value) {
     return Number.isFinite(value) ? Math.round((value / 1e6) * 100) / 100 : 0
@@ -179,13 +181,25 @@ function sample() {
         diskReadMBs: diskRead,
         streamMBs: +(streamBps / 1024 / 1024).toFixed(2),
         activeStreams: activeConns,
+        operationMarkers: operationTracker.drain(),
+        activeOperations: operationTracker.activeCount(),
         ...runtimePressure,
         samplerDurationMs: Math.round((performance.now() - sampleStartedAt) * 100) / 100
     })
     if (timeline.length > TIMELINE_MAX) timeline.shift()
 
-    // No active connections → stop sampling (saves idle CPU).
-    if (activeConns === 0) stopSampler()
+    // No active connections or diagnostic operations → stop sampling (saves idle CPU).
+    if (activeConns === 0 && operationTracker.activeCount() === 0) stopSampler()
+}
+
+export function startDiagnosticOperation(name, metadata = {}) {
+    const id = operationTracker.start(name, metadata)
+    startSampler()
+    return id
+}
+
+export function finishDiagnosticOperation(id, outcome = {}) {
+    return operationTracker.finish(id, outcome)
 }
 
 // ── Public: stream lifecycle hooks (called from /stream handler) ──

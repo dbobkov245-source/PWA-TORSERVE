@@ -4,6 +4,7 @@ import path from 'path'
 import process from 'process'
 import crypto from 'crypto'
 import { logger } from './utils/logger.js'
+import { startDiagnosticOperation, finishDiagnosticOperation } from './streamMonitor.js'
 
 const log = logger.child('LocalLibrary')
 
@@ -165,9 +166,20 @@ export async function refreshLocalLibrary(force = false) {
     const stale = (Date.now() - cache.scannedAt) > SCAN_TTL_MS
     if (!force && !stale) return cache.items
     if (!activeScanPromise) {
-        activeScanPromise = scanLocalLibrary().finally(() => {
-            activeScanPromise = null
-        })
+        const operationId = startDiagnosticOperation('library-scan', { force })
+        activeScanPromise = scanLocalLibrary()
+            .then(() => {
+                finishDiagnosticOperation(operationId, { status: 'ok', itemCount: cache.items.length })
+            }, error => {
+                finishDiagnosticOperation(operationId, {
+                    status: 'error',
+                    errorCode: error.code || 'unknown'
+                })
+                throw error
+            })
+            .finally(() => {
+                activeScanPromise = null
+            })
     }
     await activeScanPromise
     return cache.items

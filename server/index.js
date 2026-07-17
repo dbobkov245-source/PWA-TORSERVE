@@ -1095,8 +1095,22 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
             // does not need a second delete while file cleanup is still pending.
             evictLocalLibraryItemByName(torrent.name)
 
-            // Fire-and-forget async deletion to avoid blocking the server
-            fsPromises.rm(fullPath, { recursive: true, force: true })
+            // Fire-and-forget async deletion to avoid blocking the server.
+            // Keep the current cleanup flow intact while recording enough
+            // timing data to correlate freezes with filesystem work.
+            const rmOperationId = streamMonitor.startDiagnosticOperation('file-rm', {
+                infoHash,
+                entryName: torrent.name
+            })
+            const rmPromise = fsPromises.rm(fullPath, { recursive: true, force: true })
+            rmPromise.then(
+                () => streamMonitor.finishDiagnosticOperation(rmOperationId, { status: 'ok' }),
+                error => streamMonitor.finishDiagnosticOperation(rmOperationId, {
+                    status: 'error',
+                    errorCode: error.code || 'unknown'
+                })
+            )
+            rmPromise
                 .then(async () => {
                     console.log(`[File Hygiene] Successfully removed: ${fullPath}`)
                     await refreshLocalLibrary(true)

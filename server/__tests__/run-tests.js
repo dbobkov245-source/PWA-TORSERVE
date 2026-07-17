@@ -28,6 +28,7 @@ await import('./ts-download.test.js')
 await import('./proxy.test.js')
 await import('./system-pressure.test.js')
 await import('./stream-monitor.test.js')
+await import('./operation-tracker.test.js')
 
 // Run all registered tests
 await runTests()
