@@ -25,3 +25,9 @@ test('parseRange rejects invalid ranges', () => {
     expect(parseRange('bytes=500-400', 1000)).toBeNull()
     expect(parseRange('bytes=abc-def', 1000)).toBeNull()
 })
+
+test('parseRange rejects non-integer and malformed byte-range syntax', () => {
+    expect(parseRange('bytes=1.5-2.5', 1000)).toBeNull()
+    expect(parseRange('bytes=1e2-200', 1000)).toBeNull()
+    expect(parseRange('bytes=1-2-3', 1000)).toBeNull()
+})
