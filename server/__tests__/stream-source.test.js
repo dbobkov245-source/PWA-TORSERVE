@@ -56,3 +56,10 @@ test('getStartPieceIndex is robust to invalid inputs', async () => {
     expect(getStartPieceIndex(0, 100, 0)).toBe(100)
     expect(getStartPieceIndex(NaN, NaN, 262144)).toBe(0)
 })
+
+test('shouldCreateStreamBody skips media reads for HEAD requests', async () => {
+    const { shouldCreateStreamBody } = await import('../streamSource.js')
+
+    expect(shouldCreateStreamBody('HEAD')).toBe(false)
+    expect(shouldCreateStreamBody('GET')).toBe(true)
+})
