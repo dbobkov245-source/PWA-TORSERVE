@@ -10,13 +10,16 @@ export function parseRange(rangeHeader, totalLength) {
     const rangeValue = rangeHeader.slice('bytes='.length).trim()
     if (!rangeValue) return null
 
-    const [startStr, endStr] = rangeValue.split('-')
+    const match = /^(\d*)-(\d*)$/.exec(rangeValue)
+    if (!match) return null
+
+    const [, startStr, endStr] = match
     if (startStr === '' && endStr === '') return null
 
     let start = startStr === '' ? null : Number(startStr)
     let end = endStr === '' ? null : Number(endStr)
 
-    if ((start !== null && !Number.isFinite(start)) || (end !== null && !Number.isFinite(end))) return null
+    if ((start !== null && !Number.isSafeInteger(start)) || (end !== null && !Number.isSafeInteger(end))) return null
     if (start !== null && start < 0) return null
     if (end !== null && end < 0) return null
 
