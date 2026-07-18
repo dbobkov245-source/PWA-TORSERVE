@@ -28,7 +28,7 @@ describe('MovieTorrentAction', () => {
             />
         )
 
-        expect(screen.getByRole('button', { name: 'Торренты · 2' })).not.toBeNull()
+        expect(screen.getByRole('button', { name: /^Торренты · 2\b/ })).not.toBeNull()
         expect(screen.getByText('Найдено 2 · лучший 1080p · 245 сидов')).not.toBeNull()
     })
 
@@ -40,7 +40,7 @@ describe('MovieTorrentAction', () => {
             />
         )
 
-        expect(screen.getByRole('button', { name: 'Торренты · 0' })).not.toBeNull()
+        expect(screen.getByRole('button', { name: /^Торренты · 0\b/ })).not.toBeNull()
         expect(screen.getByText('Ничего не найдено')).not.toBeNull()
 
         rerender(
@@ -50,7 +50,7 @@ describe('MovieTorrentAction', () => {
             />
         )
 
-        expect(screen.getByRole('button', { name: 'Торренты · ошибка' })).not.toBeNull()
+        expect(screen.getByRole('button', { name: /^Торренты · ошибка(?:\s|$)/ })).not.toBeNull()
         expect(screen.getByText('Ошибка поиска')).not.toBeNull()
     })
 
@@ -64,7 +64,7 @@ describe('MovieTorrentAction', () => {
             />
         )
 
-        fireEvent.click(screen.getByRole('button', { name: 'Торренты · 1' }))
+        fireEvent.click(screen.getByRole('button', { name: /^Торренты · 1\b/ }))
         expect(onOpen).toHaveBeenCalledTimes(1)
     })
 })

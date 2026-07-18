@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 const discoverMocks = vi.hoisted(() => ({
     categories: [
-        { id: 'tier-1', name: 'Tier 1', icon: '1', tier: 1 },
-        { id: 'tier-3', name: 'Tier 3', icon: '3', tier: 3 }
+        { id: 'tier-1', name: 'Tier 1', icon: '1', tier: 1, fetcher: vi.fn() },
+        { id: 'tier-3', name: 'Tier 3', icon: '3', tier: 3, fetcher: vi.fn() }
     ],
     fetchCategoryWithPages: vi.fn(async category => ({
         ...category,
@@ -20,7 +20,11 @@ vi.mock('../utils/discover', () => ({
 
 vi.mock('../utils/tmdbClient', () => ({
     default: vi.fn(),
-    getDiscoverByGenre: vi.fn()
+    getDiscoverByGenre: vi.fn(),
+    getDetails: vi.fn(async () => ({})),
+    getRecommendations: vi.fn(async () => ({ results: [] })),
+    getTrending: vi.fn(async () => ({ results: [] })),
+    fetchTraktDiscovery: vi.fn(async () => ({ results: [] }))
 }))
 
 vi.mock('../utils/serverApi', () => ({

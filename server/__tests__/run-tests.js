@@ -31,6 +31,7 @@ await import('./stream-monitor.test.js')
 await import('./operation-tracker.test.js')
 await import('./diagnostic-collector.test.js')
 await import('./doh.test.js')
+await import('./trakt-discovery.test.js')
 
 // Run all registered tests
 await runTests()

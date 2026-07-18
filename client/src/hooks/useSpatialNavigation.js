@@ -47,7 +47,7 @@ const SpatialEngine = {
                 console.log(`[SpatialNav] Focusing element with ID '${id}' in zone '${zone}'`);
                 this.activeZone = zone; // Set active zone if focusing by ID
                 element.focus();
-                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 return true;
             } else {
                 console.warn(`[SpatialNav] Element with ID '${id}' in zone '${zone}' is not visible or disabled.`);
@@ -87,32 +87,27 @@ const SpatialEngine = {
             ? current.closest?.('.snap-container')
             : null;
         const candidates = currentRow
-            ? Array.from(currentRow.querySelectorAll('.focusable')).filter(el => zoneElements.has(el))
+            ? Array.from(currentRow.querySelectorAll('.focusable')).filter(element => zoneElements.has(element))
             : allZoneElements;
         const elements = candidates
-            .filter(el => document.body.contains(el) && el.offsetParent !== null); // Filter valid + visible
-
-        // Debug logging: track focus and zone state
-        console.log(`[SpatialNav] move(${direction}): activeElement=${current?.tagName}#${current?.id || 'no-id'}, class=${current?.className?.substring(0, 30)}, zone=${this.activeZone}, zoneSize=${allZoneElements.length}, visible=${elements.length}`);
+            .filter(el => document.body.contains(el) && el.offsetParent !== null && el.tabIndex !== -1); // Filter valid, visible, and focusable
 
         if (!elements.length) {
-            console.warn(`[SpatialNav] No visible elements in zone ${this.activeZone}`);
             return;
         }
 
         // If nothing focused, focus first or best
         if (!elements.includes(current)) {
-            console.log(`[SpatialNav] Current element not in zone, focusing first element`);
-            elements[0].focus();
+            elements[0].focus({ preventScroll: true });
             return;
         }
 
         const next = this.findNearest(current, elements, direction);
         if (next) {
-            next.focus();
-            next.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-        } else {
-            console.warn(`[SpatialNav] Edge reached for ${direction} in zone ${this.activeZone}`);
+            next.focus({ preventScroll: true });
+            if (direction === 'ArrowUp' || direction === 'ArrowDown') {
+                next.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+            }
         }
     },
 
@@ -136,9 +131,20 @@ const SpatialEngine = {
 
             if (!isCorrectDirection) return;
 
-            // 2. Distance Calculation (Euclidean of centers + penalty for axis misalignment)
-            const dx = Math.abs((curRect.left + curRect.width / 2) - (candRect.left + candRect.width / 2));
-            const dy = Math.abs((curRect.top + curRect.height / 2) - (candRect.top + candRect.height / 2));
+            // 2. Distance Calculation
+            // For vertical navigation: if the candidate spans most of the viewport width (like a banner),
+            // use horizontal overlap/edge distance instead of center-to-center to avoid inflated dx penalty
+            const vw = window.innerWidth;
+            const candidateSpansWidth = candRect.width > vw * 0.7;
+            let dx, dy;
+
+            if (candidateSpansWidth && (direction === 'ArrowUp' || direction === 'ArrowDown')) {
+                // Use edge-to-edge horizontal distance (0 if overlapping)
+                dx = Math.max(0, curRect.left - candRect.right, candRect.left - curRect.right);
+            } else {
+                dx = Math.abs((curRect.left + curRect.width / 2) - (candRect.left + candRect.width / 2));
+            }
+            dy = Math.abs((curRect.top + curRect.height / 2) - (candRect.top + candRect.height / 2));
 
             // Weight the axis of movement less than the orthogonal axis to prefer straight jumps
             const distance = (direction === 'ArrowLeft' || direction === 'ArrowRight')
@@ -187,7 +193,7 @@ const SpatialEngine = {
                 // Focus first visible element, or fallback to first registered
                 const target = inViewport[0] || elements[0];
                 target.focus();
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 return true;
             }
             if (retryCount > 0) {

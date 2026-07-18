@@ -10,8 +10,9 @@
  * @param {React.RefObject[]} options.itemRefs - Array of refs for scrollIntoView
  * @param {boolean} options.loop - Whether to loop at edges (default: false)
  * @param {boolean} options.trapFocus - Prevent focus from leaving (default: true)
+ * @param {boolean} options.isActive - Whether the hook handles key presses (default: true)
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
 export const useTVNavigation = ({
     itemCount,
@@ -21,25 +22,27 @@ export const useTVNavigation = ({
     itemRefs,
     loop = false,
     trapFocus = true,
-    initialIndex = -1
+    initialIndex = -1,
+    isActive = true
 }) => {
     const [focusedIndex, setFocusedIndex] = useState(initialIndex)
-
-    // Calculate grid navigation
-    const rows = Math.ceil(itemCount / columns)
+    const scrollFrameRef = useRef(null)
+    const boundedFocusedIndex = itemCount === 0
+        ? -1
+        : Math.min(Math.max(focusedIndex, -1), itemCount - 1)
 
     const handleKeyDown = useCallback((e) => {
-        if (itemCount === 0) return
+        if (!isActive || itemCount === 0) return
 
-        let newIndex = focusedIndex
+        let newIndex = boundedFocusedIndex
         let handled = false
 
         switch (e.key) {
             case 'ArrowDown':
                 if (columns === 1) {
                     // Vertical list: move down by 1
-                    if (focusedIndex < itemCount - 1) {
-                        newIndex = focusedIndex + 1
+                    if (boundedFocusedIndex < itemCount - 1) {
+                        newIndex = boundedFocusedIndex + 1
                         handled = true
                     } else if (loop) {
                         newIndex = 0
@@ -49,8 +52,8 @@ export const useTVNavigation = ({
                     }
                 } else {
                     // Grid: move down by columns
-                    if (focusedIndex + columns < itemCount) {
-                        newIndex = focusedIndex + columns
+                    if (boundedFocusedIndex + columns < itemCount) {
+                        newIndex = boundedFocusedIndex + columns
                         handled = true
                     } else if (trapFocus) {
                         handled = true
@@ -61,8 +64,8 @@ export const useTVNavigation = ({
             case 'ArrowUp':
                 if (columns === 1) {
                     // Vertical list: move up by 1
-                    if (focusedIndex > 0) {
-                        newIndex = focusedIndex - 1
+                    if (boundedFocusedIndex > 0) {
+                        newIndex = boundedFocusedIndex - 1
                         handled = true
                     } else if (loop) {
                         newIndex = itemCount - 1
@@ -70,8 +73,8 @@ export const useTVNavigation = ({
                     }
                 } else {
                     // Grid: move up by columns
-                    if (focusedIndex - columns >= 0) {
-                        newIndex = focusedIndex - columns
+                    if (boundedFocusedIndex - columns >= 0) {
+                        newIndex = boundedFocusedIndex - columns
                         handled = true
                     }
                 }
@@ -80,9 +83,9 @@ export const useTVNavigation = ({
             case 'ArrowRight':
                 if (columns > 1) {
                     // Grid: move right
-                    const currentCol = focusedIndex % columns
-                    if (currentCol < columns - 1 && focusedIndex < itemCount - 1) {
-                        newIndex = focusedIndex + 1
+                    const currentCol = boundedFocusedIndex % columns
+                    if (currentCol < columns - 1 && boundedFocusedIndex < itemCount - 1) {
+                        newIndex = boundedFocusedIndex + 1
                         handled = true
                     }
                 }
@@ -91,9 +94,9 @@ export const useTVNavigation = ({
             case 'ArrowLeft':
                 if (columns > 1) {
                     // Grid: move left
-                    const currentCol = focusedIndex % columns
+                    const currentCol = boundedFocusedIndex % columns
                     if (currentCol > 0) {
-                        newIndex = focusedIndex - 1
+                        newIndex = boundedFocusedIndex - 1
                         handled = true
                     }
                 }
@@ -101,9 +104,9 @@ export const useTVNavigation = ({
 
             case 'Enter':
             case ' ':
-                if (focusedIndex >= 0 && onSelect) {
+                if (boundedFocusedIndex >= 0 && onSelect) {
                     e.preventDefault()
-                    onSelect(focusedIndex)
+                    onSelect(boundedFocusedIndex)
                     return
                 }
                 break
@@ -121,33 +124,49 @@ export const useTVNavigation = ({
         if (handled) {
             e.preventDefault()
             e.stopPropagation() // ✅ Prevent bubbling to HomePanel if handled here
-            if (newIndex !== focusedIndex && newIndex >= 0 && newIndex < itemCount) {
+            if (newIndex !== boundedFocusedIndex && newIndex >= 0 && newIndex < itemCount) {
                 setFocusedIndex(newIndex)
             }
         }
-    }, [focusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack])
+    }, [boundedFocusedIndex, itemCount, columns, loop, trapFocus, onSelect, onBack, isActive])
 
-    // Scroll into view when focused index changes
-    // FIX-01a: Use 'center' instead of 'nearest' for better TV UX
-    // Scroll into view logic removed: relying on focus() native behavior prevents "fighting" and lag.
-    // If explicit scrolling is needed later, use 'scroll-margin' CSS on items instead.
-
-    // Focus the element when index changes
+    // Keep one deterministic horizontal scroll owner. Native focus scrolling and
+    // queued smooth animations fight each other under rapid TV remote repeats.
     useEffect(() => {
-        if (focusedIndex >= 0 && itemRefs?.current?.[focusedIndex]) {
-            itemRefs.current[focusedIndex].focus()
-        }
-    }, [focusedIndex, itemRefs])
+        const node = itemRefs?.current?.[boundedFocusedIndex]
+        if (boundedFocusedIndex < 0 || !node) return
 
-    // Reset focus when item count changes and current index is out of bounds
-    useEffect(() => {
-        if (focusedIndex >= itemCount) {
-            setFocusedIndex(Math.max(0, itemCount - 1))
+        node.focus({ preventScroll: true })
+        const container = node.closest?.('.snap-container')
+        if (!container?.scrollTo) return
+
+        if (scrollFrameRef.current !== null) {
+            cancelAnimationFrame(scrollFrameRef.current)
         }
-    }, [itemCount, focusedIndex])
+
+        scrollFrameRef.current = requestAnimationFrame(() => {
+            const itemRect = node.getBoundingClientRect()
+            const containerRect = container.getBoundingClientRect()
+            const itemCenter = itemRect.left + itemRect.width / 2
+            const containerCenter = containerRect.left + containerRect.width / 2
+
+            container.scrollTo({
+                left: container.scrollLeft + itemCenter - containerCenter,
+                behavior: 'auto'
+            })
+            scrollFrameRef.current = null
+        })
+
+        return () => {
+            if (scrollFrameRef.current !== null) {
+                cancelAnimationFrame(scrollFrameRef.current)
+                scrollFrameRef.current = null
+            }
+        }
+    }, [boundedFocusedIndex, itemRefs])
 
     return {
-        focusedIndex,
+        focusedIndex: boundedFocusedIndex,
         setFocusedIndex,
         handleKeyDown,
         // Helper for binding to container
@@ -156,7 +175,7 @@ export const useTVNavigation = ({
             tabIndex: 0
         },
         // Helper for checking if item is focused
-        isFocused: (index) => focusedIndex === index
+        isFocused: (index) => boundedFocusedIndex === index
     }
 }
 

@@ -7,7 +7,9 @@ const discoverMocks = vi.hoisted(() => ({
 
 vi.mock('../utils/discover', () => ({
     getPosterUrl: discoverMocks.getPosterUrl,
-    getTitle: (item) => item.title
+    getBackdropUrl: discoverMocks.getPosterUrl,
+    getTitle: (item) => item.title,
+    getYear: () => ''
 }))
 
 vi.mock('../utils/tmdbClient', () => ({

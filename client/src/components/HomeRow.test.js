@@ -17,13 +17,15 @@ const resumeRowSrc = fs.readFileSync(
 
 describe('HomeRow TV layout regressions', () => {
     it('reserves enough trailing space to center the last fixed-width card', () => {
-        expect(css).toContain('padding-right: max(32px, calc(50% - 65px))')
+        expect(css).toContain('.tv-row-trailing-spacer')
+        expect(css).toContain('calc(50% - var(--tv-row-card-half-width) - var(--tv-row-gap))')
     })
 
     it('uses each row card width when centering its final card', () => {
-        expect(homeRowSrc).toContain('snap-container home-row-cards')
+        expect(homeRowSrc).toContain('snap-container tv-center-row')
+        expect(homeRowSrc).toContain("'--tv-row-card-half-width': `${rowCardWidth / 2}px`")
         expect(resumeRowSrc).toContain('snap-container resume-row-cards')
-        expect(css).toContain('.home-row-cards')
+        expect(css).toContain('.tv-center-row')
         expect(css).toContain('.resume-row-cards')
         expect(css).toContain('padding-right: max(32px, calc(50% - 100px))')
     })
