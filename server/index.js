@@ -17,7 +17,7 @@ import { registerInterval, clearAllIntervals } from './utils/intervals.js'
 import { getCacheStats } from './imageCache.js'
 import { refreshLocalLibrary, getLocalLibrarySnapshot, getLocalFile, deleteLocalEntry, mergeTorrentAndLocalLibrary, evictLocalLibraryItemByName } from './localLibrary.js'
 import { scheduleBackgroundRefresh, serializeStatusItems } from './statusResponse.js'
-import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex, shouldCreateStreamBody } from './streamSource.js'
+import { getAllocatedSizeBytes, shouldServeFileFromDisk, getStartPieceIndex, shouldCreateStreamBody, createStreamCleanup } from './streamSource.js'
 import * as streamMonitor from './streamMonitor.js'
 import { describeRequestSource } from './requestMeta.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
@@ -1232,7 +1232,18 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
             : file.createReadStream()
         streamMonitor.openStream(infoHash, { fromDisk: servingFromDisk, fileName: file.name, fileLength: file.length })
         stream.on('data', (c) => streamMonitor.recordBytes(infoHash, c.length))
-        res.on('close', () => streamMonitor.closeStream(infoHash))
+        activeStreams++
+        const cleanup = createStreamCleanup(stream, () => {
+            activeStreams = Math.max(0, activeStreams - 1)
+            streamMonitor.closeStream(infoHash)
+        })
+        stream.on('error', (err) => {
+            console.error(`[Stream] Error for ${infoHash}/${fileIndex}:`, err.message)
+            cleanup()
+            if (!res.destroyed) res.destroy()
+        })
+        res.once('close', cleanup)
+        res.once('error', cleanup)
         stream.pipe(res)
     } else {
         const { start, end } = parsedRange
@@ -1301,13 +1312,6 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         streamMonitor.openStream(infoHash, { fromDisk: servingFromDisk, fileName: file.name, fileLength: file.length })
         stream.on('data', (c) => streamMonitor.recordBytes(infoHash, c.length))
 
-        // ✅ FIX: Функция гарантированной очистки стрима
-        const cleanup = () => {
-            if (!stream.destroyed) {
-                stream.destroy()
-            }
-        }
-
         // 🔥 v2.4: Stall watchdog — если torrent-stream не выдал ни байта за
         // STREAM_STALL_TIMEOUT_MS (дефолт 8с), значит нужные pieces ещё не скачаны.
         // В этом случае обрываем соединение чтобы плеер сделал retry.
@@ -1317,6 +1321,12 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         const STALL_TIMEOUT_MS = parseInt(process.env.STREAM_STALL_TIMEOUT_MS) || 8000
         let stallTimer = null
         let bytesEmitted = 0
+        activeStreams++
+        const cleanup = createStreamCleanup(stream, () => {
+            activeStreams = Math.max(0, activeStreams - 1)
+            streamMonitor.closeStream(infoHash)
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+        })
 
         if (!servingFromDisk) {
             stallTimer = setTimeout(() => {
@@ -1339,28 +1349,14 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // 🔥 v2.3: Handle stream errors to prevent hanging responses
         stream.on('error', (err) => {
-            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
             console.error(`[Stream] Error for ${infoHash}/${fileIndex}:`, err.message)
             cleanup()
-            if (!res.headersSent) {
-                res.status(500).send('Stream error')
-            }
+            if (!res.destroyed) res.destroy()
         })
 
         // M1: Track active streams for /api/metrics
-        activeStreams++
-        res.on('close', () => {
-            activeStreams--
-            streamMonitor.closeStream(infoHash)
-            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
-            cleanup()
-        })
-        res.on('error', () => {
-            activeStreams--
-            streamMonitor.closeStream(infoHash)
-            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
-            cleanup()
-        })
+        res.once('close', cleanup)
+        res.once('error', cleanup)
 
         stream.pipe(res)
     }

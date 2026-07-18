@@ -59,3 +59,22 @@ export function getStartPieceIndex(fileOffset, byteWithinFile, pieceLength) {
 export function shouldCreateStreamBody(method) {
     return String(method || '').toUpperCase() !== 'HEAD'
 }
+
+/**
+ * Build one cleanup callback for response close/error races.
+ *
+ * @param {{ destroyed?: boolean, destroy: () => void }} stream
+ * @param {() => void} onCleanup
+ * @returns {() => boolean} true only for the first cleanup call
+ */
+export function createStreamCleanup(stream, onCleanup = () => {}) {
+    let cleaned = false
+
+    return () => {
+        if (cleaned) return false
+        cleaned = true
+        if (!stream.destroyed) stream.destroy()
+        onCleanup()
+        return true
+    }
+}
