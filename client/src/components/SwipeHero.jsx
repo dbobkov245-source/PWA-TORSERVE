@@ -16,6 +16,7 @@ export default function SwipeHero({ onOpen, isActive = true }) {
     return (
         <div
             ref={spatialRef}
+            data-swipe-hero
             role="button"
             tabIndex={isActive ? 0 : -1}
             onClick={activate}

@@ -645,6 +645,19 @@ const HomePanel = ({
         setRejectedIds(previous => new Set(previous).add(item.id))
     }, [])
 
+    const handlePickerOpen = useCallback(() => {
+        if (swipeCandidates.length === 0) return
+        const focus = {
+            rowId: 'swipe-hero',
+            itemIndex: 0,
+            verticalScroll: homeScrollRef.current?.scrollTop || 0,
+            horizontalScroll: 0
+        }
+        savedFocusRef.current = focus
+        writeHomeFocus(focus)
+        setPickerOpen(true)
+    }, [swipeCandidates.length])
+
     const handlePersonClick = (person) => {
         setActiveMovie(null)
         setActivePerson(person)
@@ -708,11 +721,18 @@ const HomePanel = ({
         const scroller = homeScrollRef.current
         if (!scroller || !saved?.rowId) return false
 
+        scroller.scrollTop = Number(saved.verticalScroll) || 0
+        if (saved.rowId === 'swipe-hero') {
+            const hero = scroller.querySelector('[data-swipe-hero]')
+            if (!hero) return false
+            hero.focus({ preventScroll: true })
+            return true
+        }
+
         const row = [...scroller.querySelectorAll('[data-row-id]')]
             .find(node => node.dataset.rowId === saved.rowId)
         if (!row) return false
 
-        scroller.scrollTop = Number(saved.verticalScroll) || 0
         const horizontalScroller = row.querySelector('.snap-container')
         if (!horizontalScroller) return false
         const items = horizontalScroller.querySelectorAll('[data-item-id], .snap-item')
@@ -721,6 +741,13 @@ const HomePanel = ({
         itemNode.focus()
         return true
     }, [])
+
+    const handlePickerClose = useCallback(() => {
+        setPickerOpen(false)
+        const saved = savedFocusRef.current
+        if (saved?.rowId !== 'swipe-hero') return
+        requestAnimationFrame(() => restoreHomeFocus(saved))
+    }, [restoreHomeFocus])
 
     useEffect(() => {
         if (activeMovie) {
@@ -909,9 +936,7 @@ const HomePanel = ({
                     )}
                     {swipeCandidates.length > 0 && (
                         <SwipeHero
-                            onOpen={() => {
-                                if (swipeCandidates.length > 0) setPickerOpen(true)
-                            }}
+                            onOpen={handlePickerOpen}
                             isActive={!showSidebar && !pickerActive}
                         />
                     )}
@@ -976,7 +1001,7 @@ const HomePanel = ({
                         onSkip={handlePickerSkip}
                         onFavorite={addFavorite}
                         onOpenItem={handleItemClick}
-                        onClose={() => setPickerOpen(false)}
+                        onClose={handlePickerClose}
                     />
                 )}
 

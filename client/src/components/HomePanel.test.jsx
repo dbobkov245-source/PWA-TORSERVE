@@ -112,12 +112,12 @@ vi.mock('./EditorialRow', () => ({ default: props => <RowMock {...props} testId=
 vi.mock('./RankedRow', () => ({ default: props => <RowMock {...props} testId="ranked-row" /> }))
 vi.mock('./SwipeHero', () => ({
     default: ({ onOpen, isActive }) => (
-        <button type="button" data-testid="swipe-hero" data-active={String(isActive)} onClick={onOpen}>picker</button>
+        <button type="button" data-swipe-hero data-testid="swipe-hero" data-active={String(isActive)} onClick={onOpen}>picker</button>
     )
 }))
 vi.mock('./SwipePicker', () => ({
     default: ({ items, onSkip, onFavorite, onOpenItem, onClose }) => (
-        <div role="dialog" data-candidates={items.map(item => item.id).join(',')}>
+        <div role="dialog" tabIndex={0} autoFocus data-candidates={items.map(item => item.id).join(',')}>
             <button type="button" onClick={() => onSkip(items[0])}>skip</button>
             <button type="button" onClick={() => onFavorite(items[0])}>favorite</button>
             <button type="button" onClick={() => onOpenItem(items[0])}>open</button>
@@ -401,6 +401,27 @@ describe('picker, enrichment, and focus persistence', () => {
         fireEvent.click(view.getByText('open'))
         expect(baseProps.setActiveMovie).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }))
         expect(view.queryByRole('dialog')).toBeNull()
+    })
+
+    it('restores Swipe Hero focus after opening an item and returning from detail', async () => {
+        mocks.buildSwipeCandidates.mockReturnValue([item(1)])
+        mocks.createHybridRows.mockReturnValue([row('x', 'poster', {
+            fetcher: vi.fn(async () => ({ results: [item(1)] }))
+        })])
+        const Harness = () => {
+            const [activeMovie, setActiveMovie] = React.useState(null)
+            return <HomePanel {...baseProps} activeMovie={activeMovie} setActiveMovie={setActiveMovie} />
+        }
+
+        const view = render(<Harness />)
+        await view.findByText('Item 1')
+        const hero = view.getByTestId('swipe-hero')
+        hero.focus()
+        fireEvent.click(hero)
+        fireEvent.click(view.getByText('open'))
+        fireEvent.click(await view.findByText('back-from-detail'))
+
+        await waitFor(() => expect(document.activeElement).toBe(view.getByTestId('swipe-hero')))
     })
 
     it('keeps skipped picker items rejected for the HomePanel session', async () => {
