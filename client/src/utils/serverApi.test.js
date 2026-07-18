@@ -138,6 +138,6 @@ describe('favorites base URL', () => {
 
         await getFavorites()
 
-        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.1.70:3000/api/favorites')
+        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.8.203:3000/api/favorites')
     })
 })
