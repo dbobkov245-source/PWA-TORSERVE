@@ -14,7 +14,8 @@ import net from 'net';
  * - FIX-2: Added redirect following (301/302/307/308) with max 5 hops
  * - FIX-3: Always set Host header
  * - FIX-4: Added port to requestOptions when using resolved IP
- * - FIX-5: Added rejectUnauthorized: false for tracker connections
+ * - TLS verification is enabled by default; legacy/self-signed endpoints must
+ *   opt in explicitly with `insecure: true`
  */
 
 // --- CONFIGURATION ---
@@ -120,6 +121,10 @@ export const insecureAgent = new https.Agent({
     keepAlive: true,
     keepAliveMsecs: 10000
 });
+
+export function shouldRejectUnauthorized(options = {}) {
+    return options.insecure !== true;
+}
 
 // --- SINGLE PROVIDER RESOLVE ---
 async function resolveWithProvider(hostname, provider) {
@@ -354,7 +359,7 @@ async function workerProxyFetch(urlStr, options = {}) {
 }
 
 // --- SMART FETCH ---
-// FIX-1: doh option, FIX-2: redirect following, FIX-4: port, FIX-5: rejectUnauthorized
+// FIX-1: doh option, FIX-2: redirect following, FIX-4: port
 export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
     if (_redirectCount > MAX_REDIRECTS) {
         throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
@@ -370,7 +375,7 @@ export async function smartFetch(urlStr, options = {}, _redirectCount = 0) {
             method: options.method || 'GET',
             headers: { ...config.headers },
             agent: options.agent || (options.insecure ? insecureAgent : undefined),
-            rejectUnauthorized: false, // FIX-5: Don't fail on self-signed certs
+            rejectUnauthorized: shouldRejectUnauthorized(options),
         };
 
         // SNI Support for HTTPS when using resolved IP (only in 'full' mode)
