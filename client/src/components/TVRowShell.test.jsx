@@ -51,6 +51,25 @@ it('selects the focused horizontal item by D-Pad', () => {
     expect(onSelect).toHaveBeenCalledWith(items[1])
 })
 
+it('selects an item when its TV card is clicked', () => {
+    const items = [{ id: 1 }, { id: 2 }]
+    const onSelect = vi.fn()
+    const view = render(
+        <TVRowShell
+            id="touch"
+            title="Touch"
+            items={items}
+            isActive
+            onSelect={onSelect}
+            renderItem={item => <span>{item.id}</span>}
+        />
+    )
+
+    fireEvent.click(view.getByText('2'))
+
+    expect(onSelect).toHaveBeenCalledWith(items[1])
+})
+
 it('ignores D-Pad input while inactive', () => {
     const onSelect = vi.fn()
     const view = render(
@@ -68,6 +87,7 @@ it('ignores D-Pad input while inactive', () => {
     const row = view.getByRole('group', { name: 'Inactive' })
     fireEvent.keyDown(row, { key: 'ArrowRight' })
     fireEvent.keyDown(row, { key: 'Enter' })
+    fireEvent.click(view.getByText('2'))
 
     expect(onSelect).not.toHaveBeenCalled()
 })

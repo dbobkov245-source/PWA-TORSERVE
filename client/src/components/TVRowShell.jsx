@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import useTVNavigation from '../hooks/useTVNavigation'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
-const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, renderItem }) => {
+const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, renderItem, onSelect }) => {
     const spatialRef = useSpatialItem('main')
     const setComboRef = useCallback((node) => {
         spatialRef(node)
@@ -13,6 +13,7 @@ const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, rende
         <div
             ref={setComboRef}
             onFocus={() => setFocusedIndex(index)}
+            onClick={() => onSelect?.(item)}
             tabIndex={isFocused ? 0 : -1}
             className={`focusable snap-item shrink-0 outline-none ${isFocused ? 'focused' : ''}`}
         >
@@ -95,6 +96,7 @@ const TVRowShell = ({
                         setFocusedIndex={setFocusedIndex}
                         registerRef={(idx, node) => { refs.current[idx] = node }}
                         renderItem={renderItem}
+                        onSelect={isActive ? onSelect : undefined}
                     />
                 ))}
 
