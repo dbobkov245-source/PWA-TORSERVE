@@ -11,7 +11,7 @@
 
 ## 1. Executive summary
 
-Аудит подтвердил семь функциональных/ресурсных дефектов и один устаревший тест. Все восемь устранены минимальными патчами с regression-тестами:
+Аудит подтвердил семь функциональных/ресурсных дефектов и один устаревший тест. Все восемь устранены минимальными патчами с regression-тестами. При последующем возврате Prisma Home emulator smoke выявил ещё два UI-регресса — восстановление фокуса Swipe Hero и отсутствующий touch `onSelect`; оба также исправлены через RED→GREEN тесты.
 
 - **High:** клиентский abort полного GET оставлял файловый stream открытым; в воспроизведении 10 abort давали рост FD `24 → 34`. После исправления `24 → 24`.
 - **High:** `smartFetch()` отключал проверку TLS-сертификата для всех HTTPS upstream, включая metadata/proxy. Теперь проверка включена по умолчанию, исключение возможно только явным `insecure: true`.
@@ -22,7 +22,7 @@
 - **Low:** текстовая сводка торрент-кнопки загрязняла её accessible name и ломала стабильную TV-команду.
 - **Low:** тест ожидал старый native server IP, хотя production default уже изменён.
 
-Финальное состояние проверок: server `130/130`, client `184/184`, Vite build — pass, Capacitor sync — pass, Android debug build — pass. Source-only ESLint не проходит: `51 error / 5 warning`. Полный `eslint .` дополнительно анализирует generated Android assets и выдаёт `355 error / 6 warning`; это отдельный дефект конфигурации lint scope.
+Текущее состояние после интеграции Prisma: server `138/138`, client `339/339`, Vite build — pass, Capacitor sync — pass, Android debug build — pass. Source-only ESLint всё ещё не проходит, но долг снижен до `33 errors / 4 warnings`. Полный `eslint .` дополнительно анализирует generated Android assets и выдаёт `331 error / 5 warnings`; это отдельный дефект конфигурации lint scope.
 
 Предыдущие captures **не подтверждают самостоятельный freeze плеера**. В двух релевантных локальных запусках server stall count равен `0`, torrent engines равны `0`, throughput восстанавливается/держится примерно `11–14.5 MB/s`. Один старый capture имеет timeline вне окна capture и непригоден для корреляции. Для ответа о спонтанном freeze всё ещё нужны отдельные 20–30 минут steady-state и активный torrent на реальной инфраструктуре.
 
@@ -33,6 +33,29 @@
 3. destructive LAN API не аутентифицирован и работает с wildcard CORS;
 4. Android TV Home имеет измеримый jank: `9/21` janky frames (`42.86%`) на 15 быстрых Down, при `p50=27 ms`, `p90=53 ms`, `p95=65 ms`;
 5. мониторинг во время активного stream выполняет синхронные `/proc` reads; измеренная длительность sampler — около `43 ms p50`.
+
+### 1.1 Интеграция Prisma Home после аудита
+
+Prisma UI возвращён merge-коммитом `b1fd77b` поверх исправлений аудита. В клиент снова включены `SwipeHero`, `SwipePicker`, `EditorialRow`, `RankedRow`, `TVRowShell`, registry и snapshot orchestration. При этом сохранены row-local horizontal navigation, bounded logical index, `preventScroll`/центровка, memoized `HomeRow`, idle lazy-loading tier 3, стабильные callbacks, metadata transport через `tmdbClient` и image-specific fallback.
+
+Дополнительные регрессии, обнаруженные только на Android TV emulator:
+
+- `173244a`: после Picker → MovieDetail → Android Back фокус уходил в предыдущую строку; теперь сохраняется marker `swipe-hero`, восстанавливаются вертикальная позиция и фокус Hero. Прямое закрытие Picker также возвращает Hero.
+- `50c63e5`: touch создавал полный DOM `click`, но `TVRowShell` не вызывал `onSelect`; клик теперь выбирает item только в активном ряду, а неактивный ряд остаётся заблокирован.
+
+Финальная матрица интеграции: server `138/138`, client `339/339`, Vite `92` modules, main JS `399.25 kB` / gzip `123.88 kB`, Capacitor `5` plugins, Gradle debug build — pass. На финальном APK Prisma Home содержит `22` горизонтальных ряда, `441` focusables, `310` TV cards и `420` images (`342` decoded, `0` broken, `78` lazy/pending на момент снимка).
+
+Emulator smoke подтвердил:
+
+- Hero → Picker → MovieDetail → Android Back: фокус возвращён в Hero; прямой Escape из Picker ведёт туда же;
+- layout-left первой карточки при `scrollLeft=0`: `32 px`;
+- 19 Right достигают последней карточки `19/20`; она полностью в viewport, visual center error `-2.096 px`;
+- 15 Down достигают `genre_878` при `scrollTop=3996`, focus остаётся в viewport; 15 Up возвращают toolbar/Home и `scrollTop=0`;
+- D-Pad Enter/Back и одиночный touch tap/Back открывают MovieDetail и восстанавливают исходный фокус;
+- контролируемый финальный gfxinfo sample: `76` frames, `22` janky (`28.95%`), `p50=27 ms`, `p90=65 ms`, `p95=89 ms`, `p99=300 ms`;
+- в `595` строках process-scoped logcat нет `FATAL EXCEPTION`, `Uncaught` или Chromium console error.
+
+Sample gfxinfo отличается от исходного по длине и включает горизонтальный прогон плюс open/back, поэтому он не доказывает улучшение или ухудшение производительности. RISK-06 остаётся открытым до одинакового profile protocol на физическом TV.
 
 ## 2. Проверенная архитектура
 
@@ -79,6 +102,8 @@
 - legacy server route `/api/tmdb/image/:size/:path` загружает изображение через `smartFetch`/DoH вместо image-specific cascade.
 
 ## 3. Baseline
+
+Таблица ниже фиксирует исходный аудит до возврата Prisma. Актуальная post-integration матрица приведена в разделах 1.1 и 11.
 
 | Проверка | До исправлений | После исправлений |
 |---|---:|---:|
@@ -253,11 +278,11 @@
 ### RISK-06 — Android TV Home jank и слишком большой focus graph
 
 - **Severity:** Medium.
-- **Доказательство:** после tier loading log показывал `zoneSize=383`. На 15 быстрых Down: `21` frames, `9` janky (`42.86%`), `p50=27 ms`, `p90=53 ms`, `p95=65 ms`, `p99=77 ms`.
+- **Доказательство:** исходный tier loading log показывал `zoneSize=383`. На 15 быстрых Down: `21` frames, `9` janky (`42.86%`), `p50=27 ms`, `p90=53 ms`, `p95=65 ms`, `p99=77 ms`. После возврата Prisma финальный DOM вырос до `441` focusables; отдельный более длинный сценарий дал `76` frames, `22` janky (`28.95%`), `p50=27 ms`, `p90=65 ms`, `p95=89 ms`, `p99=300 ms`.
 - **Сценарий:** rapid vertical D-Pad по Home на 4K Android TV emulator.
 - **Root cause:** сотни DOM focusables; на каждое движение geometry scan с `getBoundingClientRect()`; unconditional navigation logging; smooth scrolling. `react-window` установлен, но не используется.
 - **Рекомендация:** сначала production logging gate, затем windowing/row virtualization с logical focusedIndex; измерять по одному изменению.
-- **Остаточный риск:** emulator не равен физическому TV; относительный jank всё равно подтверждён.
+- **Остаточный риск:** emulator не равен физическому TV; samples имеют разную длину и сценарий, поэтому сравнивать проценты как before/after нельзя. Сам jank и большой focus graph подтверждены.
 
 ### RISK-07 — lint и React rule debt
 
@@ -357,7 +382,18 @@ Capture показывает healthy delivery и отсутствие server sta
 - gfxinfo: 21 frames, 9 janky (`42.86%`), p50 `27 ms`, p90 `53 ms`, p95 `65 ms`, p99 `77 ms`;
 - unhandled JS crash не найден; log содержит ожидаемые emulator/network fallback errors и чрезмерные SpatialNav/TMDB debug messages.
 
-Не проверено: inactive-row hook contract (`useTVNavigation` вообще не используется основным Home), real key-hold queue trace, physical-TV rendering, Vimu/MX/VLC activity results.
+Post-audit retest на финальном Prisma APK:
+
+- `22` horizontal rows, `441` focusables, `310` TV cards, `420` images; decoded `342`, broken `0`, lazy/pending `78`;
+- first-card layout-left `32 px`; последняя карточка `19/20` полностью видима, visual center error `-2.096 px`;
+- Swipe Hero, Picker, прямой Escape, MovieDetail, D-Pad Enter/Back и touch tap/Back проходят с восстановлением исходного фокуса;
+- 15 Down: `genre_878`, `scrollTop=3996`, focus в viewport; 15 Up: toolbar/Home, `scrollTop=0`;
+- gfxinfo после 15 Down + 15 Up + 19 Right + Enter/Back: `76` frames, `22` janky (`28.95%`), p50 `27 ms`, p90 `65 ms`, p95 `89 ms`, p99 `300 ms`;
+- process logcat: `595` строк, severe matches `0` по `FATAL EXCEPTION`, `Uncaught`, Chromium console error.
+
+Post-audit gfxinfo не является прямым before/after исходного короткого sample: sequence и frame count различаются.
+
+Не проверено: real key-hold queue trace, physical-TV rendering, Vimu/MX/VLC activity results. Inactive-row contract теперь покрыт тестом и блокирует D-Pad и touch selection.
 
 ## 9. Интернет-источники
 
@@ -398,6 +434,20 @@ Tests:
 - `client/src/utils/serverApi.test.js`
 - `client/src/utils/tvplayer-source.test.js`
 
+Post-audit Prisma integration дополнительно затрагивает основные surfaces и их regression coverage:
+
+- `client/src/components/HomePanel.jsx`
+- `client/src/components/HomeRow.jsx`
+- `client/src/components/SwipeHero.jsx`
+- `client/src/components/SwipePicker.jsx`
+- `client/src/components/EditorialRow.jsx`
+- `client/src/components/RankedRow.jsx`
+- `client/src/components/TVRowShell.jsx`
+- `client/src/hooks/useTVNavigation.js`
+- `client/src/utils/ContentRowsRegistry.js`
+- `client/src/utils/homeSnapshot.js`
+- соответствующие `*.test.jsx` / `*.test.js` файлы.
+
 Commits в хронологическом порядке:
 
 1. `aeb4a3c test: reject malformed HTTP byte ranges`
@@ -415,6 +465,11 @@ Commits в хронологическом порядке:
 13. `fd33a43 test: require complete player close result`
 14. `a61b936 fix: complete player close results`
 15. `0dfa689 test: keep player contract check lint-clean`
+16. `79a5992 docs: design Prisma audit integration`
+17. `b3b4b9e docs: plan Prisma audit integration`
+18. `b1fd77b merge: restore Prisma home with audit fixes`
+19. `173244a fix: restore Swipe Hero focus after detail`
+20. `50c63e5 fix: restore touch selection in Prisma rows`
 
 Отчёт фиксируется отдельным docs commit. Generated APK, build assets, captures и secrets не коммитятся.
 
@@ -422,16 +477,16 @@ Commits в хронологическом порядке:
 
 Финальная проверка:
 
-- `node server/__tests__/run-tests.js` — **130 passed, 0 failed**;
-- `cd client && npm test -- --run` — **29 files, 184 passed, 0 failed**;
-- `cd client && npm run build` — **pass**, 83 modules, main JS `372.41 kB` / gzip `115.55 kB`;
-- `cd client && npm exec -- cap sync android` — **pass**, 5 Capacitor plugins;
+- `node server/__tests__/run-tests.js` — **138 passed, 0 failed**;
+- `cd client && npm test -- --run` — **38 files, 339 passed, 0 failed**;
+- `cd client && npm run build` — **pass**, 92 modules, main JS `399.25 kB` / gzip `123.88 kB`;
+- `cd client && ./node_modules/.bin/cap sync android` — **pass**, 5 Capacitor plugins;
 - `cd client/android && ANDROID_HOME=/Users/bobmark/Library/Android/sdk ./gradlew assembleDebug` — **BUILD SUCCESSFUL**, 212 tasks;
 - debug APK: `client/android/app/build/outputs/apk/debug/app-debug.apk`;
-- APK size: `4,404,518 bytes`;
-- APK SHA-256: `2538bed4212000c9a792f3c20b680ea38c46c1e1bb30f09cbf33e44d6fc7041d`;
-- source-only ESLint — **fail: 51 errors, 5 warnings**;
-- configured `npm run lint` после build — **fail: 355 errors, 6 warnings**, главным образом из-за generated Android assets плюс source debt;
+- APK size: `4,509,271 bytes`;
+- APK SHA-256: `b36a335ebef0370d252ae0e434a2e463066722ce6ef12117dc273b52f701acc3`;
+- source-only ESLint — **fail: 33 errors, 4 warnings**;
+- configured `npm run lint` после build — **fail: 331 errors, 5 warnings**, главным образом из-за generated Android assets плюс source debt;
 - root production dependency audit — **13 vulnerabilities: 8 high, 5 moderate**;
 - client production dependency audit — **0 vulnerabilities**.
 
