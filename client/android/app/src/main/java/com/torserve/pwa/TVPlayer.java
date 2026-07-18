@@ -222,6 +222,8 @@ public class TVPlayer extends Plugin {
             ret.put("finished", finished);
         } else {
             ret.put("position", -1);
+            ret.put("duration", -1);
+            ret.put("finished", false);
             ret.put("message", "No data returned");
         }
 
