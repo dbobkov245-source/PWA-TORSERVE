@@ -63,3 +63,22 @@ test('shouldCreateStreamBody skips media reads for HEAD requests', async () => {
     expect(shouldCreateStreamBody('HEAD')).toBe(false)
     expect(shouldCreateStreamBody('GET')).toBe(true)
 })
+
+test('createStreamCleanup destroys the source and accounts closure once', async () => {
+    const { createStreamCleanup } = await import('../streamSource.js')
+    let destroyCalls = 0
+    let closeCalls = 0
+    const stream = {
+        destroyed: false,
+        destroy() {
+            destroyCalls++
+            this.destroyed = true
+        }
+    }
+    const cleanup = createStreamCleanup(stream, () => { closeCalls++ })
+
+    expect(cleanup()).toBe(true)
+    expect(cleanup()).toBe(false)
+    expect(destroyCalls).toBe(1)
+    expect(closeCalls).toBe(1)
+})
