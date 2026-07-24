@@ -219,7 +219,85 @@ Result: `5 failed, 41 passed`.
 
 ## BUG-03 — Stable spatial zone
 
-Status: pending.
+Status: fixed and APK-verified.
+
+### Reproduction and root cause
+
+- BUG-02 bounded Logcat recorded `70` redundant
+  `[SpatialNav] Active Zone: main -> main` messages, normally every five
+  seconds with status polling.
+- `useSpatialArbiter` returned a new `setActiveZone` function on every render.
+  App's zone effect therefore reran after each status update.
+- `SpatialEngine.setActiveZone` logged and rebuilt zone sets even when the
+  requested zone was already active. Replacing sets also bypassed the normal
+  unregister path for stale id-map entries.
+
+### RED
+
+Command:
+
+```text
+./node_modules/.bin/vitest run src/hooks/useSpatialNavigation.test.js
+```
+
+Result: `4 failed, 2 passed`.
+
+- Callback identity changed after a polling-style rerender.
+- App-style effect called `setActiveZone` twice.
+- Same-zone activation returned no explicit no-op result.
+- Explicit stale-zone pruning was absent.
+
+### Fix
+
+- Memoized the arbiter callback with `useCallback`.
+- Same-zone activation now returns `false` before logging or mutation.
+- Real transitions return `true`.
+- Added explicit `pruneZone`, which removes stale elements through
+  `unregister` so zone and id maps stay consistent.
+- Focus recovery invokes pruning only at the point where stale cleanup is
+  required.
+
+### GREEN
+
+- Targeted lifecycle tests: `6/6` passed.
+- Related spatial/error/polling tests: `9/9` passed.
+- Full client suite: `39` files, `349/349` passed.
+- ESLint for hook and hook test: exit `0`.
+- Production build: PASS.
+- Capacitor sync: PASS.
+- Android Gradle: `BUILD SUCCESSFUL`.
+
+### APK runtime evidence
+
+- Built and installed APK SHA-256 matched exactly:
+  `08ef7e5cd292d23ae5590caa182df5edef18219ccd1e934424b6dccfeafd4047`.
+- Cold-start idle window in bounded Logcat:
+  `19:28:12` through `19:34:34` (over five minutes).
+- Initial and final focused card remained identical:
+  `Укрытие`, rating `8.2`, year `2023`.
+- After-window passive CDP capture observed four `/api/status` requests at
+  `5006`, `4998`, and `4999` ms intervals. Polling continued normally.
+- `main -> main`: `0`; all zone-transition logs while idle: `0`.
+- Fatal exceptions/ANRs: `0`.
+- Logcat artifact:
+  `output/debug-2026-07-24/bug-03-idle-after.log`
+  (`1669` lines, SHA-256
+  `8bd5fe16073075aba820c76055354cca749b2265d1a64af0f418e338950a42b3`).
+- Screenshots:
+  `output/debug-2026-07-24/bug-03-idle-state-{start,end}.png` and
+  `bug-03-monitor-status-after-5m.png`.
+
+### Changed files
+
+- `client/src/hooks/useSpatialNavigation.js`
+- `client/src/hooks/useSpatialNavigation.test.js`
+
+### Remaining risk
+
+- WebView Resource Timing retained only the cold-start status request, so the
+  continuing cadence was measured with CDP network events after the idle
+  window. The preceding five-plus-minute Logcat window independently verifies
+  absence of same-zone churn and runtime failures.
 
 ## BUG-04 — Native direct-IP DoH
 
