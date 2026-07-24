@@ -670,3 +670,38 @@ Status: fixed; RED/GREEN verified.
 - The informational `baseline-browser-mapping` age notice remains dependency
   output, not an ESLint diagnostic; no dependency update was introduced during
   the debug audit.
+
+## Final verification gate
+
+Status: PASS.
+
+- `npm run test:run`: PASS, `42` files, `359/359` tests.
+- `npm run lint`: PASS, exit `0`, no ESLint diagnostics.
+- `npm run build`: PASS, Vite production bundle built from `92` modules.
+- Required literal `npx cap sync android`: attempted and failed before
+  Capacitor launch because the installed npm `11.6.1` wrapper resolved `cap`
+  as an npm script (`Missing script: "cap"`).
+- Equivalent local, offline invocation `npm exec -- cap sync android`: PASS
+  with Capacitor CLI `6.2.1`; web assets copied and all five Android plugins
+  synchronized.
+- `env ANDROID_HOME=/Users/bobmark/Library/Android/sdk ./gradlew assembleDebug`:
+  PASS, `BUILD SUCCESSFUL`.
+- `node server/__tests__/run-tests.js`: PASS, `138/138`.
+- Final APK:
+  `client/android/app/build/outputs/apk/debug/app-debug.apk`,
+  SHA-256
+  `a6909fa525afa4ac8a0696e63d1cbda805825b0b2d8f9e63eaf0294b3b7623fe`.
+- Installed final APK on `emulator-5554`; Android reports
+  `com.torserve.pwa` version `3.17.2` (`versionCode=37`) in the resumed
+  `MainActivity`.
+- Cold start rendered Home with `Server OK` and a visible focused card.
+- D-Pad Enter opened `Укрытие`; deterministic preferred detail focus was
+  `Торренты · 63`.
+- Android Back returned to Home and restored the exact `Укрытие` card focus.
+- Final bounded logcat: `1254` lines, `0` fatal exceptions/ANRs; SHA-256
+  `6bded2d84efd71867ce91ccce969a0b8e2b86dca1b969128a7214a9e75c21009`.
+- Evidence:
+  `output/debug-2026-07-24/bug-09-final-{cold-start,detail,back}.png`,
+  `bug-09-final-logcat.txt`, and `bug-09-final-summary.txt`.
+- No merge, push, deploy, production APK installation, or NAS restart was
+  performed.
