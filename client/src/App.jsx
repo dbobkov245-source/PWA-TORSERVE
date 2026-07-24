@@ -216,6 +216,7 @@ function App() {
   useEffect(() => {
     if (updateInfo?.available) setActiveZone('modal')
     else if (showSettings) setActiveZone('settings')
+    else if (serverStatus === 'circuit_open' || serverStatus === 'error') setActiveZone('error')
     else if (selectedTorrent) setActiveZone('modal')
     else if (showSearch) setActiveZone('search')
     else if (showAutoDownload) setActiveZone('auto-download')
@@ -225,7 +226,7 @@ function App() {
     else if (activeView === 'home' && activePerson) setActiveZone('person')
     else if (activeView === 'home' && activeCategory) setActiveZone('category')
     else setActiveZone('main')
-  }, [updateInfo, showSettings, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
+  }, [updateInfo, showSettings, serverStatus, selectedTorrent, showSearch, showAutoDownload, activeMovie, activePerson, activeCategory, showSidebar, activeView, setActiveZone])
 
   // Hydrate serverUrl from native Preferences once on mount. localStorage can be
   // wiped on APK update; Preferences survives, so prefer it when they diverge.
