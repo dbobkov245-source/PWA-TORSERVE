@@ -634,3 +634,39 @@ Status: design complete; no implementation performed.
 - Design:
   `designs/2026-07-24-playback-durability-design.md`.
 - No client storage code, Preferences key, or server route was changed.
+
+## BUG-09 — Full lint gate
+
+Status: fixed; RED/GREEN verified.
+
+### RED
+
+- The mandatory `npm run lint` gate failed with `329` problems:
+  `326` errors and `3` warnings.
+- Most errors came from generated Capacitor web assets under
+  `android/app/build` and `android/app/src/main/assets`; ESLint was parsing
+  minified build output as authored source.
+- The remaining diagnostics were source-level unused bindings, stale hook
+  dependencies, mixed hook/component Fast Refresh warnings, an unqualified
+  service-worker global, and two empty catches.
+
+### Fix
+
+- Limited global ignores to generated `dist`, Android build, and copied
+  Capacitor asset directories. Native project source remains in scope where
+  ESLint supports its file type.
+- Removed dead bindings and a no-op URL parse in `App`.
+- Stabilized AutoDownload and Settings callbacks so their effects carry
+  complete dependencies.
+- Initialized cached poster state lazily instead of synchronously setting it
+  from an effect.
+- Qualified `self.clients`, documented intentionally ignored storage errors,
+  and removed the remaining mechanical source diagnostics.
+
+### GREEN
+
+- `npm run lint`: PASS, exit `0`, no ESLint errors or warnings.
+- Related targeted tests: `5` files, `65/65` tests passed.
+- The informational `baseline-browser-mapping` age notice remains dependency
+  output, not an ESLint diagnostic; no dependency update was introduced during
+  the debug audit.

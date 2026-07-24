@@ -33,11 +33,10 @@ const formatRelativeDate = (timestamp) => {
 
 const SearchResultItem = memo(forwardRef(({
     result,
-    index,
     isFocused,
     onSelect
 }, ref) => {
-    const { id, title, size, seeders, tracker, dateTs, tags } = result
+    const { title, size, seeders, tracker, dateTs, tags } = result
 
     return (
         <div

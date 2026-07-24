@@ -258,7 +258,6 @@ export const getMaxEpisodeNumber = (files) => {
  */
 export const extractQualityBadges = (name) => {
     if (!name) return []
-    const nameLower = name.toLowerCase()
     const badges = []
 
     // Resolution badges (priority order)

@@ -5,18 +5,13 @@ import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount, backend }) => {
     const spatialRef = useSpatialItem('main')
-    const [bgImage, setBgImage] = useState(null)
     const cleanedName = cleanTitle(name)
+    const [bgImage, setBgImage] = useState(() => getMetadata(cleanedName)?.poster || null)
 
     useEffect(() => {
         if (!cleanedName) return
 
         let isMounted = true
-
-        const cached = getMetadata(cleanedName)
-        if (cached?.poster) {
-            setBgImage(cached.poster)
-        }
 
         const fetchImage = async () => {
             try {

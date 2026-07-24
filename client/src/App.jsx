@@ -98,7 +98,7 @@ function App() {
   const [torrents, setTorrents] = useState([])
   const [magnet, setMagnet] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error] = useState(null)
 
   // State: UI
   const [showSettings, setShowSettings] = useState(false)
@@ -106,12 +106,11 @@ function App() {
   const [showServerInput, setShowServerInput] = useState(false)
   const [selectedTorrent, setSelectedTorrent] = useState(null)
   const [buffering, setBuffering] = useState(null)
-  const isPlayingRef = useRef(false)
 
   // State: Server Health
   const [serverStatus, setServerStatus] = useState('ok')
-  const [lastStateChange, setLastStateChange] = useState(null)
-  const [retryAfter, setRetryAfter] = useState(null)
+  const [lastStateChange] = useState(null)
+  const [retryAfter] = useState(null)
 
   // State: Sorting & Filtering
   const [sortBy, setSortBy] = useState(localStorage.getItem('sortBy') || 'name')
@@ -135,7 +134,7 @@ function App() {
   const [showAutoDownload, setShowAutoDownload] = useState(false)
 
   // State: Last Played
-  const [lastPlayed, setLastPlayed] = useState(() => {
+  const [lastPlayed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('lastPlayed')) || null } catch { return null }
   })
 
@@ -196,8 +195,6 @@ function App() {
   const homeTabRef = useSpatialItem('main')
   const listTabRef = useSpatialItem('main')
   const autoDownloadRef = useSpatialItem('main')
-  const refreshRef = useSpatialItem('main')
-  const settingsBtnRef = useSpatialItem('main')
   // Diagnostics Button Ref -> Now opens Settings (Status Tab)
   const diagnosticsRef = useSpatialItem('main')
   const voiceRef = useSpatialItem('main')
@@ -399,24 +396,13 @@ function App() {
 
   const handlePlay = useCallback(async (hash, index, fileName) => {
     try {
-      // 1. Get host from serverUrl for substitution
-      let host = '';
-      try {
-        const cleanSrv = serverUrl.trim();
-        const urlToParse = cleanSrv.includes('://') ? cleanSrv : `http://${cleanSrv}`;
-        const parsed = new URL(urlToParse);
-        // If port is special (not 3000/80/443), we might need it, but usually serverUrl already has it.
-        // The most robust way is to replace 'localhost:3000' or 'localhost' with the actual serverUrl host:port.
-        host = parsed.host; // host includes port if present
-      } catch (e) { host = serverUrl; }
-
-      // 2. Construct Stream URL (Server uses /stream/:hash/:idx)
+      // 1. Construct Stream URL (Server uses /stream/:hash/:idx)
       const base = serverUrl.replace(/\/$/, '');
       const streamUrl = `${base}/stream/${hash}/${index}`;
 
       console.log('[DEBUG] Final Play URL:', streamUrl);
 
-      // 3. Mark last played
+      // 2. Mark last played
       const torrentName = torrents.find(t => t.infoHash === hash)?.name
       localStorage.setItem('lastPlayed', JSON.stringify({
         infoHash: hash,
@@ -425,7 +411,7 @@ function App() {
         fileName: fileName
       }));
 
-      // 4. Start playback via Custom Plugin, resuming from the saved
+      // 3. Start playback via Custom Plugin, resuming from the saved
       // position. The plugin maps it to Vimu `startfrom` / MX `position`
       // and resolves with {position, duration, finished} on player exit.
       const resumeFrom = getResumePosition(hash, index)

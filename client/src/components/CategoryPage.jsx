@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react'
 import { getPosterUrl, getTitle, getYear, DISCOVERY_CATEGORIES } from '../utils/discover'
-import { reportBrokenImage, filterDiscoveryResults, getNextImageUrl } from '../utils/tmdbClient'
+import { filterDiscoveryResults, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const SORT_OPTIONS = [
@@ -46,7 +46,7 @@ const CategoryPage = ({
     const [hasMore, setHasMore] = useState(true)
     const [loadError, setLoadError] = useState(null)
     const [retryTick, setRetryTick] = useState(0)
-    const [imageErrors, setImageErrors] = useState(new Set())
+    const [, setImageErrors] = useState(new Set())
     const [sortBy, setSortBy] = useState('popularity')
     const [minRating, setMinRating] = useState(0)
     const observerTarget = useRef(null)

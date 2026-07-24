@@ -9,7 +9,7 @@
  * - Proper tabIndex on all interactive elements
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle, getMaxEpisodeNumber } from '../utils/helpers'
 
@@ -66,7 +66,10 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
     const panelRef = useRef(null)
     const closeBtnRef = useSpatialItem('auto-download')
 
-    const getApiUrl = (path) => serverUrl ? `${serverUrl}${path}` : path
+    const getApiUrl = useCallback(
+        (path) => serverUrl ? `${serverUrl}${path}` : path,
+        [serverUrl]
+    )
 
     // Extract series from loaded torrents
     const getSeriesFromTorrents = () => {
@@ -125,7 +128,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
     }, [showPicker, onClose])
 
     // Fetch rules and settings
-    const fetchRules = async () => {
+    const fetchRules = useCallback(async () => {
         setLoading(true)
         try {
             const res = await fetch(getApiUrl('/api/autodownload/rules'))
@@ -137,11 +140,11 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
         } finally {
             setLoading(false)
         }
-    }
+    }, [getApiUrl])
 
     useEffect(() => {
         fetchRules()
-    }, [serverUrl])
+    }, [fetchRules])
 
     // Toggle global enable/disable
     const toggleEnabled = async () => {
@@ -193,7 +196,7 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
     // Add rule from torrent picker
     const addFromTorrent = (series) => {
         setNewRule({
-            query: cleanTitle(series.name) || series.name.replace(/\./g, ' ').split(/[-\[\(]/)[0].trim(),
+            query: cleanTitle(series.name) || series.name.replace(/\./g, ' ').split(/-|\[|\(/)[0].trim(),
             resolution: series.resolution || '2160',
             group: '',
             lastEpisode: series.lastEpisode
