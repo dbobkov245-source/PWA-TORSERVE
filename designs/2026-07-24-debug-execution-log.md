@@ -480,7 +480,65 @@ Result: `5 failed, 5 passed`.
 
 ## BUG-05 — Performance A/B
 
-Status: pending.
+Status: measured; virtualization prototype rejected and reverted.
+
+### Baseline
+
+- Device/profile: `emulator-5554`, 3840×2160, fixed sequence
+  `30 × D-Pad Down` then `20 × D-Pad Up`, 200 ms spacing.
+- Start: `5283` DOM nodes, `1014` focusables, `959` images.
+- Finish: `5568` DOM nodes, `1015` focusables, `960` images,
+  `scrollTop=2880`, active row `genre_28`, no blank rows.
+- Geometry calls: `2967`.
+- Long tasks: `6`, total `690 ms`, maximum `286 ms`.
+- Android gfxinfo: `550` frames, `58` janky (`10.55%`), p50 `22 ms`,
+  p90 `48 ms`, p95 `113 ms`, p99 `150 ms`.
+- Memory: total PSS `141585 KB`, RSS `277888 KB`.
+
+### Prototype and GREEN checks
+
+- Implemented a local, uncommitted `FixedSizeList` +
+  `react-virtualized-auto-sizer` prototype with fixed `320 px` rows and
+  `overscanCount=3`; Home retained one vertical scroll owner.
+- Added a RED contract proving a 20-row registry was fully mounted.
+- Prototype GREEN: deep row mounted after virtual scroll while the initial
+  mounted set stayed bounded.
+- HomePanel: `47/47` passed.
+- Full client suite: `41` files, `358/358` passed.
+- Targeted ESLint: exit `0`; production build, Capacitor sync, and Android
+  Gradle build passed.
+- Prototype APK SHA-256:
+  `6bf37e5e43541181ed6b32353686d0dddcd26fe0237cadeb5fa3ca495a632ab9`.
+
+### A/B result
+
+- Same emulator and input sequence reduced start DOM nodes `5283 → 1299`,
+  focusables `1014 → 167`, images `959 → 157`, and geometry calls
+  `2967 → 768`.
+- Long tasks improved from `6 / 690 ms / 286 ms max` to
+  `3 / 285 ms / 160 ms max`.
+- Android gfxinfo did not improve consistently: `159` frames with
+  `44` janky (`27.67%`), p50 `17 ms`, p90 `69 ms`, p95 `113 ms`,
+  p99 `150 ms`.
+- Memory also regressed in this sample: total PSS
+  `141585 → 152470 KB`, RSS `277888 → 291404 KB`.
+- Most importantly, D-Pad Down stopped at the mounted-window boundary.
+  The following Up sequence returned to the top
+  (`scrollTop=0`) instead of traversing the logical deep rows. This violates
+  the no-focus-regression acceptance rule.
+- The live row used for the start focus differed between samples, so raw timing
+  deltas are directional rather than a controlled content benchmark. The
+  deterministic mounted-boundary focus failure is independently disqualifying.
+
+### Decision
+
+- Rejected and reverted the complete virtualization prototype before commit.
+- No production BUG-05 source change is retained.
+- Existing non-virtualized Home remains the verified behavior until windowing
+  has an explicit logical-row/D-Pad adapter and a repeatable content fixture.
+- Evidence:
+  `output/debug-2026-07-24/bug-05-{baseline,virtualized}-*.{json,txt,png}`.
+- Runtime evidence directory is intentionally not staged.
 
 ## BUG-07 — Android resume
 
