@@ -617,4 +617,20 @@ Status: fixed and APK-verified.
 
 ## BUG-08 — Playback durability design
 
-Status: pending; no server API implementation authorized.
+Status: design complete; no implementation performed.
+
+- Audited the current synchronous `localStorage.watch_history_v1` path,
+  2-minute minimum, 95% finish rule, 30-entry cap, delete behavior, and
+  immediate post-player persistence.
+- Recommended Phase A keeps immediate localStorage writes and adds a
+  serialized Capacitor Preferences `watch_history_v2` mirror.
+- Versioned envelope includes entries, revision, and deletion tombstones so a
+  stale durable snapshot cannot resurrect finished/deleted sessions.
+- Migration, malformed-data recovery, 30-entry/180-day active retention, and
+  30-day tombstone GC are specified.
+- Optional multi-device server sync is isolated as Phase B and requires
+  separate approval because it adds API, conflict, privacy, and user-isolation
+  responsibilities.
+- Design:
+  `designs/2026-07-24-playback-durability-design.md`.
+- No client storage code, Preferences key, or server route was changed.
