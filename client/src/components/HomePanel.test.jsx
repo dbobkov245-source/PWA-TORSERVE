@@ -127,13 +127,20 @@ vi.mock('./SwipePicker', () => ({
 }))
 vi.mock('./ContinueWatchingRow', () => ({ default: () => <div data-testid="continue-row" /> }))
 vi.mock('./CategoryPage', () => ({
-    default: ({ customCategory }) => (
+    default: ({ customCategory, onBack }) => (
         <div data-testid="category-page" data-has-fetcher={String(typeof customCategory?.fetcher === 'function')}>
             <button type="button" onClick={() => customCategory.fetcher(1)}>fetch-category</button>
+            <button type="button" onClick={onBack}>back-from-category</button>
         </div>
     )
 }))
-vi.mock('./PersonDetail', () => ({ default: () => <div data-testid="person-detail" /> }))
+vi.mock('./PersonDetail', () => ({
+    default: ({ onBack }) => (
+        <div data-testid="person-detail">
+            <button type="button" onClick={onBack}>back-from-person</button>
+        </div>
+    )
+}))
 vi.mock('./MovieDetail', () => ({
     default: ({ onBack }) => <button type="button" onClick={onBack}>back-from-detail</button>
 }))
@@ -494,7 +501,120 @@ describe('picker, enrichment, and focus persistence', () => {
 
         await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 2'))
         expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(55)
-        expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(0)
+        expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(77)
+    })
+
+    it.each(['movie', 'category', 'person'])(
+        'restores deep row, item, vertical position, and horizontal scroll after %s Back',
+        async (subview) => {
+            const deepRow = row('tier-3-deep', 'poster', {
+                tier: 3,
+                fetcher: vi.fn(() => new Promise(() => {}))
+            })
+            mocks.createHybridRows.mockReturnValue([deepRow])
+            mocks.readHomeSnapshot.mockReturnValue({
+                rows: [{
+                    ...deepRow,
+                    fetcher: undefined,
+                    items: [item(1), item(2), item(3)]
+                }],
+                savedAt: 1
+            })
+
+            const Harness = () => {
+                const [activeMovie, setActiveMovie] = React.useState(null)
+                const [activeCategory, setActiveCategory] = React.useState(null)
+                const [activePerson, setActivePerson] = React.useState(null)
+                return (
+                    <>
+                        <button type="button" onClick={() => setActivePerson({ id: 7 })}>
+                            open-person
+                        </button>
+                        <HomePanel
+                            {...baseProps}
+                            activeMovie={activeMovie}
+                            setActiveMovie={setActiveMovie}
+                            activeCategory={activeCategory}
+                            setActiveCategory={setActiveCategory}
+                            activePerson={activePerson}
+                            setActivePerson={setActivePerson}
+                        />
+                    </>
+                )
+            }
+
+            const view = render(<Harness />)
+            const target = await view.findByText('Item 3')
+            const homeScroller = view.container.querySelector('.custom-scrollbar')
+            const rowScroller = target.closest('.snap-container')
+            homeScroller.scrollTop = 640
+            rowScroller.scrollLeft = 180
+            fireEvent.focus(target)
+
+            if (subview === 'movie') fireEvent.click(target)
+            if (subview === 'category') fireEvent.click(view.getByText('more-tier-3-deep'))
+            if (subview === 'person') fireEvent.click(view.getByText('open-person'))
+
+            fireEvent.click(await view.findByText(`back-from-${subview === 'movie' ? 'detail' : subview}`))
+
+            await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 3'))
+            expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(640)
+            expect(view.container.querySelector('[data-row-id="tier-3-deep"] .snap-container').scrollLeft).toBe(180)
+        }
+    )
+
+    it('waits for a lazy tier-3 row to mount before restoring its saved item', async () => {
+        vi.stubGlobal('IntersectionObserver', class {
+            observe() {}
+            disconnect() {}
+        })
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function getRect() {
+            return this.hasAttribute('data-category-id')
+                ? { top: 100, bottom: 300 }
+                : { top: 0, bottom: 500 }
+        })
+        const tierOne = row('tier-1', 'poster', {
+            tier: 1,
+            fetcher: vi.fn(async () => ({ results: [item(1)] }))
+        })
+        const tierThree = row('tier-3-lazy', 'poster', {
+            tier: 3,
+            fetcher: vi.fn(async () => ({ results: [item(8), item(9)] }))
+        })
+        mocks.createHybridRows.mockReturnValue([tierOne, tierThree])
+        mocks.readHomeFocus.mockReturnValue({
+            rowId: 'tier-3-lazy',
+            itemIndex: 1,
+            verticalScroll: 720,
+            horizontalScroll: 240
+        })
+
+        const Harness = () => {
+            const [activeCategory, setActiveCategory] = React.useState({
+                id: 'temporary-category',
+                name: 'Temporary',
+                fetcher: vi.fn()
+            })
+            return (
+                <HomePanel
+                    {...baseProps}
+                    activeCategory={activeCategory}
+                    setActiveCategory={setActiveCategory}
+                />
+            )
+        }
+
+        const view = render(<Harness />)
+        fireEvent.click(await view.findByText('back-from-category'))
+        await view.findByText('Item 1')
+
+        const scroller = view.container.querySelector('.custom-scrollbar')
+        scroller.scrollTop = 100
+        fireEvent.scroll(scroller)
+
+        await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 9'))
+        expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(720)
+        expect(view.container.querySelector('[data-row-id="tier-3-lazy"] .snap-container').scrollLeft).toBe(240)
     })
 
     it('does not rewrite restored focus when the HomePanel parent rerenders', async () => {

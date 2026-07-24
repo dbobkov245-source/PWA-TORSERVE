@@ -133,7 +133,89 @@ generated Android bundles are included and existing source violations produce
 
 ## BUG-02 — Home focus restoration
 
-Status: pending.
+Status: fixed and APK-verified.
+
+### Reproduction and root cause
+
+- Existing restore lifecycle depended only on `activeMovie`.
+- Category/Person open and close did not mark or consume pending restoration.
+- Home's lazy-row scroll listener stayed attached to the detached scroller while
+  a subview replaced Home, so the newly mounted scroller could not start tier-3
+  loading.
+- `restoreHomeFocus` restored vertical scroll and item focus but ignored saved
+  horizontal scroll.
+- Focus callbacks recorded scroll before SpatialEngine/useTVNavigation could
+  finish their scroll work.
+
+### RED
+
+Command:
+
+```text
+./node_modules/.bin/vitest run src/components/HomePanel.test.jsx
+```
+
+Result: `5 failed, 41 passed`.
+
+- Existing Movie test: expected horizontal `77`, received `0`.
+- Deep tier-3 Movie Back: expected horizontal `180`, received `0`.
+- Category Back: target `Item 3` not focused.
+- Person Back: target `Item 3` not focused.
+- Lazy tier-3 restore: target row remained a loading placeholder.
+
+### Fix
+
+- Added one `hasActiveSubview` lifecycle for Movie, Category, and Person.
+- Rebind lazy-row scroll listener whenever Home returns from a subview.
+- Restore `rowId + itemIndex` first, with `preventScroll`, then apply saved
+  vertical and horizontal offsets.
+- Keep immediate focus snapshot for fast Enter, then update scroll offsets after
+  two deterministic animation frames so settled TV scrolling is persisted.
+- Retry restoration when display rows, 4K row, or Trakt row mounts.
+
+### GREEN
+
+- HomePanel target: `46/46` passed.
+- Related Home/navigation tests: `73/73` passed.
+- Full client suite: `39` files, `345/345` passed.
+- ESLint for `HomePanel.jsx` and `HomePanel.test.jsx`: exit `0`.
+- Production build: PASS.
+- Capacitor sync: PASS.
+- Android Gradle: `BUILD SUCCESSFUL`.
+
+### APK runtime evidence
+
+- APK SHA-256:
+  `05f27bfdbd3379abcd88834e3060a02c6fc7d345555c943c75487a406826235e`
+- Package: `3.17.2` / `37`.
+- Runtime used Android WebView's local DevTools socket through ADB. Automation
+  inspected DOM focus/scroll only; storage and credentials were not read.
+- Movie Back: `3/3` exact row/item/vertical/horizontal restoration.
+- Category Back: `3/3` exact restoration, entered through real "Показать все".
+- Person Back: `3/3` exact restoration, entered through MovieDetail cast card
+  for `Ребекка Фергюсон`.
+- Repeated stable target:
+  `rowId=tv_on_the_air`, `itemIndex=3`, `verticalScroll=13466`,
+  `horizontalScroll=349`.
+- Earlier valid run also restored
+  `rowId=tv_airing_today`, `itemIndex=3`, `verticalScroll=13187`,
+  `horizontalScroll=57`.
+- One automation-only repeat reused an already-focused node, so no browser
+  `focus` event fired; it was excluded and rerun with an alternate-focus step.
+- Screenshots:
+  `output/debug-2026-07-24/bug-02-{prepare-*,verify-home-*}.png`.
+- Bounded Logcat: `2755` lines, `0` fatal exceptions, `0` ANRs.
+
+### Changed files
+
+- `client/src/components/HomePanel.jsx`
+- `client/src/components/HomePanel.test.jsx`
+
+### Remaining risk
+
+- Runtime exercised a deep loaded tier-3 row. Lazy-row mount restoration is
+  covered by real component regression test; forcing that exact network timing
+  nine times in APK would make evidence non-deterministic.
 
 ## BUG-03 — Stable spatial zone
 

@@ -150,6 +150,7 @@ const HomePanel = ({
         [displayRows, watchedIds, rejectedIds]
     )
     const pickerActive = pickerOpen && swipeCandidates.length > 0
+    const hasActiveSubview = Boolean(activeMovie || activePerson || activeCategory)
 
     useEffect(() => {
         if (pickerOpen && swipeCandidates.length === 0) setPickerOpen(false)
@@ -230,11 +231,15 @@ const HomePanel = ({
     const mountedRef = useRef(true)
     const homeScrollRef = useRef(null)
     const restorePendingRef = useRef(true)
+    const focusSnapshotFrameRef = useRef(null)
     useEffect(() => {
         const retryTimers = retryTimersRef.current
         mountedRef.current = true
         return () => {
             mountedRef.current = false
+            if (focusSnapshotFrameRef.current !== null) {
+                cancelAnimationFrame(focusSnapshotFrameRef.current)
+            }
             retryTimers.forEach(clearTimeout)
             retryTimers.clear()
         }
@@ -426,6 +431,7 @@ const HomePanel = ({
     }, [cachedRows.length, loadRow, queueTierOneLoad, registryReady, registryRows])
 
     useEffect(() => {
+        if (hasActiveSubview) return
         const scroller = homeScrollRef.current
         if (!scroller) return
         const handleScroll = () => {
@@ -442,7 +448,7 @@ const HomePanel = ({
             scroller.removeEventListener('scroll', handleScroll)
             window.removeEventListener('resize', handleScroll)
         }
-    }, [checkLazyRowsNearViewport])
+    }, [checkLazyRowsNearViewport, hasActiveSubview])
 
     useEffect(() => {
         const id = setInterval(() => {
@@ -688,6 +694,27 @@ const HomePanel = ({
         }
         savedFocusRef.current = focus
         writeHomeFocus(focus)
+
+        if (focusSnapshotFrameRef.current !== null) {
+            cancelAnimationFrame(focusSnapshotFrameRef.current)
+        }
+        focusSnapshotFrameRef.current = requestAnimationFrame(() => {
+            focusSnapshotFrameRef.current = requestAnimationFrame(() => {
+                focusSnapshotFrameRef.current = null
+                const current = savedFocusRef.current
+                const scroller = homeScrollRef.current
+                if (!scroller || current?.rowId !== rowId || current?.itemIndex !== itemIndex) return
+                const wrapper = [...scroller.querySelectorAll('[data-row-id]')]
+                    .find(node => node.dataset.rowId === rowId)
+                const settled = {
+                    ...current,
+                    verticalScroll: scroller.scrollTop || 0,
+                    horizontalScroll: wrapper?.querySelector('.snap-container')?.scrollLeft || 0
+                }
+                savedFocusRef.current = settled
+                writeHomeFocus(settled)
+            })
+        })
     }, [])
 
     const getRowFocusCallback = useCallback((rowId) => {
@@ -735,10 +762,13 @@ const HomePanel = ({
 
         const horizontalScroller = row.querySelector('.snap-container')
         if (!horizontalScroller) return false
+        horizontalScroller.scrollLeft = Number(saved.horizontalScroll) || 0
         const items = horizontalScroller.querySelectorAll('[data-item-id], .snap-item')
         const itemNode = items[Number(saved.itemIndex) || 0]
         if (!itemNode) return false
-        itemNode.focus()
+        itemNode.focus({ preventScroll: true })
+        scroller.scrollTop = Number(saved.verticalScroll) || 0
+        horizontalScroller.scrollLeft = Number(saved.horizontalScroll) || 0
         return true
     }, [])
 
@@ -750,7 +780,7 @@ const HomePanel = ({
     }, [restoreHomeFocus])
 
     useEffect(() => {
-        if (activeMovie) {
+        if (hasActiveSubview) {
             restorePendingRef.current = true
             return
         }
@@ -765,7 +795,7 @@ const HomePanel = ({
             if (restoreHomeFocus(saved)) restorePendingRef.current = false
         })
         return () => cancelAnimationFrame(frame)
-    }, [activeMovie, displayRows, restoreHomeFocus])
+    }, [hasActiveSubview, displayRows, fourKItems, traktWatchlist, restoreHomeFocus])
 
     const enrichNextRankedBatch = useCallback(async (rowId) => {
         if (rankedInflightRef.current.has(rowId)) return
