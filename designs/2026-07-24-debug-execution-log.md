@@ -542,7 +542,78 @@ Status: measured; virtualization prototype rejected and reverted.
 
 ## BUG-07 — Android resume
 
-Status: pending.
+Status: fixed and APK-verified.
+
+### Reproduction and root cause
+
+- App had one serialized five-second status poll, but no Capacitor foreground
+  lifecycle listener.
+- Returning from Sleep, launcher background, or an external Activity therefore
+  waited for the next interval before checking server state.
+- Calling the existing serializer during an in-flight poll would only reuse
+  that promise. A resume refresh could be silently dropped rather than run
+  immediately after the current request.
+
+### RED
+
+- `statusPolling.test.js`: resume contract failed because
+  `run.afterCurrent` did not exist.
+- `App.resume.test.jsx`: App registered no `appStateChange` listener.
+
+### Fix
+
+- Added `afterCurrent()` to the existing serialized task.
+- With no active request it starts immediately; with an active request it
+  coalesces any number of resume signals into exactly one trailing run.
+- App registers one Capacitor `appStateChange` listener and requests the
+  trailing refresh only for `isActive=true`.
+- The existing single `setInterval(..., 5000)` remains the only timer.
+- Listener handle is removed on effect cleanup.
+- No server discovery or DHCP-IP behavior was added; that remains a separate
+  concern as required.
+
+### GREEN
+
+- Serializer + App resume tests: `3/3` passed.
+- Related resume/error/spatial/polling tests: `11/11` passed.
+- Full client suite: PASS (`42` files).
+- New helper/test files pass ESLint. Targeting `App.jsx` still reports its
+  nine pre-existing unused-variable errors; the BUG-07 additions introduce no
+  new lint diagnostic.
+- Production build, Capacitor sync, and Android Gradle build passed.
+
+### APK runtime evidence
+
+- Built and installed APK SHA-256:
+  `740aa9e2df959c1b18a563cc71102a7c5240760ebabff60bc1862662944dca0f`.
+- Home Sleep/Wake preserved exact focus:
+  `apple_tv_plus`, item `0`, vertical/horizontal `0/0`, title `Укрытие`.
+- Its status cadence was `4999`, `5003`, then one resume refresh after
+  `741 ms`, followed by `4258 ms` to the original interval schedule. No
+  second poll timer appeared.
+- MovieDetail background/resume preserved preferred focus
+  `Торренты · 63`; cadence was `4996`, `4996`, one resume refresh after
+  `918 ms`, then `4090 ms` to the original schedule.
+- Network off was simulated with Android's global HTTP proxy temporarily set
+  to unavailable `127.0.0.1:9`. The app reached ErrorScreen with deterministic
+  `Настройки сервера` focus.
+- After network on, status recovered and MovieDetail remounted with exact
+  preferred focus `Торренты · 63`.
+- Original emulator state was explicitly restored and verified:
+  `http_proxy=null`, firewall chain disabled, package networking allowed.
+- Bounded Logcat: `4095` lines, `9` native `appStateChange` notifications,
+  `0` fatal exceptions/ANRs; SHA-256
+  `f40b59a1d25292eec10c036423d389b5b9edfae84622ebaa4d9b77c8e8f07a87`.
+- Evidence:
+  `output/debug-2026-07-24/bug-07-runtime-summary.json`,
+  `bug-07-lifecycle.log`, and `bug-07-*.png`.
+
+### Changed files
+
+- `client/src/App.jsx`
+- `client/src/App.resume.test.jsx`
+- `client/src/utils/statusPolling.js`
+- `client/src/utils/statusPolling.test.js`
 
 ## BUG-08 — Playback durability design
 

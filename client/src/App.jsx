@@ -264,6 +264,17 @@ function App() {
     return () => clearInterval(timer)
   }, [fetchStatus])
 
+  useEffect(() => {
+    const listenerPromise = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) return
+      fetchStatus.afterCurrent()
+    })
+
+    return () => {
+      listenerPromise.then(handle => handle.remove())
+    }
+  }, [fetchStatus])
+
   // Check for app updates on launch
   useEffect(() => {
     tryInstallPending().then(installed => {
