@@ -1,12 +1,12 @@
-import { useRef, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { getBackdropUrl, getPosterUrl, getTitle, getYear, getSearchQuery, getImageUrl } from '../utils/discover'
 import { getGenreObjectsForItem } from '../utils/genres'
-import { reportBrokenImage, getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations, getCollection, getKeywords, getDiscoverByKeywords, handleImageErrorFallback } from '../utils/tmdbClient'
+import { getCredits, getVideos, getDetails, getSeasonDetails, getRecommendations, getCollection, getKeywords, getDiscoverByKeywords, handleImageErrorFallback } from '../utils/tmdbClient'
 import { getFavorites, addFavorite, removeFavorite, recordHistory } from '../utils/serverApi'
 import { Capacitor } from '@capacitor/core'
-import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 import MovieTorrentAction from './MovieTorrentAction'
 
 // ─── Sub-Components ─────────────────────────────────────────
@@ -111,18 +111,21 @@ const MovieDetail = ({
     const [keywords, setKeywords] = useState([])
     const [keywordRecs, setKeywordRecs] = useState([])
     const [showTrailerInline, setShowTrailerInline] = useState(false)
-    const [loadingExtra, setLoadingExtra] = useState(true)
     const [allowInteraction, setAllowInteraction] = useState(false)
     // FAV-01: Favorite state
     const [isFavorite, setIsFavorite] = useState(false)
     const [favLoading, setFavLoading] = useState(false)
 
     // Spatial Refs
-    const torrentBtnRef = useSpatialItem('detail')
+    const torrentBtnRef = useSpatialItem('detail', 'detail-torrents')
     const searchBtnRef = useSpatialItem('detail')
     const backBtnRef = useSpatialItem('detail')
     const trailerBtnRef = useSpatialItem('detail')
     const favBtnRef = useSpatialItem('detail')
+
+    useEffect(() => {
+        SpatialEngine.focusId('detail', 'detail-torrents')
+    }, [item?.id])
 
     useEffect(() => {
         // Prevent phantom clicks from previous screen (common on TV)
@@ -142,7 +145,7 @@ const MovieDetail = ({
     useEffect(() => {
         if (!item?.id) return
         recordHistory(item).catch(() => { })
-    }, [item?.id])
+    }, [item])
 
     // FAV-01: Toggle favorite
     const handleToggleFavorite = async () => {
@@ -163,17 +166,16 @@ const MovieDetail = ({
         }
     }
 
-    if (!item) return null
-
-    const backdropUrl = getBackdropUrl(item, 'w1280')
-    const posterUrl = getPosterUrl(item, 'w500')
-    const title = getTitle(item)
-    const year = getYear(item)
-    const rating = item.vote_average?.toFixed(1)
-    const overview = item.overview || 'Описание отсутствует'
-    const mediaType = item.media_type === 'tv' || item.name ? 'tv' : 'movie'
+    const detailItem = item || {}
+    const backdropUrl = getBackdropUrl(detailItem, 'w1280')
+    const posterUrl = getPosterUrl(detailItem, 'w500')
+    const title = getTitle(detailItem)
+    const year = getYear(detailItem)
+    const rating = detailItem.vote_average?.toFixed(1)
+    const overview = detailItem.overview || 'Описание отсутствует'
+    const mediaType = detailItem.media_type === 'tv' || detailItem.name ? 'tv' : 'movie'
     const mediaTypeLabel = mediaType === 'tv' ? 'Сериал' : 'Фильм'
-    const itemGenres = getGenreObjectsForItem(item)
+    const itemGenres = getGenreObjectsForItem(detailItem)
 
     const fetchEpisodes = async (seasonNumber) => {
         try {
@@ -199,7 +201,6 @@ const MovieDetail = ({
         if (!item?.id) return
         const controller = new AbortController()
         const load = async () => {
-            setLoadingExtra(true)
             setCollection(null)
             setKeywords([])
             setKeywordRecs([])
@@ -253,11 +254,12 @@ const MovieDetail = ({
                 }).catch(() => { })
 
             } catch (err) { console.warn(err) }
-            finally { if (!controller.signal.aborted) setLoadingExtra(false) }
         }
         load()
         return () => controller.abort()
-    }, [item?.id])
+    }, [item, mediaType])
+
+    if (!item) return null
 
     return (
         <div className="movie-detail fixed inset-0 z-50 bg-gray-900 overflow-hidden">

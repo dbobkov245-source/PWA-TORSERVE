@@ -73,7 +73,7 @@ const TorrentModal = ({
     const [deletePending, setDeletePending] = useState(false)
 
     // Spatial Refs
-    const closeBtnRef = useSpatialItem('modal')
+    const closeBtnRef = useSpatialItem('modal', 'torrent-close')
     const overviewToggleRef = useSpatialItem('modal')
     const playBtnRef = useSpatialItem('modal')
     const playAllBtnRef = useSpatialItem('modal')
@@ -89,14 +89,12 @@ const TorrentModal = ({
 
         // NAV-04: Focus Trap & Restore
         const previousActive = document.activeElement
-        requestAnimationFrame(() => {
-            SpatialEngine.recoverFocus('modal')
-        })
+        SpatialEngine.focusId('modal', 'torrent-close')
 
         return () => {
             clearTimeout(timer)
             // Restore focus
-            if (previousActive && typeof previousActive.focus === 'function') {
+            if (previousActive?.isConnected && typeof previousActive.focus === 'function') {
                 previousActive.focus()
             }
         }
@@ -118,9 +116,7 @@ const TorrentModal = ({
     useEffect(() => {
         if (!showDeleteConfirm) return
 
-        requestAnimationFrame(() => {
-            SpatialEngine.focusId('modal', 'delete-confirm-cancel')
-        })
+        SpatialEngine.focusId('modal', 'delete-confirm-cancel')
     }, [showDeleteConfirm])
 
     useEffect(() => {

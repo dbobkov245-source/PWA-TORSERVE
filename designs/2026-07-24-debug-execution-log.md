@@ -386,7 +386,97 @@ Result: `2 failed, 1 passed`.
 
 ## BUG-06 — Initial focus and visual consistency
 
-Status: pending.
+Status: fixed and APK-verified for MovieDetail/TorrentModal; UpdateModal
+verified with real DOM/SpatialEngine tests.
+
+### Reproduction and root cause
+
+- MovieDetail registered its actions in `detail` but never selected a preferred
+  action, leaving `document.activeElement` on `body` after real navigation.
+- UpdateModal registered `modal` actions but never requested focus and did not
+  restore the previously focused element.
+- TorrentModal used generic recovery inside a later animation frame, without a
+  stable preferred id.
+- Focus rings mixed blue/yellow/white/red across screens instead of one
+  high-contrast TV focus indicator.
+- Targeted lint also exposed an existing MovieDetail conditional hook after an
+  early return.
+
+### RED
+
+Command:
+
+```text
+./node_modules/.bin/vitest run src/components/MovieDetail.test.jsx \
+  src/components/TorrentModal.test.jsx \
+  src/components/UpdateModal.test.jsx
+```
+
+Result: `5 failed, 5 passed`.
+
+- MovieDetail did not focus its primary torrent action.
+- TorrentModal left the prior background action focused.
+- UpdateModal normal, forced, and retry states all left prior focus active.
+
+### Fix
+
+- MovieDetail registers/focuses preferred id `detail-torrents` after ref
+  registration.
+- UpdateModal uses `update-install`, refocuses it when retry UI remounts, and
+  restores the connected prior element on unmount.
+- TorrentModal uses deterministic preferred id `torrent-close`; delete
+  confirmation directly focuses `delete-confirm-cancel`.
+- No new modal zone or competing navigation handler was introduced.
+- Global `.focusable:focus` uses one mint ring
+  (`rgba(45, 212, 191, 0.92)`) while retaining each action's contrast.
+- MovieDetail hooks now execute unconditionally; dead loading state/imports
+  were removed and effect dependencies made explicit.
+
+### GREEN
+
+- Targeted Detail/Torrent/Update focus tests: `10/10` passed.
+- Related modal/spatial/error tests: `18/18` passed.
+- Full client suite: `41` files, `357/357` passed.
+- ESLint for all BUG-06 component/test files: exit `0`.
+- Production build: PASS.
+- Capacitor sync: PASS.
+- Android Gradle: `BUILD SUCCESSFUL`.
+
+### APK runtime evidence
+
+- Built and installed APK SHA-256 matched exactly:
+  `e9e41e54cd0a667d82b31a4ba93f996227984606b3c294dcc32a4827f6e7002c`.
+- Real Home → MovieDetail navigation immediately focused
+  `Торренты · 63`; screenshot confirms the mint ring.
+- System Back restored the exact Home target:
+  `rowId=tv_on_the_air`, `itemIndex=3`, vertical `13466`, horizontal `349`.
+- A real existing torrent card opened TorrentModal without add/play/delete;
+  initial focus was `✕`.
+- System Back restored the previous torrent poster (`Andor`, 4K/DV/HDR).
+- Bounded Logcat: `1067` lines; one expected `detail-torrents` and one
+  `torrent-close` focus marker; `0` fatal exceptions/ANRs.
+- Log SHA-256:
+  `0a1ef1fc11d8cfda05c0de3460a65453aa1a6eca33f2e2e9de9e9b7731c3bea7`.
+- Screenshots:
+  `output/debug-2026-07-24/bug-06-verify-detail-focus-1.png` and
+  `bug-06-verify-torrent-focus-1.png`.
+
+### Changed files
+
+- `client/src/components/MovieDetail.jsx`
+- `client/src/components/MovieDetail.test.jsx`
+- `client/src/components/TorrentModal.jsx`
+- `client/src/components/TorrentModal.test.jsx`
+- `client/src/components/UpdateModal.jsx`
+- `client/src/components/UpdateModal.test.jsx`
+- `client/src/index.css`
+
+### Remaining risk
+
+- A production UpdateModal was not forced by mutating app/update storage.
+  Normal, forced-single-button, download-error retry, and prior-focus restore
+  use the real DOM and SpatialEngine in regression tests. Runtime acceptance
+  covers both safely reachable production focus surfaces.
 
 ## BUG-05 — Performance A/B
 

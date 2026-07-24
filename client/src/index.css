@@ -47,7 +47,7 @@ body {
 
 .focusable:focus {
   scale: 1.05;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.8), 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.92), 0 10px 30px rgba(0, 0, 0, 0.5);
   z-index: 50;
 
   /* Only add relative if not already absolute/fixed */
