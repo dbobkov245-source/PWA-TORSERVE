@@ -1,12 +1,13 @@
 /**
  * tmdbClient.js — Unified TMDB Fetcher
  * 
- * 5-Level Cascade (from POSTER_BATTLE_HISTORY.md):
+ * 6-Level Cascade:
  * 1. Custom Cloudflare Worker (VITE_TMDB_PROXY_URL)
  * 2. Lampa Proxy (apn-latest.onrender.com)
- * 3. CapacitorHttp + Client DoH (bypass DNS poisoning)
- * 4. corsproxy.io (browser fallback)
- * 5. Kinopoisk API (alternative data source)
+ * 3. Server Proxy (/api/proxy)
+ * 4. CapacitorHttp + Client DoH (native JSON only)
+ * 5. corsproxy.io (browser fallback)
+ * 6. Kinopoisk API (text-only alternative data source)
  * 
  * Features:
  * - Automatic fallback through all levels
@@ -427,6 +428,25 @@ export function handleImageErrorFallback(e) {
 
 // ─── Client-Side DoH (Phase 3) ─────────────────────────────────
 const dohCache = new Map()
+let directIpCircuitOpen = false
+
+const NATIVE_SNI_FAILURE_RE = /SSLHandshakeException|SSLProtocolException|HANDSHAKE_FAILURE_ON_CLIENT_HELLO|SSLV3_ALERT_HANDSHAKE_FAILURE/i
+
+function isNativeSniFailure(error) {
+    const details = [
+        error?.name,
+        error?.message,
+        error?.cause?.name,
+        error?.cause?.message
+    ].filter(Boolean).join(' ')
+    return NATIVE_SNI_FAILURE_RE.test(details)
+}
+
+function openDirectIpCircuit() {
+    if (directIpCircuitOpen) return
+    directIpCircuitOpen = true
+    console.warn('[TMDB] Direct-IP circuit OPEN after native TLS SNI failure')
+}
 
 /**
  * Resolve hostname to IP via Google DNS-over-HTTPS
@@ -759,9 +779,10 @@ async function tryServerProxy(endpoint) {
 async function tryCapacitorWithDoH(endpoint) {
     if (!Capacitor.isNativePlatform()) return null
 
+    let attemptedDirectIp = false
     try {
         const hostname = 'api.themoviedb.org'
-        const ip = await resolveClientIP(hostname)
+        const ip = directIpCircuitOpen ? null : await resolveClientIP(hostname)
         const authedEndpoint = addTmdbQueryParams(endpoint)
 
         let targetUrl
@@ -769,6 +790,7 @@ async function tryCapacitorWithDoH(endpoint) {
 
         if (ip) {
             // DoH resolved — use IP directly with Host header
+            attemptedDirectIp = true
             targetUrl = `https://${ip}/3${authedEndpoint}`
             headers = { 'Host': hostname }
             console.log('[TMDB] Trying CapacitorHttp + DoH...')
@@ -790,6 +812,9 @@ async function tryCapacitorWithDoH(endpoint) {
             return { ...response.data, source: 'tmdb', method: ip ? 'capacitor_doh' : 'capacitor_direct' }
         }
     } catch (e) {
+        if (attemptedDirectIp && isNativeSniFailure(e)) {
+            openDirectIpCircuit()
+        }
         console.warn('[TMDB] CapacitorHttp failed:', e.message)
     }
     return null
@@ -984,33 +1009,25 @@ export async function tmdbClient(endpoint, options = {}) {
         return result
     }
 
-    // ═══ PHASE 2: Parallel Fallbacks (Server Proxy + Capacitor) ═══
-    const phase2Batch = []
+    // ═══ PHASE 2: Sequential Fallbacks (Server Proxy → Capacitor) ═══
+    // Native Capacitor requests cannot be cancelled through AbortController.
+    // Starting this path in parallel leaked direct-IP TLS work after the
+    // Server Proxy had already won, so preserve strict cascade ordering here.
     if (isLayerAvailable('server_proxy')) {
-        phase2Batch.push(
-            tryLayerWithTiming('server_proxy', () => tryServerProxy(endpoint))
-                .catch(() => null)
-        )
-    }
-    if (isLayerAvailable('capacitor')) {
-        phase2Batch.push(
-            tryLayerWithTiming('capacitor', () => tryCapacitorWithDoH(endpoint))
-                .catch(() => null)
-        )
+        result = await tryLayerWithTiming('server_proxy', () => tryServerProxy(endpoint))
+            .catch(() => null)
+        if (isValidResponse(result)) {
+            if (useCache) setCache(endpoint, result, cacheTTL)
+            return result
+        }
     }
 
-    if (phase2Batch.length > 0) {
-        try {
-            result = await Promise.any(
-                phase2Batch.map(p => p.then(r => r ? r : Promise.reject()))
-            )
-            if (isValidResponse(result)) {
-                if (useCache) setCache(endpoint, result, cacheTTL)
-                return result
-            }
-        } catch {
-            // All Phase 2 batch failed
-            console.log('[Cascade] Phase 2 batch: no winners')
+    if (isLayerAvailable('capacitor')) {
+        result = await tryLayerWithTiming('capacitor', () => tryCapacitorWithDoH(endpoint))
+            .catch(() => null)
+        if (isValidResponse(result)) {
+            if (useCache) setCache(endpoint, result, cacheTTL)
+            return result
         }
     }
 

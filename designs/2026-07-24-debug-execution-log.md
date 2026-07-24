@@ -301,7 +301,88 @@ Result: `4 failed, 2 passed`.
 
 ## BUG-04 — Native direct-IP DoH
 
-Status: pending.
+Status: fixed and APK-verified.
+
+### Reproduction and root cause
+
+- Baseline accumulated `150` native TLS exception lines while also recording
+  `50` successful Server Proxy responses.
+- Phase 2 started Server Proxy and native Capacitor direct-IP work together
+  through `Promise.any`.
+- The native request used `https://<resolved-ip>/...` plus an HTTP `Host`
+  header. The header is sent after TLS negotiation and cannot provide the
+  hostname needed for SNI/certificate selection.
+- Capacitor 6 exposes no native `AbortSignal`, so a Server Proxy winner could
+  not cancel the already-started native handshake.
+
+### RED
+
+Command:
+
+```text
+./node_modules/.bin/vitest run src/utils/tmdbClient.nativeFallback.test.js
+```
+
+Result: `2 failed, 1 passed`.
+
+- Server Proxy succeeded, but `CapacitorHttp.get` still ran.
+- After a simulated `HANDSHAKE_FAILURE_ON_CLIENT_HELLO`, the next request
+  repeated the same IP URL and returned `capacitor_doh`.
+- Existing poster isolation assertion already passed.
+
+### Fix
+
+- Phase 2 is now strict waterfall: Server Proxy, then native fallback only
+  when the proxy did not return valid metadata.
+- First native SNI/handshake failure opens a session-long direct-IP circuit.
+- Once open, native fallback keeps the TMDB hostname in the URL, preserving
+  TLS SNI and certificate verification; it does not resolve/retry the IP URL.
+- Remaining cascade order stays
+  Worker/Lampa → Server Proxy → Capacitor → Corsproxy → Kinopoisk.
+- No TLS-verification bypass or `rejectUnauthorized` option was added.
+- Image mirrors/proxy/wsrv logic remains independent of native DoH.
+
+### GREEN
+
+- Targeted native fallback tests: `3/3` passed.
+- Combined TMDB routing/cache/image tests: `20/20` passed.
+- Full client suite: `40` files, `352/352` passed.
+- ESLint for implementation and new test: exit `0`.
+- Production build: PASS.
+- Capacitor sync: PASS.
+- Android Gradle: `BUILD SUCCESSFUL`.
+
+### APK runtime evidence
+
+- Built and installed APK SHA-256 matched exactly:
+  `70fb87f03d7f313a54274b3842bac5f04b6112f733f47ee381d5cb9b54b3a535`.
+- Cold Home load reached `Server OK`; TMDB metadata and poster grids were
+  visibly populated after the upper Lampa attempt produced no valid winner.
+- Bounded Logcat: `755` lines, SHA-256
+  `972171ace1e2cacca3f59c70cbb08af8b10644a8a9e16acdb0cdcbd6757a43e8`.
+- Server Proxy successes: `12`.
+- `Trying CapacitorHttp + DoH`: `0`.
+- TLS/SNI failure signatures: `0`.
+- Fatal exceptions/ANRs: `0`.
+- Log:
+  `output/debug-2026-07-24/bug-04-cold-home.log`.
+- Screenshot:
+  `output/debug-2026-07-24/bug-04-home-after.png`
+  (SHA-256
+  `99c4ad0ad19087653a8389fc12304e4482786feb293091ab4b0c64402dd91b98`).
+
+### Changed files
+
+- `client/src/utils/tmdbClient.js`
+- `client/src/utils/tmdbClient.nativeFallback.test.js`
+
+### Remaining risk
+
+- Runtime did not deliberately break the working Server Proxy on the user's
+  configured server. The lower-layer failure sequence and one-time SNI breaker
+  are deterministic in component-level network tests; APK acceptance proves
+  the production cold-load path no longer starts that lower layer after proxy
+  success.
 
 ## BUG-06 — Initial focus and visual consistency
 
