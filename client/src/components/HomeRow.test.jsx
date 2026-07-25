@@ -47,6 +47,24 @@ it('uses backdrop width for fixed-center edge geometry', () => {
     expect(scroller.style.getPropertyValue('--tv-row-card-half-width')).toBe('120px')
 })
 
+it('refreshes backdrop image state when metadata changes for the same item id', () => {
+    const first = { ...items[0], backdrop_path: '/old-backdrop.jpg' }
+    const view = render(<HomeRow title="Wide" layout="backdrop_below" items={[first]} isActive />)
+
+    expect(view.container.querySelector('img').src).toContain('old-backdrop.jpg')
+
+    view.rerender(
+        <HomeRow
+            title="Wide"
+            layout="backdrop_below"
+            items={[{ ...first, backdrop_path: '/new-backdrop.jpg' }]}
+            isActive
+        />
+    )
+
+    expect(view.container.querySelector('img').src).toContain('new-backdrop.jpg')
+})
+
 it('shows source, start shortcut, and show-all action', async () => {
     const onMoreClick = vi.fn()
     const view = render(

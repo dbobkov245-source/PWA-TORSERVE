@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import MovieDetail from './MovieDetail.jsx'
+import SpatialEngine from '../hooks/useSpatialNavigation.js'
 
 const { addFavoriteMock } = vi.hoisted(() => ({
     addFavoriteMock: vi.fn(async () => ({}))
@@ -22,10 +23,6 @@ vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
     }
-}))
-
-vi.mock('../hooks/useSpatialNavigation', () => ({
-    useSpatialItem: () => ({ current: null })
 }))
 
 vi.mock('../utils/genres', () => ({
@@ -64,11 +61,44 @@ vi.mock('../utils/serverApi', () => ({
 describe('MovieDetail action row', () => {
     beforeEach(() => {
         vi.useFakeTimers()
+        SpatialEngine.zones = {}
+        SpatialEngine.idMap = {}
+        SpatialEngine.activeZone = 'detail'
     })
 
     afterEach(() => {
         vi.useRealTimers()
         vi.restoreAllMocks()
+    })
+
+    it('focuses the preferred torrents action on first render', async () => {
+        render(
+            <MovieDetail
+                item={{
+                    id: 603,
+                    title: 'The Matrix',
+                    release_date: '1999-03-31',
+                    media_type: 'movie',
+                    vote_average: 8.7,
+                    overview: 'Neo chooses.'
+                }}
+                torrentSession={{ status: 'ready', items: [] }}
+                onOpenMovieTorrents={() => {}}
+                onSearch={() => {}}
+                onBack={() => {}}
+                onSelect={() => {}}
+                onSelectPerson={() => {}}
+                onSelectGenre={() => {}}
+            />
+        )
+
+        await act(async () => {
+            await Promise.resolve()
+        })
+
+        expect(document.activeElement).toBe(
+            screen.getByRole('button', { name: /Торренты · 0/ })
+        )
     })
 
     it('keeps manual torrent search and adds the preloaded torrents action', async () => {

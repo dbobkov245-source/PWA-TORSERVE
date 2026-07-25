@@ -32,6 +32,7 @@ const MovieTorrentAction = ({ session, onOpen, buttonRef }) => {
         <button
             ref={buttonRef}
             onClick={onOpen}
+            aria-label={buttonLabel}
             className="focusable w-full h-full min-h-[56px] px-2 py-2 bg-purple-600 focus:bg-yellow-400 focus:text-black focus:ring-4 focus:ring-yellow-400 text-white font-bold rounded-xl transition-all flex flex-col items-center justify-center leading-tight"
         >
             <span>{buttonLabel}</span>

@@ -45,13 +45,17 @@ function readPendingInstall() {
 function writePendingInstall(payload) {
     try {
         localStorage.setItem(PENDING_INSTALL_KEY, JSON.stringify(payload));
-    } catch { }
+    } catch {
+        // localStorage can be unavailable in hardened WebViews.
+    }
 }
 
 function clearPendingInstall() {
     try {
         localStorage.removeItem(PENDING_INSTALL_KEY);
-    } catch { }
+    } catch {
+        // localStorage can be unavailable in hardened WebViews.
+    }
 }
 
 async function installCachedApk(fileName, onProgress) {

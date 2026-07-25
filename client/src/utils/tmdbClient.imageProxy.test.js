@@ -26,6 +26,17 @@ describe('getImageUrl poster routing', () => {
         expect(url).not.toContain('/api/proxy')
     })
 
+    it('does not rewrite the selected mirror for every poster URL', () => {
+        localStorage.setItem('tmdb_image_route_version', IMAGE_ROUTE_VERSION)
+        localStorage.setItem('tmdb_img_mirror', 'nl.imagetmdb.com')
+        const setItem = vi.spyOn(localStorage, 'setItem')
+
+        getImageUrl('/abc123.jpg', 'w342')
+
+        expect(setItem).not.toHaveBeenCalledWith('tmdb_img_mirror', 'nl.imagetmdb.com')
+        setItem.mockRestore()
+    })
+
     it('falls back to the server proxy when all mirrors are banned (proxy mode)', () => {
         localStorage.setItem('tmdb_image_route_version', IMAGE_ROUTE_VERSION)
         localStorage.setItem('tmdb_image_proxy_enabled', 'true')

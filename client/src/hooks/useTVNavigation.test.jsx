@@ -66,4 +66,21 @@ describe('useTVNavigation activation', () => {
     expect(result.current.focusedIndex).toBe(1)
     expect(onSelect).toHaveBeenCalledWith(1)
   })
+
+  it('clamps the logical focus when the item count shrinks', () => {
+    const { result, rerender } = renderHook(
+      ({ itemCount }) => useTVNavigation({
+        itemCount,
+        columns: Math.max(itemCount, 1),
+        itemRefs: { current: [] },
+        initialIndex: 2
+      }),
+      { initialProps: { itemCount: 3 } }
+    )
+
+    rerender({ itemCount: 1 })
+
+    expect(result.current.focusedIndex).toBe(0)
+    expect(result.current.isFocused(0)).toBe(true)
+  })
 })

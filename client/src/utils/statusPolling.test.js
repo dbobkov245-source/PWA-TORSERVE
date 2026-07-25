@@ -23,4 +23,24 @@ describe('createSerializedPollTask', () => {
         await expect(run()).resolves.toBe('second-run')
         expect(task).toHaveBeenCalledTimes(2)
     })
+
+    it('queues exactly one trailing refresh when resume happens during an in-flight poll', async () => {
+        let resolveFirstRun
+        const task = vi.fn()
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveFirstRun = resolve
+            }))
+            .mockResolvedValueOnce('resume-refresh')
+
+        const run = createSerializedPollTask(task)
+        const first = run()
+
+        run.afterCurrent()
+        run.afterCurrent()
+        expect(task).toHaveBeenCalledTimes(1)
+
+        resolveFirstRun('poll-result')
+        await first
+        await vi.waitFor(() => expect(task).toHaveBeenCalledTimes(2))
+    })
 })

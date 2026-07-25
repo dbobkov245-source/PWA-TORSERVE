@@ -68,6 +68,17 @@ const engines = new Map()
 // engines for one infoHash.
 const pendingEngines = new Set()
 
+export function removeEngineAliases(engine, engineMap = engines) {
+    if (!engine) return 0
+
+    const aliases = []
+    for (const [key, value] of engineMap.entries()) {
+        if (value === engine) aliases.push(key)
+    }
+    aliases.forEach(key => engineMap.delete(key))
+    return aliases.length
+}
+
 // ─── Change Emitter (for SSE) ────────────────────────────────
 const _changeListeners = new Set()
 export function onTorrentChange(cb) { _changeListeners.add(cb) }
@@ -612,6 +623,11 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
             console.error('[Torrent] Engine error:', err.message)
             pendingEngines.delete(infoHash)
+            removeEngineAliases(engine)
+            frozenTorrents.delete(infoHash)
+            if (engine.infoHash) frozenTorrents.delete(engine.infoHash)
+            invalidateStatusCache()
+            notifyTorrentChange()
             engine.destroy()
             reject(err)
         })
@@ -682,16 +698,8 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
         }
     }
 
-    // Remove from active map
-    engines.delete(infoHash)
-    // ✅ FIX: Собираем ключи для удаления отдельно, чтобы избежать race condition
-    const keysToDelete = []
-    for (const [key, val] of engines.entries()) {
-        if (val === engine) keysToDelete.push(key)
-    }
-    for (const key of keysToDelete) {
-        engines.delete(key)
-    }
+    // Remove every active alias for this engine (hash and magnet URI).
+    removeEngineAliases(engine)
 
     // Keep-Alive: freeze instead of destroy (unless forced)
     if (!forceDestroy) {

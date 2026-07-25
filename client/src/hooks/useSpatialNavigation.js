@@ -40,6 +40,23 @@ const SpatialEngine = {
         }
     },
 
+    pruneZone(zone) {
+        const elements = this.zones[zone];
+        if (!elements) return 0;
+
+        let removed = 0;
+        for (const element of [...elements]) {
+            if (document.body.contains(element)) continue;
+            this.unregister(zone, element);
+            removed++;
+        }
+
+        if (removed > 0) {
+            console.log(`[SpatialNav] Pruned ${removed} stale refs from zone '${zone}'`);
+        }
+        return removed;
+    },
+
     focusId(zone, id) {
         if (this.idMap[zone] && this.idMap[zone][id]) {
             const element = this.idMap[zone][id];
@@ -59,29 +76,25 @@ const SpatialEngine = {
     },
 
     setActiveZone(zone) {
+        if (this.activeZone === zone) return false;
+
         console.log(`[SpatialNav] Active Zone: ${this.activeZone} -> ${zone}`);
-
-        // Aggressively cleanup stale references in BOTH old and new zones
-        [this.activeZone, zone].forEach(z => {
-            if (this.zones[z]) {
-                const before = this.zones[z].size;
-                this.zones[z] = new Set(
-                    Array.from(this.zones[z]).filter(el => document.body.contains(el))
-                );
-                const after = this.zones[z].size;
-                if (before !== after) {
-                    console.log(`[SpatialNav] Cleaned ${before - after} stale refs from zone '${z}'`);
-                }
-            }
-        });
-
         this.activeZone = zone;
+        return true;
     },
 
     move(direction) {
         const current = document.activeElement;
-        const allZoneElements = Array.from(this.zones[this.activeZone] || []);
-        const elements = allZoneElements
+        const zoneElements = this.zones[this.activeZone] || new Set();
+        const allZoneElements = Array.from(zoneElements);
+        const isHorizontal = direction === 'ArrowLeft' || direction === 'ArrowRight';
+        const currentRow = isHorizontal && zoneElements.has(current)
+            ? current.closest?.('.snap-container')
+            : null;
+        const candidates = currentRow
+            ? Array.from(currentRow.querySelectorAll('.focusable')).filter(element => zoneElements.has(element))
+            : allZoneElements;
+        const elements = candidates
             .filter(el => document.body.contains(el) && el.offsetParent !== null && el.tabIndex !== -1); // Filter valid, visible, and focusable
 
         if (!elements.length) {
@@ -154,18 +167,7 @@ const SpatialEngine = {
 
     recoverFocus(zone, retryCount = 5) {
         const targetZone = zone || this.activeZone;
-
-        // Clean stale references before recovery (BUG-1 fix)
-        if (this.zones[targetZone]) {
-            const before = this.zones[targetZone].size;
-            this.zones[targetZone] = new Set(
-                Array.from(this.zones[targetZone]).filter(el => document.body.contains(el))
-            );
-            const after = this.zones[targetZone].size;
-            if (before !== after) {
-                console.log(`[SpatialNav] Cleaned ${before - after} stale refs before recovery in '${targetZone}'`);
-            }
-        }
+        this.pruneZone(targetZone);
 
         const attempt = () => {
             const elements = Array.from(this.zones[targetZone] || [])
@@ -224,6 +226,10 @@ export const useSpatialItem = (zone = 'main', id = null) => {
  * Hook for the App to initialize the Global Arbiter
  */
 export const useSpatialArbiter = (onBack) => {
+    const setActiveZone = useCallback((zone) => {
+        return SpatialEngine.setActiveZone(zone);
+    }, []);
+
     useEffect(() => {
         const handleKeyDown = (e) => {
             const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
@@ -258,9 +264,7 @@ export const useSpatialArbiter = (onBack) => {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [onBack]);
 
-    return {
-        setActiveZone: (zone) => SpatialEngine.setActiveZone(zone)
-    };
+    return { setActiveZone };
 };
 
 export default SpatialEngine;

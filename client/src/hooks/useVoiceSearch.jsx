@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * useVoiceSearch — centralized voice search hook.
  *

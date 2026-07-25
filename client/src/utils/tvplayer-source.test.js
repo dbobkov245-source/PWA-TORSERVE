@@ -10,10 +10,20 @@ const sourcePath = path.resolve(__dirname, '../../android/app/src/main/java/com/
 describe('TVPlayer source contract', () => {
     it('keeps NEW_TASK flag in both play and playList intents', () => {
         const source = fs.readFileSync(sourcePath, 'utf8')
-        const playMethod = source.match(/public void play\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n    \}/)
-        const playListMethod = source.match(/public void playList\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n    \}/)
+        const playMethod = source.match(/public void play\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n {4}\}/)
+        const playListMethod = source.match(/public void playList\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n {4}\}/)
 
         expect(playMethod?.[0]).toContain('FLAG_ACTIVITY_NEW_TASK')
         expect(playListMethod?.[0]).toContain('FLAG_ACTIVITY_NEW_TASK')
+    })
+
+    it('returns the complete playback result shape when a player returns no data', () => {
+        const source = fs.readFileSync(sourcePath, 'utf8')
+        const callback = source.match(/private void playerResult\(PluginCall call, ActivityResult result\) \{[\s\S]*?call\.resolve\(ret\);[\s\S]*?\n {4}\}/)
+        const noDataBranch = callback?.[0].match(/else \{[\s\S]*?\n {8}\}/)
+
+        expect(noDataBranch?.[0]).toContain('ret.put("position", -1)')
+        expect(noDataBranch?.[0]).toContain('ret.put("duration", -1)')
+        expect(noDataBranch?.[0]).toContain('ret.put("finished", false)')
     })
 })

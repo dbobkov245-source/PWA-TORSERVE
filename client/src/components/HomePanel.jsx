@@ -150,6 +150,7 @@ const HomePanel = ({
         [displayRows, watchedIds, rejectedIds]
     )
     const pickerActive = pickerOpen && swipeCandidates.length > 0
+    const hasActiveSubview = Boolean(activeMovie || activePerson || activeCategory)
 
     useEffect(() => {
         if (pickerOpen && swipeCandidates.length === 0) setPickerOpen(false)
@@ -220,6 +221,7 @@ const HomePanel = ({
     const pendingLazyIdsRef = useRef([])
     const queuedLazyIdsRef = useRef(new Set())
     const drainingLazyRef = useRef(false)
+    const lazyInteractionStartedRef = useRef(false)
     const queueLazyLoadRef = useRef(null)
     const pendingTierOneRef = useRef([])
     const activeTierOneRef = useRef(0)
@@ -229,11 +231,15 @@ const HomePanel = ({
     const mountedRef = useRef(true)
     const homeScrollRef = useRef(null)
     const restorePendingRef = useRef(true)
+    const focusSnapshotFrameRef = useRef(null)
     useEffect(() => {
         const retryTimers = retryTimersRef.current
         mountedRef.current = true
         return () => {
             mountedRef.current = false
+            if (focusSnapshotFrameRef.current !== null) {
+                cancelAnimationFrame(focusSnapshotFrameRef.current)
+            }
             retryTimers.forEach(clearTimeout)
             retryTimers.clear()
         }
@@ -377,6 +383,7 @@ const HomePanel = ({
     }, [loadRow, registryRows])
 
     const queueLazyLoad = useCallback((category) => {
+        if (!lazyInteractionStartedRef.current) return
         if (!category?.id) return
         if (refreshedRowsRef.current.has(category.id) || emptyRowsRef.current.has(category.id) || exhaustedRowsRef.current.has(category.id) || inflightRef.current.has(category.id)) return
         if (queuedLazyIdsRef.current.has(category.id)) return
@@ -424,9 +431,16 @@ const HomePanel = ({
     }, [cachedRows.length, loadRow, queueTierOneLoad, registryReady, registryRows])
 
     useEffect(() => {
+        if (hasActiveSubview) return
         const scroller = homeScrollRef.current
         if (!scroller) return
-        const handleScroll = () => checkLazyRowsNearViewport()
+        const handleScroll = () => {
+            if (!lazyInteractionStartedRef.current) {
+                if (scroller.scrollTop <= 0) return
+                lazyInteractionStartedRef.current = true
+            }
+            checkLazyRowsNearViewport()
+        }
         handleScroll()
         scroller.addEventListener('scroll', handleScroll, { passive: true })
         window.addEventListener('resize', handleScroll)
@@ -434,23 +448,14 @@ const HomePanel = ({
             scroller.removeEventListener('scroll', handleScroll)
             window.removeEventListener('resize', handleScroll)
         }
-    }, [checkLazyRowsNearViewport])
+    }, [checkLazyRowsNearViewport, hasActiveSubview])
 
     useEffect(() => {
         const id = setInterval(() => {
-            checkLazyRowsNearViewport()
-            const next = registryRows.find(c =>
-                (c.tier || 1) >= 3 &&
-                !refreshedRowsRef.current.has(c.id) &&
-                !emptyRowsRef.current.has(c.id) &&
-                !exhaustedRowsRef.current.has(c.id) &&
-                !inflightRef.current.has(c.id) &&
-                !queuedLazyIdsRef.current.has(c.id)
-            )
-            if (next) queueLazyLoad(next)
+            if (lazyInteractionStartedRef.current) checkLazyRowsNearViewport()
         }, 1600)
         return () => clearInterval(id)
-    }, [checkLazyRowsNearViewport, queueLazyLoad, registryRows])
+    }, [checkLazyRowsNearViewport])
 
     // Fast id→row lookup for the render (loaded rows vs lazy placeholders).
     const loadedById = useMemo(() => {
@@ -636,15 +641,28 @@ const HomePanel = ({
     }
 
     // Handlers
-    const handleItemClick = (item) => {
+    const handleItemClick = useCallback((item) => {
         setPickerOpen(false)
         setActiveMovie(item)
-    }
+    }, [setActiveMovie])
 
     const handlePickerSkip = useCallback((item) => {
         if (!item?.id) return
         setRejectedIds(previous => new Set(previous).add(item.id))
     }, [])
+
+    const handlePickerOpen = useCallback(() => {
+        if (swipeCandidates.length === 0) return
+        const focus = {
+            rowId: 'swipe-hero',
+            itemIndex: 0,
+            verticalScroll: homeScrollRef.current?.scrollTop || 0,
+            horizontalScroll: 0
+        }
+        savedFocusRef.current = focus
+        writeHomeFocus(focus)
+        setPickerOpen(true)
+    }, [swipeCandidates.length])
 
     const handlePersonClick = (person) => {
         setActiveMovie(null)
@@ -661,10 +679,10 @@ const HomePanel = ({
         })
     }
 
-    const handleMoreClick = (categoryId) => {
-        const cat = registryRows.find(row => row.id === categoryId)
+    const handleMoreClick = useCallback((categoryId) => {
+        const cat = rowsByIdRef.current[categoryId]
         if (cat) setActiveCategory({ ...cat, name: cat.name || cat.title })
-    }
+    }, [setActiveCategory])
 
     const handleRowFocus = useCallback((item, itemIndex, rowId, horizontalScroll = 0) => {
         setFocusedItem(item)
@@ -676,6 +694,27 @@ const HomePanel = ({
         }
         savedFocusRef.current = focus
         writeHomeFocus(focus)
+
+        if (focusSnapshotFrameRef.current !== null) {
+            cancelAnimationFrame(focusSnapshotFrameRef.current)
+        }
+        focusSnapshotFrameRef.current = requestAnimationFrame(() => {
+            focusSnapshotFrameRef.current = requestAnimationFrame(() => {
+                focusSnapshotFrameRef.current = null
+                const current = savedFocusRef.current
+                const scroller = homeScrollRef.current
+                if (!scroller || current?.rowId !== rowId || current?.itemIndex !== itemIndex) return
+                const wrapper = [...scroller.querySelectorAll('[data-row-id]')]
+                    .find(node => node.dataset.rowId === rowId)
+                const settled = {
+                    ...current,
+                    verticalScroll: scroller.scrollTop || 0,
+                    horizontalScroll: wrapper?.querySelector('.snap-container')?.scrollLeft || 0
+                }
+                savedFocusRef.current = settled
+                writeHomeFocus(settled)
+            })
+        })
     }, [])
 
     const getRowFocusCallback = useCallback((rowId) => {
@@ -709,22 +748,39 @@ const HomePanel = ({
         const scroller = homeScrollRef.current
         if (!scroller || !saved?.rowId) return false
 
+        scroller.scrollTop = Number(saved.verticalScroll) || 0
+        if (saved.rowId === 'swipe-hero') {
+            const hero = scroller.querySelector('[data-swipe-hero]')
+            if (!hero) return false
+            hero.focus({ preventScroll: true })
+            return true
+        }
+
         const row = [...scroller.querySelectorAll('[data-row-id]')]
             .find(node => node.dataset.rowId === saved.rowId)
         if (!row) return false
 
-        scroller.scrollTop = Number(saved.verticalScroll) || 0
         const horizontalScroller = row.querySelector('.snap-container')
         if (!horizontalScroller) return false
+        horizontalScroller.scrollLeft = Number(saved.horizontalScroll) || 0
         const items = horizontalScroller.querySelectorAll('[data-item-id], .snap-item')
         const itemNode = items[Number(saved.itemIndex) || 0]
         if (!itemNode) return false
-        itemNode.focus()
+        itemNode.focus({ preventScroll: true })
+        scroller.scrollTop = Number(saved.verticalScroll) || 0
+        horizontalScroller.scrollLeft = Number(saved.horizontalScroll) || 0
         return true
     }, [])
 
+    const handlePickerClose = useCallback(() => {
+        setPickerOpen(false)
+        const saved = savedFocusRef.current
+        if (saved?.rowId !== 'swipe-hero') return
+        requestAnimationFrame(() => restoreHomeFocus(saved))
+    }, [restoreHomeFocus])
+
     useEffect(() => {
-        if (activeMovie) {
+        if (hasActiveSubview) {
             restorePendingRef.current = true
             return
         }
@@ -739,7 +795,7 @@ const HomePanel = ({
             if (restoreHomeFocus(saved)) restorePendingRef.current = false
         })
         return () => cancelAnimationFrame(frame)
-    }, [activeMovie, displayRows, restoreHomeFocus])
+    }, [hasActiveSubview, displayRows, fourKItems, traktWatchlist, restoreHomeFocus])
 
     const enrichNextRankedBatch = useCallback(async (rowId) => {
         if (rankedInflightRef.current.has(rowId)) return
@@ -900,7 +956,7 @@ const HomePanel = ({
                 onClose={() => setShowSidebar(false)}
             />
 
-            <div className={`min-w-0 flex-1 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
+            <div className={`flex-1 min-w-0 relative transition-all duration-300 ease-out ${showSidebar ? 'translate-x-64 pointer-events-none' : 'translate-x-0'}`}>
                 <div className="absolute inset-0 bg-[#141414]" />
 
                 {/* Content area: vertical scroll enabled, horizontal scroll handled by HomeRow */}
@@ -910,9 +966,7 @@ const HomePanel = ({
                     )}
                     {swipeCandidates.length > 0 && (
                         <SwipeHero
-                            onOpen={() => {
-                                if (swipeCandidates.length > 0) setPickerOpen(true)
-                            }}
+                            onOpen={handlePickerOpen}
                             isActive={!showSidebar && !pickerActive}
                         />
                     )}
@@ -977,7 +1031,7 @@ const HomePanel = ({
                         onSkip={handlePickerSkip}
                         onFavorite={addFavorite}
                         onOpenItem={handleItemClick}
-                        onClose={() => setPickerOpen(false)}
+                        onClose={handlePickerClose}
                     />
                 )}
 

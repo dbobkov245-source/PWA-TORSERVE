@@ -2,18 +2,35 @@
  * UpdateModal — Модальное окно обновления приложения
  * TV-совместимый компонент с D-pad навигацией (Spatial Engine)
  */
-import { useState, useCallback } from 'react';
-import { useSpatialItem } from '../hooks/useSpatialNavigation';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation';
 import { downloadAndInstall } from '../utils/appUpdater';
 
 export default function UpdateModal({ updateInfo, onDismiss }) {
     const [status, setStatus] = useState('idle'); // idle | downloading | error
     const [progress, setProgress] = useState(0);
     const [errorMsg, setErrorMsg] = useState('');
+    const previousActiveRef = useRef(null);
 
     // Spatial refs — same area as other modals
-    const updateBtnRef = useSpatialItem('modal');
-    const laterBtnRef = useSpatialItem('modal');
+    const updateBtnRef = useSpatialItem('modal', 'update-install');
+    const laterBtnRef = useSpatialItem('modal', 'update-later');
+
+    useEffect(() => {
+        previousActiveRef.current = document.activeElement;
+        return () => {
+            const previous = previousActiveRef.current;
+            if (previous?.isConnected && typeof previous.focus === 'function') {
+                previous.focus();
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (status !== 'downloading') {
+            SpatialEngine.focusId('modal', 'update-install');
+        }
+    }, [status]);
 
     const handleUpdate = useCallback(async () => {
         setStatus('downloading');

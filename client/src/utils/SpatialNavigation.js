@@ -25,7 +25,7 @@ export const findNextFocus = (current, direction, container = document) => {
         const candidateRect = candidate.getBoundingClientRect()
 
         if (isValidCandidate(rect, candidateRect, direction)) {
-            const distance = getDistance(rect, candidateRect, direction)
+            const distance = getDistance(rect, candidateRect)
 
             // Weight alignment heavily to prefer straight lines
             const alignment = getAlignmentPenalty(rect, candidateRect, direction)
@@ -53,7 +53,7 @@ const isValidCandidate = (current, candidate, direction) => {
 }
 
 // Euclidean distance between closest points or centers
-const getDistance = (current, candidate, direction) => {
+const getDistance = (current, candidate) => {
     // Simple center-to-center distance for now
     const currentCenter = getCenter(current)
     const candidateCenter = getCenter(candidate)

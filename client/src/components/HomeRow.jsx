@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState, useEffect, forwardRef } from 'react'
+import React, { useCallback, useRef, useState, forwardRef, memo } from 'react'
 import { getPosterUrl, getTitle, getBackdropUrl, getYear } from '../utils/discover'
 import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
@@ -25,11 +25,6 @@ const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, im
     const [isBroken, setIsBroken] = useState(() => imageErrors.has(imageUrl))
     const originalTitle = item?.original_title || item?.original_name
     const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
-
-    useEffect(() => {
-        setImgSrc(imageUrl)
-        setIsBroken(imageErrors.has(imageUrl))
-    }, [imageUrl, imageErrors])
 
     const setCardRef = useCallback((node) => {
         spatialRef(node)
@@ -192,7 +187,7 @@ const RowAction = ({ index, registerItem, focused, label, icon, onClick, onFocus
     )
 }
 
-const HomeRow = forwardRef(({
+const HomeRow = memo(forwardRef(({
     title,
     icon,
     source,
@@ -341,7 +336,11 @@ const HomeRow = forwardRef(({
 
                 {items.map((item, index) => (
                     <MovieCard
-                        key={item.id || index}
+                        key={`${item.id || index}:${layout}:${
+                            layout === 'backdrop_below'
+                                ? item.backdrop_path || ''
+                                : item.poster_path || item._kp_data?.posterUrlPreview || ''
+                        }`}
                         item={item}
                         index={index + mediaOffset}
                         layout={layout}
@@ -374,7 +373,7 @@ const HomeRow = forwardRef(({
             </div>
         </div>
     )
-})
+}))
 
 HomeRow.displayName = 'HomeRow'
 

@@ -67,7 +67,7 @@ const TraktSection = () => {
             const d = await startTraktDevice()
             setDevice(d)
             startPolling(d.interval)
-        } catch (e) {
+        } catch {
             setMsg('Ошибка. Проверь TRAKT_CLIENT_ID/SECRET на сервере.')
         } finally { setBusy(false) }
     }, [startPolling])
@@ -197,11 +197,6 @@ const SettingsPanel = ({
         setActiveTab(initialTab)
     }, [initialTab])
 
-    // Fetch Status when entering Status tab
-    useEffect(() => {
-        if (activeTab === 'status') fetchStatus()
-    }, [activeTab])
-
     // Spatial Refs
     const closeBtnRef = useSpatialItem('settings')
     const serverInputRef = useSpatialItem('settings')
@@ -235,15 +230,15 @@ const SettingsPanel = ({
         window.location.reload()
     }
 
-    const fetchStatus = async () => {
+    const fetchStatus = useCallback(async () => {
         setStatusLoading(true)
         try {
             const [sRes, lRes, dRes, sysRes, tlRes] = await Promise.all([
-                fetch(`${serverUrl}/api/status`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/lag-stats`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/providers/diagnostics`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/system`).catch(e => ({ ok: false })),
-                fetch(`${serverUrl}/api/session-timeline?limit=180`).catch(e => ({ ok: false }))
+                fetch(`${serverUrl}/api/status`).catch(() => ({ ok: false })),
+                fetch(`${serverUrl}/api/lag-stats`).catch(() => ({ ok: false })),
+                fetch(`${serverUrl}/api/providers/diagnostics`).catch(() => ({ ok: false })),
+                fetch(`${serverUrl}/api/system`).catch(() => ({ ok: false })),
+                fetch(`${serverUrl}/api/session-timeline?limit=180`).catch(() => ({ ok: false }))
             ])
             const sData = sRes.ok ? await sRes.json() : {}
             const lData = lRes.ok ? await lRes.json() : {}
@@ -265,7 +260,12 @@ const SettingsPanel = ({
             setTimeline(Array.isArray(tlData?.samples) ? tlData.samples : [])
         } catch (e) { console.error(e) }
         finally { setStatusLoading(false) }
-    }
+    }, [serverUrl])
+
+    // Fetch status when entering the Status tab or when its server changes.
+    useEffect(() => {
+        if (activeTab === 'status') fetchStatus()
+    }, [activeTab, fetchStatus])
 
     const runPosterTest = async (testName) => {
         setTestLoading(true)

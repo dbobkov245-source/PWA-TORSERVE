@@ -41,6 +41,21 @@ test('removeTorrent returns false for non-existent hash', async () => {
     expect(result).toBeFalsy()
 })
 
+test('engine cleanup removes every map alias after a runtime error', async () => {
+    const { removeEngineAliases } = await import('../torrent.js')
+    const engine = { infoHash: 'abc123' }
+    const engineMap = new Map([
+        ['abc123', engine],
+        ['magnet:?xt=urn:btih:abc123', engine],
+        ['other', { infoHash: 'other' }]
+    ])
+
+    expect(removeEngineAliases(engine, engineMap)).toBe(2)
+    expect(engineMap.has('abc123')).toBe(false)
+    expect(engineMap.has('magnet:?xt=urn:btih:abc123')).toBe(false)
+    expect(engineMap.has('other')).toBe(true)
+})
+
 // ─────────────────────────────────────────────────────────────
 // Magnet URI Parsing (if you have such utilities)
 // ─────────────────────────────────────────────────────────────

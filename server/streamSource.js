@@ -49,3 +49,32 @@ export function getStartPieceIndex(fileOffset, byteWithinFile, pieceLength) {
     const len = Number.isFinite(pieceLength) && pieceLength > 0 ? pieceLength : 1
     return Math.floor((offset + within) / len)
 }
+
+/**
+ * HEAD must return GET-equivalent headers without opening the media source.
+ *
+ * @param {string} method
+ * @returns {boolean}
+ */
+export function shouldCreateStreamBody(method) {
+    return String(method || '').toUpperCase() !== 'HEAD'
+}
+
+/**
+ * Build one cleanup callback for response close/error races.
+ *
+ * @param {{ destroyed?: boolean, destroy: () => void }} stream
+ * @param {() => void} onCleanup
+ * @returns {() => boolean} true only for the first cleanup call
+ */
+export function createStreamCleanup(stream, onCleanup = () => {}) {
+    let cleaned = false
+
+    return () => {
+        if (cleaned) return false
+        cleaned = true
+        if (!stream.destroyed) stream.destroy()
+        onCleanup()
+        return true
+    }
+}

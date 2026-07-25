@@ -3,6 +3,13 @@
 import React from 'react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'fs'
+import path from 'path'
+
+const src = fs.readFileSync(
+    path.resolve(import.meta.dirname, './HomePanel.jsx'),
+    'utf8'
+)
 
 const mocks = vi.hoisted(() => ({
     addFavorite: vi.fn(async () => ({})),
@@ -105,12 +112,12 @@ vi.mock('./EditorialRow', () => ({ default: props => <RowMock {...props} testId=
 vi.mock('./RankedRow', () => ({ default: props => <RowMock {...props} testId="ranked-row" /> }))
 vi.mock('./SwipeHero', () => ({
     default: ({ onOpen, isActive }) => (
-        <button type="button" data-testid="swipe-hero" data-active={String(isActive)} onClick={onOpen}>picker</button>
+        <button type="button" data-swipe-hero data-testid="swipe-hero" data-active={String(isActive)} onClick={onOpen}>picker</button>
     )
 }))
 vi.mock('./SwipePicker', () => ({
     default: ({ items, onSkip, onFavorite, onOpenItem, onClose }) => (
-        <div role="dialog" data-candidates={items.map(item => item.id).join(',')}>
+        <div role="dialog" tabIndex={0} autoFocus data-candidates={items.map(item => item.id).join(',')}>
             <button type="button" onClick={() => onSkip(items[0])}>skip</button>
             <button type="button" onClick={() => onFavorite(items[0])}>favorite</button>
             <button type="button" onClick={() => onOpenItem(items[0])}>open</button>
@@ -120,13 +127,20 @@ vi.mock('./SwipePicker', () => ({
 }))
 vi.mock('./ContinueWatchingRow', () => ({ default: () => <div data-testid="continue-row" /> }))
 vi.mock('./CategoryPage', () => ({
-    default: ({ customCategory }) => (
+    default: ({ customCategory, onBack }) => (
         <div data-testid="category-page" data-has-fetcher={String(typeof customCategory?.fetcher === 'function')}>
             <button type="button" onClick={() => customCategory.fetcher(1)}>fetch-category</button>
+            <button type="button" onClick={onBack}>back-from-category</button>
         </div>
     )
 }))
-vi.mock('./PersonDetail', () => ({ default: () => <div data-testid="person-detail" /> }))
+vi.mock('./PersonDetail', () => ({
+    default: ({ onBack }) => (
+        <div data-testid="person-detail">
+            <button type="button" onClick={onBack}>back-from-person</button>
+        </div>
+    )
+}))
 vi.mock('./MovieDetail', () => ({
     default: ({ onBack }) => <button type="button" onClick={onBack}>back-from-detail</button>
 }))
@@ -396,6 +410,27 @@ describe('picker, enrichment, and focus persistence', () => {
         expect(view.queryByRole('dialog')).toBeNull()
     })
 
+    it('restores Swipe Hero focus after opening an item and returning from detail', async () => {
+        mocks.buildSwipeCandidates.mockReturnValue([item(1)])
+        mocks.createHybridRows.mockReturnValue([row('x', 'poster', {
+            fetcher: vi.fn(async () => ({ results: [item(1)] }))
+        })])
+        const Harness = () => {
+            const [activeMovie, setActiveMovie] = React.useState(null)
+            return <HomePanel {...baseProps} activeMovie={activeMovie} setActiveMovie={setActiveMovie} />
+        }
+
+        const view = render(<Harness />)
+        await view.findByText('Item 1')
+        const hero = view.getByTestId('swipe-hero')
+        hero.focus()
+        fireEvent.click(hero)
+        fireEvent.click(view.getByText('open'))
+        fireEvent.click(await view.findByText('back-from-detail'))
+
+        await waitFor(() => expect(document.activeElement).toBe(view.getByTestId('swipe-hero')))
+    })
+
     it('keeps skipped picker items rejected for the HomePanel session', async () => {
         mocks.buildSwipeCandidates.mockImplementation(rows => rows.flatMap(value => value.items))
         mocks.createHybridRows.mockReturnValue([row('deck', 'editorial', {
@@ -466,7 +501,120 @@ describe('picker, enrichment, and focus persistence', () => {
 
         await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 2'))
         expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(55)
-        expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(0)
+        expect(view.container.querySelector('[data-row-id="x"] .snap-container').scrollLeft).toBe(77)
+    })
+
+    it.each(['movie', 'category', 'person'])(
+        'restores deep row, item, vertical position, and horizontal scroll after %s Back',
+        async (subview) => {
+            const deepRow = row('tier-3-deep', 'poster', {
+                tier: 3,
+                fetcher: vi.fn(() => new Promise(() => {}))
+            })
+            mocks.createHybridRows.mockReturnValue([deepRow])
+            mocks.readHomeSnapshot.mockReturnValue({
+                rows: [{
+                    ...deepRow,
+                    fetcher: undefined,
+                    items: [item(1), item(2), item(3)]
+                }],
+                savedAt: 1
+            })
+
+            const Harness = () => {
+                const [activeMovie, setActiveMovie] = React.useState(null)
+                const [activeCategory, setActiveCategory] = React.useState(null)
+                const [activePerson, setActivePerson] = React.useState(null)
+                return (
+                    <>
+                        <button type="button" onClick={() => setActivePerson({ id: 7 })}>
+                            open-person
+                        </button>
+                        <HomePanel
+                            {...baseProps}
+                            activeMovie={activeMovie}
+                            setActiveMovie={setActiveMovie}
+                            activeCategory={activeCategory}
+                            setActiveCategory={setActiveCategory}
+                            activePerson={activePerson}
+                            setActivePerson={setActivePerson}
+                        />
+                    </>
+                )
+            }
+
+            const view = render(<Harness />)
+            const target = await view.findByText('Item 3')
+            const homeScroller = view.container.querySelector('.custom-scrollbar')
+            const rowScroller = target.closest('.snap-container')
+            homeScroller.scrollTop = 640
+            rowScroller.scrollLeft = 180
+            fireEvent.focus(target)
+
+            if (subview === 'movie') fireEvent.click(target)
+            if (subview === 'category') fireEvent.click(view.getByText('more-tier-3-deep'))
+            if (subview === 'person') fireEvent.click(view.getByText('open-person'))
+
+            fireEvent.click(await view.findByText(`back-from-${subview === 'movie' ? 'detail' : subview}`))
+
+            await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 3'))
+            expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(640)
+            expect(view.container.querySelector('[data-row-id="tier-3-deep"] .snap-container').scrollLeft).toBe(180)
+        }
+    )
+
+    it('waits for a lazy tier-3 row to mount before restoring its saved item', async () => {
+        vi.stubGlobal('IntersectionObserver', class {
+            observe() {}
+            disconnect() {}
+        })
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function getRect() {
+            return this.hasAttribute('data-category-id')
+                ? { top: 100, bottom: 300 }
+                : { top: 0, bottom: 500 }
+        })
+        const tierOne = row('tier-1', 'poster', {
+            tier: 1,
+            fetcher: vi.fn(async () => ({ results: [item(1)] }))
+        })
+        const tierThree = row('tier-3-lazy', 'poster', {
+            tier: 3,
+            fetcher: vi.fn(async () => ({ results: [item(8), item(9)] }))
+        })
+        mocks.createHybridRows.mockReturnValue([tierOne, tierThree])
+        mocks.readHomeFocus.mockReturnValue({
+            rowId: 'tier-3-lazy',
+            itemIndex: 1,
+            verticalScroll: 720,
+            horizontalScroll: 240
+        })
+
+        const Harness = () => {
+            const [activeCategory, setActiveCategory] = React.useState({
+                id: 'temporary-category',
+                name: 'Temporary',
+                fetcher: vi.fn()
+            })
+            return (
+                <HomePanel
+                    {...baseProps}
+                    activeCategory={activeCategory}
+                    setActiveCategory={setActiveCategory}
+                />
+            )
+        }
+
+        const view = render(<Harness />)
+        fireEvent.click(await view.findByText('back-from-category'))
+        await view.findByText('Item 1')
+
+        const scroller = view.container.querySelector('.custom-scrollbar')
+        scroller.scrollTop = 100
+        fireEvent.scroll(scroller)
+
+        await waitFor(() => expect(document.activeElement?.textContent).toBe('Item 9'))
+        expect(view.container.querySelector('.custom-scrollbar').scrollTop).toBe(720)
+        expect(view.container.querySelector('[data-row-id="tier-3-lazy"] .snap-container').scrollLeft).toBe(240)
     })
 
     it('does not rewrite restored focus when the HomePanel parent rerenders', async () => {
@@ -598,14 +746,17 @@ describe('home composition and public contract', () => {
 })
 
 describe('bounded loading', () => {
-    it('keeps tier-three timer fallback serial when observers and scroll proximity do not fire', async () => {
+    it('waits for vertical intent and keeps tier-three loading serial', async () => {
         vi.useFakeTimers()
         vi.stubGlobal('IntersectionObserver', class {
             observe() {}
             disconnect() {}
         })
+        let nearViewport = false
         vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function getRect() {
-            return this.hasAttribute('data-category-id') ? { top: 10_000 } : { bottom: 100 }
+            return this.hasAttribute('data-category-id')
+                ? { top: nearViewport ? 100 : 10_000 }
+                : { bottom: 100 }
         })
         let active = 0
         let maximum = 0
@@ -620,14 +771,19 @@ describe('bounded loading', () => {
         })))
 
         const view = render(<HomePanel {...baseProps} />)
-        await act(async () => { await vi.advanceTimersByTimeAsync(1599) })
+        await act(async () => { await vi.advanceTimersByTimeAsync(3200) })
         expect(resolvers).toHaveLength(0)
-        await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+
+        const scroller = view.container.querySelector('.custom-scrollbar')
+        Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 100 })
+        nearViewport = true
+        fireEvent.scroll(scroller)
         expect(resolvers).toHaveLength(1)
+
         await act(async () => {
             resolvers.shift()()
             await Promise.resolve()
-            await vi.advanceTimersByTimeAsync(1600)
+            await Promise.resolve()
         })
         expect(resolvers).toHaveLength(1)
         expect(maximum).toBe(1)
@@ -777,5 +933,41 @@ describe('bounded loading', () => {
 
         expect(empty).toHaveBeenCalledOnce()
         expect(sameProvider).toHaveBeenCalledOnce()
+    })
+
+    it('keeps home quality badge discovery capped to visible rows', () => {
+        expect(src).toContain('const MAX_HOME_QUALITY_TITLES = 12')
+    })
+
+    it('does not rely only on IntersectionObserver for tier-3 lazy rows', () => {
+        expect(src).toContain('homeScrollRef')
+        expect(src).toContain('queueLazyLoad')
+        expect(src).toContain('checkLazyRowsNearViewport')
+        expect(src).toContain('setInterval')
+        expect(src).toContain('data-category-id')
+    })
+
+    it('does not proactively load the next tier-3 row while Home is idle', () => {
+        expect(src).not.toContain('const next = registryRows.find')
+        expect(src).not.toContain('if (next) queueLazyLoad(next)')
+    })
+
+    it('bypasses stale TMDB cache for year sidebar categories', () => {
+        expect(src).toContain('primary_release_year=${item.year}')
+        expect(src).toContain('{ useCache: false }')
+    })
+
+    it('constrains the home content flex child to the viewport width', () => {
+        expect(src).toContain('flex-1 min-w-0 relative transition-all')
+    })
+
+    it('keeps row action callbacks stable across focus-driven parent renders', () => {
+        expect(src).toContain('const handleItemClick = useCallback')
+        expect(src).toContain('const handleMoreClick = useCallback')
+    })
+
+    it('keeps the more callback stable while category rows stream in', () => {
+        expect(src).toContain('const cat = rowsByIdRef.current[categoryId]')
+        expect(src).not.toContain('}, [categories, setActiveCategory])')
     })
 })

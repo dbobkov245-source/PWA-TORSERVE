@@ -1,7 +1,7 @@
 const CACHE_NAME = 'torserve-v3-fix';
 
 // Install event - force activation
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
     console.log('[SW] Installing new fix version...');
     self.skipWaiting();
 });
@@ -11,7 +11,7 @@ self.addEventListener('activate', (event) => {
     console.log('[SW] Activating & Cleaning old caches...');
     event.waitUntil(
         Promise.all([
-            clients.claim(),
+            self.clients.claim(),
             caches.keys().then((cacheNames) => {
                 return Promise.all(
                     cacheNames.map((cacheName) => {

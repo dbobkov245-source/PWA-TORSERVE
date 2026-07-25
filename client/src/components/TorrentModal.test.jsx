@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TorrentModal from './TorrentModal.jsx'
+import SpatialEngine from '../hooks/useSpatialNavigation.js'
 
 vi.mock('@capacitor/app', () => ({
     App: {
@@ -18,22 +19,47 @@ vi.mock('../utils/tmdbClient', () => ({
     getMetadata: () => null
 }))
 
-vi.mock('../hooks/useSpatialNavigation', () => ({
-    default: {
-        recoverFocus: vi.fn(),
-        focusId: vi.fn()
-    },
-    useSpatialItem: () => () => {}
-}))
-
 describe('TorrentModal delete confirmation', () => {
     beforeEach(() => {
         vi.useFakeTimers()
         vi.clearAllMocks()
+        SpatialEngine.zones = {}
+        SpatialEngine.idMap = {}
+        SpatialEngine.activeZone = 'modal'
     })
 
     afterEach(() => {
         vi.useRealTimers()
+    })
+
+    it('focuses its preferred close action and restores prior focus on unmount', () => {
+        const previous = document.createElement('button')
+        previous.textContent = 'Previous'
+        document.body.append(previous)
+        previous.focus()
+
+        const view = render(
+            <TorrentModal
+                torrent={{
+                    infoHash: 'abc123',
+                    name: 'Test Torrent',
+                    files: [{ index: 0, name: 'Episode 1.mkv', length: 1024 }]
+                }}
+                onClose={() => {}}
+                onPlay={() => {}}
+                onPlayAll={() => {}}
+                onCopyUrl={() => {}}
+                onDelete={vi.fn(async () => {})}
+            />
+        )
+
+        expect(document.activeElement).toBe(
+            screen.getByRole('button', { name: '✕' })
+        )
+
+        view.unmount()
+        expect(document.activeElement).toBe(previous)
+        previous.remove()
     })
 
     it('asks for in-app confirmation before deleting a torrent', async () => {
