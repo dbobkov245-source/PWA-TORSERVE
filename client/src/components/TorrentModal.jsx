@@ -32,6 +32,7 @@ const EpisodeItem = ({ file, idx, onClick }) => {
 const TsBoostButton = ({ torrent, onForceTs }) => {
     const btnRef = useSpatialItem('modal')
     const [state, setState] = useState('idle') // idle | busy | done | error
+    const [errorMessage, setErrorMessage] = useState('')
 
     if (!onForceTs || torrent.isReady || (torrent.progress || 0) >= 0.99 || torrent.backend === 'torrserve') {
         return null
@@ -39,7 +40,7 @@ const TsBoostButton = ({ torrent, onForceTs }) => {
 
     const label = state === 'busy' ? '⏳ Переключаем...'
         : state === 'done' ? '✅ Качается через TorrServer'
-        : state === 'error' ? '❌ Не удалось — подробности в логе'
+        : state === 'error' ? `❌ ${errorMessage || 'Не удалось переключить'}`
         : '🚀 Ускорить через TorrServer'
 
     return (
@@ -48,8 +49,16 @@ const TsBoostButton = ({ torrent, onForceTs }) => {
             disabled={state === 'busy' || state === 'done'}
             onClick={async () => {
                 setState('busy')
-                const ok = await onForceTs(torrent.infoHash)
-                setState(ok ? 'done' : 'error')
+                setErrorMessage('')
+                try {
+                    const result = await onForceTs(torrent.infoHash)
+                    const ok = result === true || result?.ok === true
+                    if (!ok) setErrorMessage(result?.error || 'Не удалось переключить')
+                    setState(ok ? 'done' : 'error')
+                } catch (error) {
+                    setErrorMessage(error?.message || 'Не удалось переключить')
+                    setState('error')
+                }
             }}
             className="focusable w-full bg-cyan-700 text-white py-2 rounded font-bold focus:bg-cyan-600 mb-2 disabled:opacity-60"
         >{label}</button>

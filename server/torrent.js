@@ -51,8 +51,77 @@ export function getTorrentDhtListenPort(env = process.env) {
     return torrentPort
 }
 
+// DHT bootstrap. bittorrent-dht defaults to router.bittorrent.com,
+// router.utorrent.com and dht.transmissionbt.com — the first two are
+// IP-blocked from RU. dht.libtorrent.org answers and is not in the
+// default set.
+//
+// A/B on the NAS 2026-07-26, 45s lookup of a live infoHash, run twice in
+// both orders: the default list found **0 peers** both times, this list
+// found 14 both times. Time-to-'ready' is a decoy — the default reaches
+// 'ready' fastest (2.5s) precisely because most of its bootstrap fails,
+// and the same list varied 3.5s/10.5s across runs. Judge a bootstrap
+// change by peers discovered, not by how quickly it claims to be ready.
+const DEFAULT_DHT_BOOTSTRAP = [
+    'dht.transmissionbt.com:6881',
+    'dht.libtorrent.org:25401',
+]
+
+/**
+ * Bootstrap nodes for the shared DHT.
+ * `TORRENT_DHT_BOOTSTRAP` overrides the list (comma-separated); setting it
+ * to an empty string disables bootstrap for isolated/LAN swarms.
+ */
+export function getDhtBootstrapNodes(env = process.env) {
+    const override = env.TORRENT_DHT_BOOTSTRAP
+    if (override === undefined) return [...DEFAULT_DHT_BOOTSTRAP]
+    return override.split(',').map(node => node.trim()).filter(Boolean)
+}
+
 const DHT_UDP_PORT = getTorrentDhtListenPort(process.env)
-export const sharedDHT = new DHTClient()
+export const sharedDHT = new DHTClient({ bootstrap: getDhtBootstrapNodes() })
+
+/**
+ * Detach the 'peer' listener torrent-discovery adds to a shared DHT.
+ *
+ * Discovery attaches `dht.on('peer', onPeer)` unconditionally but only
+ * cleans up in `stop()` when it owns the DHT (`_internalDHT`). Ours is
+ * shared, so every destroyed engine left its listener behind: the closure
+ * pinned the whole Discovery object, and each DHT peer event fanned out to
+ * every torrent ever added. Node starts warning past ten — which the NAS
+ * logs did after ~8 days of uptime.
+ *
+ * Call before creating an engine; invoke the returned function on destroy.
+ * @returns {() => number} detaches listeners added since the call, returns the count
+ */
+export function trackDhtPeerListeners(dht) {
+    const before = new Set(dht?.listeners?.('peer') ?? [])
+
+    return () => {
+        if (typeof dht?.listeners !== 'function' || typeof dht?.removeListener !== 'function') return 0
+
+        const added = dht.listeners('peer').filter(listener => !before.has(listener))
+        added.forEach(listener => dht.removeListener('peer', listener))
+        return added.length
+    }
+}
+
+/**
+ * Always tear engines down through here — a bare `engine.destroy()` leaks
+ * the shared-DHT listener described above.
+ */
+export function destroyEngine(engine) {
+    if (!engine) return
+    engine._releaseDhtListeners?.()
+    delete engine._releaseDhtListeners
+    engine.destroy()
+}
+
+// One 'peer' listener per live engine is by design here — Node's default
+// ceiling of 10 assumes an emitter with few subscribers and would cry leak
+// at the 11th concurrent torrent. Real leaks are handled by destroyEngine();
+// this only silences the false positive.
+sharedDHT.setMaxListeners?.(0)
 
 sharedDHT.listen(DHT_UDP_PORT, () => {
     console.log(`[DHT] Shared DHT listening on UDP port ${DHT_UDP_PORT}`)
@@ -91,26 +160,49 @@ function notifyTorrentChange() { _changeListeners.forEach(cb => cb()) }
 // so their progress flows into the same SSE pipeline.
 export function notifyTorrentsChanged() { notifyTorrentChange() }
 
-// 🔥 Best Public Trackers — verified working (tested 2026-02-23)
-// Tested from Russian ISP: open.stealth.si:80 and torrent.eu.org:451 respond reliably.
-// opentrackr.org:1337 is ISP-blocked from Russia.
-const PUBLIC_TRACKERS = [
-    'udp://open.stealth.si:80/announce',           // ✅ Works from RU
-    'udp://tracker.torrent.eu.org:451/announce',   // ✅ Works from RU
-    'udp://explodie.org:6969/announce',            // ✅ Works from RU
-    'udp://tracker.opentrackr.org:1337/announce',  // ⚠ Blocked by some RU ISPs
-    'udp://tracker.openbittorrent.com:6969/announce',
-    'udp://retracker.lanta-net.ru:2710/announce',  // Russian tracker — works locally
-    'udp://opentor.net:6969/announce',
-    'udp://tracker.zer0day.to:1337/announce',
-    'http://tracker.gbitt.info:80/announce',
-    'https://tracker.tamersunion.org:443/announce', // HTTPS — bypasses port blocks
+// 🔥 Best Public Trackers — re-probed 2026-07-26 from the NAS container
+// with server/tracker-probe.mjs (26 UDP + 14 HTTP candidates).
+//
+// Only 2 of the previous 10 entries still answered: the rest were either
+// NXDOMAIN (dead domains, confirmed against Cloudflare too) or timing out.
+// A dead tracker is not free — torrent-discovery keeps re-announcing to
+// it, and with 8 of 10 dead the swarm stayed at peers: 0 / queued: 0 long
+// enough for /api/add to time out on torrents that other clients resolved
+// in seconds.
+//
+// Re-run the probe before editing this list; do not add entries by
+// reputation alone.
+export const PUBLIC_TRACKERS = [
+    'udp://tracker.torrent.eu.org:451/announce',   // ✅ 59ms  (survivor)
+    'udp://tracker.qu.ax:6969/announce',           // ✅ 84ms
+    'udp://exodus.desync.com:6969/announce',       // ✅ 195ms
+    'udp://explodie.org:6969/announce',            // ✅ 229ms (survivor)
+    'udp://tracker.dler.org:6969/announce',        // ✅ 289ms
+    'udp://open.demonii.com:1337/announce',        // ✅ 390ms
+    'http://t.overflow.biz:6969/announce',         // ✅ returned live peers
 ]
 
 // Metadata bootstrap timeout policy (can be tuned via env without rebuild)
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
 const SAFE_TORRENT_CONNECTIONS = 55
+
+export const METADATA_TIMEOUT_CODE = 'METADATA_TIMEOUT'
+
+/**
+ * Build the error /api/add uses to decide on a TorrServer handover.
+ * Callers branch on `.code`; the message is for humans and reports what
+ * actually happened rather than the theoretical grace-cycle maximum.
+ */
+export function createMetadataTimeoutError({ elapsedMs, peers = 0 }) {
+    const seconds = Math.round(elapsedMs / 1000)
+    const err = new Error(peers > 0
+        ? `Torrent timeout: metadata unavailable after ${seconds}s (${peers} peers connected)`
+        : `Torrent timeout: no peers found in ${seconds}s — swarm unreachable`)
+    err.code = METADATA_TIMEOUT_CODE
+    err.peers = peers
+    return err
+}
 
 export function getTorrentListenPort(env = process.env) {
     const parsed = parseInt(env.TORRENT_PORT || '0', 10)
@@ -279,7 +371,7 @@ function startFrozenCleanup() {
                 .sort((a, b) => a[1].frozenAt - b[1].frozenAt)[0]
             if (oldest) {
                 console.log(`[Keep-Alive] Over limit, destroying oldest: ${oldest[0]}`)
-                oldest[1].engine.destroy()
+                destroyEngine(oldest[1].engine)
                 frozenTorrents.delete(oldest[0])
             }
         }
@@ -287,7 +379,7 @@ function startFrozenCleanup() {
         for (const [hash, frozen] of frozenTorrents.entries()) {
             if (now - frozen.frozenAt > FROZEN_TTL) {
                 console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
-                frozen.engine.destroy()
+                destroyEngine(frozen.engine)
                 frozenTorrents.delete(hash)
             }
         }
@@ -533,6 +625,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         }
 
         let engine
+        // torrent-discovery never detaches its 'peer' listener from a DHT
+        // it does not own — snapshot now so engine.destroy() can undo it.
+        const releaseDhtListeners = trackDhtPeerListeners(sharedDHT)
         try {
             const torrentStream = getTorrentStream()
             // Start wide enough to avoid choke-timeout churn on sparse swarms.
@@ -543,7 +638,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 path,
                 connections: getTorrentConnections()
             }))
+            engine._releaseDhtListeners = releaseDhtListeners
         } catch (err) {
+            releaseDhtListeners()
             console.error('[Torrent] Failed to create engine:', err.message)
             pendingEngines.delete(infoHash)
             return reject(err)
@@ -628,7 +725,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             if (engine.infoHash) frozenTorrents.delete(engine.infoHash)
             invalidateStatusCache()
             notifyTorrentChange()
-            engine.destroy()
+            destroyEngine(engine)
             reject(err)
         })
 
@@ -643,8 +740,6 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         }, 5000)
 
         let timeoutAttempts = 0
-        const totalTimeoutSec = Math.round((METADATA_TIMEOUT_MS * (METADATA_GRACE_CYCLES + 1)) / 1000)
-
         const scheduleTimeout = () => {
             const timeoutId = setTimeout(() => {
                 if (engines.has(magnetURI)) return
@@ -666,10 +761,14 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 }
 
                 clearInterval(logInterval)
-                console.warn(`[Torrent] Timeout: metadata unavailable after ${totalTimeoutSec}s`)
+                const timeoutError = createMetadataTimeoutError({
+                    elapsedMs: Date.now() - startTime,
+                    peers
+                })
+                console.warn(`[Torrent] ${timeoutError.message}`)
                 pendingEngines.delete(infoHash)
-                engine.destroy()
-                reject(new Error(`Torrent timeout: metadata unavailable within ${totalTimeoutSec} seconds`))
+                destroyEngine(engine)
+                reject(timeoutError)
             }, METADATA_TIMEOUT_MS)
 
             // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
@@ -1113,7 +1212,7 @@ export const destroyAllTorrents = () => {
     const uniqueEngines = new Set(engines.values())
     for (const engine of uniqueEngines) {
         try {
-            engine.destroy()
+            destroyEngine(engine)
         } catch (e) {
             console.warn('[Shutdown] Engine destroy failed:', e.message)
         }
@@ -1124,7 +1223,7 @@ export const destroyAllTorrents = () => {
     console.log(`[Shutdown] Clearing ${frozenTorrents.size} frozen torrents...`)
     for (const [hash, frozen] of frozenTorrents.entries()) {
         try {
-            frozen.engine.destroy()
+            destroyEngine(frozen.engine)
         } catch (e) { }
     }
     frozenTorrents.clear()
@@ -1167,7 +1266,7 @@ export const enterDegradedMode = () => {
     // 1. Clear all frozen torrents (they're just cache)
     for (const [hash, frozen] of frozenTorrents.entries()) {
         try {
-            frozen.engine.destroy()
+            destroyEngine(frozen.engine)
             freedCount++
         } catch (e) { }
     }

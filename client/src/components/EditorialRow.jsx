@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { getBackdropUrl, getTitle, getYear } from '../utils/discover'
 import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 import TVRowShell from './TVRowShell'
@@ -83,29 +83,35 @@ const EditorialRow = ({
     onNearEnd,
     qualityBadges,
     watchedIds
-}) => (
-    <TVRowShell
-        id={id}
-        title={title}
-        icon={icon}
-        source={source}
-        items={items}
-        initialIndex={initialIndex}
-        isActive={isActive}
-        onSelect={onSelect}
-        onFocusChange={onFocusChange}
-        onNearEnd={onNearEnd}
-        itemWidth="31vw"
-        itemHalfWidth="15.5vw"
-        renderItem={(item, _index, focused) => (
-            <EditorialCard
-                item={item}
-                focused={focused}
-                qualityBadges={qualityBadges}
-                watched={watchedIds?.has(item.id)}
-            />
-        )}
-    />
-)
+}) => {
+    // Stable identity keeps TVRowShell's memoized items from re-rendering
+    // the whole row on every D-Pad move.
+    const renderItem = useCallback((item, _index, focused) => (
+        <EditorialCard
+            item={item}
+            focused={focused}
+            qualityBadges={qualityBadges}
+            watched={watchedIds?.has(item.id)}
+        />
+    ), [qualityBadges, watchedIds])
+
+    return (
+        <TVRowShell
+            id={id}
+            title={title}
+            icon={icon}
+            source={source}
+            items={items}
+            initialIndex={initialIndex}
+            isActive={isActive}
+            onSelect={onSelect}
+            onFocusChange={onFocusChange}
+            onNearEnd={onNearEnd}
+            itemWidth="31vw"
+            itemHalfWidth="15.5vw"
+            renderItem={renderItem}
+        />
+    )
+}
 
 export default EditorialRow

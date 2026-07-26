@@ -117,4 +117,37 @@ describe('TorrentModal delete confirmation', () => {
         fireEvent.click(screen.getByRole('button', { name: '🗑 Delete' }))
         expect(screen.getByText('Удалить торрент?')).toBeTruthy()
     })
+
+    it('shows the server failover error returned by TorrServer', async () => {
+        render(
+            <TorrentModal
+                torrent={{
+                    infoHash: 'abc123',
+                    name: 'Slow Torrent',
+                    progress: 0.25,
+                    isReady: false,
+                    backend: 'native',
+                    files: [{ index: 0, name: 'Movie.mkv', length: 1024 }]
+                }}
+                onClose={() => {}}
+                onPlay={() => {}}
+                onPlayAll={() => {}}
+                onCopyUrl={() => {}}
+                onDelete={vi.fn(async () => {})}
+                onForceTs={vi.fn(async () => ({
+                    ok: false,
+                    error: 'TorrServer unavailable'
+                }))}
+            />
+        )
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: '🚀 Ускорить через TorrServer' }))
+            await Promise.resolve()
+        })
+
+        expect(
+            screen.getByRole('button', { name: '❌ TorrServer unavailable' })
+        ).toBeTruthy()
+    })
 })

@@ -1,8 +1,11 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, memo } from 'react'
 import useTVNavigation from '../hooks/useTVNavigation'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
-const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, renderItem, onSelect }) => {
+// memo + stable props: a D-Pad move re-renders the shell, and without this
+// every card in the row re-rendered (and re-registered itself with the
+// spatial engine) on each keypress. Callers must pass a stable renderItem.
+const TVRowItem = memo(({ item, index, isFocused, setFocusedIndex, registerRef, renderItem, onSelect }) => {
     const spatialRef = useSpatialItem('main')
     const setComboRef = useCallback((node) => {
         spatialRef(node)
@@ -20,7 +23,9 @@ const TVRowItem = ({ item, index, isFocused, setFocusedIndex, registerRef, rende
             {renderItem(item, index, isFocused)}
         </div>
     )
-}
+})
+
+TVRowItem.displayName = 'TVRowItem'
 
 const TVRowShell = ({
     id,
@@ -39,6 +44,7 @@ const TVRowShell = ({
 }) => {
     const refs = useRef([])
     const lastReportedIndexRef = useRef(null)
+    const registerRef = useCallback((index, node) => { refs.current[index] = node }, [])
     const { focusedIndex, setFocusedIndex, containerProps, isFocused } = useTVNavigation({
         itemCount: items.length,
         columns: Math.max(items.length, 1),
@@ -94,7 +100,7 @@ const TVRowShell = ({
                         index={index}
                         isFocused={isFocused(index)}
                         setFocusedIndex={setFocusedIndex}
-                        registerRef={(idx, node) => { refs.current[idx] = node }}
+                        registerRef={registerRef}
                         renderItem={renderItem}
                         onSelect={isActive ? onSelect : undefined}
                     />

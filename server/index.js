@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
 import fsPromises from 'fs/promises'
-import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen, onTorrentChange, offTorrentChange } from './torrent.js'
+import { addTorrent, getAllTorrents, getTorrent, getRawTorrent, removeTorrent, restoreTorrents, prioritizeFile, readahead, boostTorrent, destroyAllTorrents, setSpeedMode, getActiveTorrentsCount, getFrozenTorrentsCount, markTorrentFilesSeen, onTorrentChange, offTorrentChange, METADATA_TIMEOUT_CODE } from './torrent.js'
 import { db, safeWrite } from './db.js'
 import { startWatchdog, stopWatchdog, getServerState, getImageProbeState } from './watchdog.js'
 import { LagMonitor } from './utils/lag-monitor.js'
@@ -1005,14 +1005,19 @@ app.post('/api/add', async (req, res) => {
         // Native engine can't reach DHT-only swarms (RU-blocked bootstrap,
         // no MSE encryption). TorrServer resolves the same magnets in
         // seconds — hand the download over instead of failing.
-        if (/metadata unavailable/i.test(err.message)) {
+        if (err.code === METADATA_TIMEOUT_CODE) {
             try {
                 const job = await startDirectTsDownload(magnet)
                 if (job) {
                     return res.json({ infoHash: job.infoHash, name: job.name || 'Resolving…', backend: 'torrserve' })
                 }
+                console.warn('[Add] TorrServer fallback declined: max concurrent jobs reached')
+                return res.status(503).json({ error: err.message, fallbackError: 'Max concurrent TorrServer jobs reached' })
             } catch (tsErr) {
+                // Surface why the safety net did not catch this — a bare
+                // native error hides an unreachable or disabled sidecar.
                 console.warn('[Add] TorrServer fallback failed:', tsErr.message)
+                return res.status(503).json({ error: err.message, fallbackError: tsErr.message })
             }
         }
         res.status(500).json({ error: err.message })
