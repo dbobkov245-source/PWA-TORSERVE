@@ -394,11 +394,23 @@ export function extractMagnetHash(magnet) {
  * (metadata timeout: DHT-only swarms are unreachable for torrent-stream,
  * while anacrolix resolves them in seconds — measured 15s vs 270s timeout).
  */
+/**
+ * Hand a magnet the native engine could not resolve over to TorrServer.
+ *
+ * Throws instead of returning null: this runs as the last-resort fallback
+ * inside /api/add, and a silent null made an unreachable sidecar look like
+ * a plain native failure. The whole safety net was down for days before
+ * anyone noticed.
+ */
 export async function startDirectTsDownload(magnet, config = getTsConfig()) {
-    if (!config.enabled) return null
+    if (!config.enabled) throw new Error('TorrServer failover is disabled (TS_FAILOVER=0)')
+
     const infoHash = extractMagnetHash(magnet)
-    if (!infoHash) return null
-    if (!(await tsEcho(config))) return null
+    if (!infoHash) throw new Error('Cannot extract infoHash from magnet')
+
+    if (!(await tsEcho(config))) {
+        throw new Error(`TorrServer unreachable at ${config.url} — check that its port is published`)
+    }
 
     log.info('Native metadata failed → direct TorrServer download', { hash: infoHash })
     return startFailover({ infoHash, magnet, name: null }, config)

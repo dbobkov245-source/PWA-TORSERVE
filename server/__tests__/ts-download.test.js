@@ -133,3 +133,35 @@ test('buildPublicTsStreamUrl uses client-reachable host, not docker bridge', asy
     const custom = buildPublicTsStreamUrl({ hostname: 'nas.local' }, 'abc', 1, { TS_PUBLIC_PORT: '9999' })
     expect(custom).toBe('http://nas.local:9999/stream/file?link=abc&index=1&play')
 })
+
+test('startDirectTsDownload explains why it cannot take over', async () => {
+    const { startDirectTsDownload } = await import('../tsDownload.js')
+    const magnet = 'magnet:?xt=urn:btih:9be5dfc1419f64c1e3a67666c1035397edcb6ec2'
+
+    // Returning null made /api/add answer with a bare native-engine error,
+    // hiding the fact that the whole TorrServer safety net was down.
+    let disabledErr = null
+    try {
+        await startDirectTsDownload(magnet, { ...config, enabled: false })
+    } catch (err) {
+        disabledErr = err
+    }
+    expect(disabledErr?.message).toContain('TS_FAILOVER=0')
+
+    let magnetErr = null
+    try {
+        await startDirectTsDownload('magnet:?xt=urn:btih:notahash', config)
+    } catch (err) {
+        magnetErr = err
+    }
+    expect(magnetErr?.message).toContain('infoHash')
+
+    let unreachableErr = null
+    try {
+        // Reserved TEST-NET-1 address — never routable, fails fast.
+        await startDirectTsDownload(magnet, { ...config, url: 'http://192.0.2.1:8090' })
+    } catch (err) {
+        unreachableErr = err
+    }
+    expect(unreachableErr?.message).toContain('192.0.2.1:8090')
+})

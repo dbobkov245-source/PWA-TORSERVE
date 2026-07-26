@@ -335,3 +335,83 @@ test('onTorrentChange registers a listener that fires on notify', async () => {
     _notifyTorrentChangeForTest()
     expect(called).toBe(1) // not called again after unsubscribe
 })
+
+// ─── Peer discovery: tracker list + DHT bootstrap ──────────────
+// Reachability re-probed 2026-07-26 from the NAS container
+// (server/tracker-probe.mjs). Trackers rot fast; these guard the
+// list against silently regrowing dead entries.
+
+test('PUBLIC_TRACKERS contains only hosts verified reachable 2026-07-26', async () => {
+    const { PUBLIC_TRACKERS } = await import('../torrent.js')
+
+    expect(Array.isArray(PUBLIC_TRACKERS)).toBe(true)
+    expect(PUBLIC_TRACKERS.length).toBeGreaterThan(4)
+    expect(new Set(PUBLIC_TRACKERS).size).toBe(PUBLIC_TRACKERS.length)
+
+    for (const url of PUBLIC_TRACKERS) {
+        expect(/^(udp|https?):\/\/[^/]+\/announce$/.test(url)).toBe(true)
+    }
+})
+
+test('PUBLIC_TRACKERS excludes hosts measured dead from the NAS', async () => {
+    const { PUBLIC_TRACKERS } = await import('../torrent.js')
+
+    // NXDOMAIN on both the router and Cloudflare — domains are gone.
+    // opentrackr/stealth resolve but their UDP ports time out from RU.
+    const dead = [
+        'open.stealth.si',
+        'tracker.opentrackr.org',
+        'tracker.openbittorrent.com',
+        'retracker.lanta-net.ru',
+        'opentor.net',
+        'tracker.zer0day.to',
+        'tracker.gbitt.info',
+        'tracker.tamersunion.org'
+    ]
+
+    for (const host of dead) {
+        const hit = PUBLIC_TRACKERS.find(url => url.includes(host))
+        expect(hit).toBe(undefined)
+    }
+})
+
+test('getDhtBootstrapNodes drops RU-blocked routers and keeps reachable ones', async () => {
+    const { getDhtBootstrapNodes } = await import('../torrent.js')
+    const nodes = getDhtBootstrapNodes({})
+
+    expect(nodes).toContain('dht.transmissionbt.com:6881')
+    expect(nodes).toContain('dht.libtorrent.org:25401')
+    // Both time out from the NAS; keeping them only stalls bootstrap.
+    expect(nodes.join(',')).not.toContain('router.bittorrent.com')
+    expect(nodes.join(',')).not.toContain('router.utorrent.com')
+})
+
+test('getDhtBootstrapNodes honours TORRENT_DHT_BOOTSTRAP override', async () => {
+    const { getDhtBootstrapNodes } = await import('../torrent.js')
+
+    expect(getDhtBootstrapNodes({ TORRENT_DHT_BOOTSTRAP: 'a.example:1, b.example:2' }))
+        .toEqual(['a.example:1', 'b.example:2'])
+    // Explicit empty value disables bootstrap entirely (offline/LAN swarms)
+    expect(getDhtBootstrapNodes({ TORRENT_DHT_BOOTSTRAP: '' })).toEqual([])
+})
+
+test('createMetadataTimeoutError reports elapsed time, not the theoretical max', async () => {
+    const { createMetadataTimeoutError } = await import('../torrent.js')
+
+    // Regression: the message always claimed 270s (90s x 3 grace cycles)
+    // even when the engine gave up after a single 90s wait with 0 peers.
+    const noPeers = createMetadataTimeoutError({ elapsedMs: 90000, peers: 0 })
+    expect(noPeers.message).toBe('Torrent timeout: no peers found in 90s — swarm unreachable')
+
+    const withPeers = createMetadataTimeoutError({ elapsedMs: 270000, peers: 3 })
+    expect(withPeers.message).toBe('Torrent timeout: metadata unavailable after 270s (3 peers connected)')
+})
+
+test('createMetadataTimeoutError is tagged so callers need no message matching', async () => {
+    const { createMetadataTimeoutError, METADATA_TIMEOUT_CODE } = await import('../torrent.js')
+
+    // /api/add routes these to the TorrServer fallback. Matching on the
+    // human-readable message broke as soon as the wording changed.
+    expect(METADATA_TIMEOUT_CODE).toBe('METADATA_TIMEOUT')
+    expect(createMetadataTimeoutError({ elapsedMs: 1000, peers: 0 }).code).toBe(METADATA_TIMEOUT_CODE)
+})

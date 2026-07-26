@@ -9,6 +9,7 @@ import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
 import { dispatchSystemBack } from './utils/backButton.js'
+import { describeAddTorrentError } from './utils/addTorrentError.js'
 import { recordPlaybackResult, getResumePosition, getResumeItems, getResumeEntry, removeResumeEntries } from './utils/watchHistory.js'
 import { scrobbleTrakt } from './utils/traktApi.js'
 
@@ -695,7 +696,8 @@ function App() {
           }, 150)
         })
       } else {
-        throw new Error(`Add torrent failed: HTTP ${res.status}`)
+        const payload = await res.json().catch(() => null)
+        throw new Error(describeAddTorrentError(res.status, payload))
       }
     } catch (e) {
       console.error(e)
@@ -1027,13 +1029,15 @@ function App() {
                 const res = await fetch(`${serverUrl}/api/torrents/${hash}/failover`, { method: 'POST' })
                 if (res.ok) {
                   fetchStatus()
-                  return true
+                  return { ok: true }
                 }
-                console.warn('[ForceTS] failed:', res.status, await res.text().catch(() => ''))
-                return false
+                const body = await res.json().catch(() => null)
+                const error = body?.error || `HTTP ${res.status}`
+                console.warn('[ForceTS] failed:', res.status, error)
+                return { ok: false, error }
               } catch (e) {
                 console.warn('[ForceTS] error:', e)
-                return false
+                return { ok: false, error: e?.message || 'Network error' }
               }
             }}
           />
