@@ -415,3 +415,39 @@ test('createMetadataTimeoutError is tagged so callers need no message matching',
     expect(METADATA_TIMEOUT_CODE).toBe('METADATA_TIMEOUT')
     expect(createMetadataTimeoutError({ elapsedMs: 1000, peers: 0 }).code).toBe(METADATA_TIMEOUT_CODE)
 })
+
+test('trackDhtPeerListeners detaches only the listeners added after tracking began', async () => {
+    const { trackDhtPeerListeners } = await import('../torrent.js')
+
+    // torrent-discovery attaches a 'peer' listener to whatever DHT it is
+    // handed and only detaches it for DHTs it created itself. With one
+    // shared DHT every destroyed engine left its listener behind.
+    const listeners = []
+    const fakeDht = {
+        listeners: () => [...listeners],
+        removeListener: (_event, fn) => {
+            const at = listeners.indexOf(fn)
+            if (at >= 0) listeners.splice(at, 1)
+        }
+    }
+
+    const preexisting = () => {}
+    listeners.push(preexisting)
+
+    const release = trackDhtPeerListeners(fakeDht)
+    const fromEngine = () => {}
+    listeners.push(fromEngine)
+
+    expect(release()).toBe(1)
+    expect(listeners).toEqual([preexisting])
+    // Idempotent: a second destroy must not rip out anyone else's listener
+    expect(release()).toBe(0)
+})
+
+test('trackDhtPeerListeners tolerates a missing or DHT-less engine', async () => {
+    const { trackDhtPeerListeners } = await import('../torrent.js')
+
+    expect(trackDhtPeerListeners(null)()).toBe(0)
+    expect(trackDhtPeerListeners(undefined)()).toBe(0)
+    expect(trackDhtPeerListeners({})()).toBe(0)
+})

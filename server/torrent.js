@@ -75,6 +75,42 @@ export function getDhtBootstrapNodes(env = process.env) {
 const DHT_UDP_PORT = getTorrentDhtListenPort(process.env)
 export const sharedDHT = new DHTClient({ bootstrap: getDhtBootstrapNodes() })
 
+/**
+ * Detach the 'peer' listener torrent-discovery adds to a shared DHT.
+ *
+ * Discovery attaches `dht.on('peer', onPeer)` unconditionally but only
+ * cleans up in `stop()` when it owns the DHT (`_internalDHT`). Ours is
+ * shared, so every destroyed engine left its listener behind: the closure
+ * pinned the whole Discovery object, and each DHT peer event fanned out to
+ * every torrent ever added. Node starts warning past ten — which the NAS
+ * logs did after ~8 days of uptime.
+ *
+ * Call before creating an engine; invoke the returned function on destroy.
+ * @returns {() => number} detaches listeners added since the call, returns the count
+ */
+export function trackDhtPeerListeners(dht) {
+    const before = new Set(dht?.listeners?.('peer') ?? [])
+
+    return () => {
+        if (typeof dht?.listeners !== 'function' || typeof dht?.removeListener !== 'function') return 0
+
+        const added = dht.listeners('peer').filter(listener => !before.has(listener))
+        added.forEach(listener => dht.removeListener('peer', listener))
+        return added.length
+    }
+}
+
+/**
+ * Always tear engines down through here — a bare `engine.destroy()` leaks
+ * the shared-DHT listener described above.
+ */
+export function destroyEngine(engine) {
+    if (!engine) return
+    engine._releaseDhtListeners?.()
+    delete engine._releaseDhtListeners
+    engine.destroy()
+}
+
 sharedDHT.listen(DHT_UDP_PORT, () => {
     console.log(`[DHT] Shared DHT listening on UDP port ${DHT_UDP_PORT}`)
 })
@@ -323,7 +359,7 @@ function startFrozenCleanup() {
                 .sort((a, b) => a[1].frozenAt - b[1].frozenAt)[0]
             if (oldest) {
                 console.log(`[Keep-Alive] Over limit, destroying oldest: ${oldest[0]}`)
-                oldest[1].engine.destroy()
+                destroyEngine(oldest[1].engine)
                 frozenTorrents.delete(oldest[0])
             }
         }
@@ -331,7 +367,7 @@ function startFrozenCleanup() {
         for (const [hash, frozen] of frozenTorrents.entries()) {
             if (now - frozen.frozenAt > FROZEN_TTL) {
                 console.log(`[Keep-Alive] Expired, destroying: ${hash}`)
-                frozen.engine.destroy()
+                destroyEngine(frozen.engine)
                 frozenTorrents.delete(hash)
             }
         }
@@ -577,6 +613,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         }
 
         let engine
+        // torrent-discovery never detaches its 'peer' listener from a DHT
+        // it does not own — snapshot now so engine.destroy() can undo it.
+        const releaseDhtListeners = trackDhtPeerListeners(sharedDHT)
         try {
             const torrentStream = getTorrentStream()
             // Start wide enough to avoid choke-timeout churn on sparse swarms.
@@ -587,7 +626,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 path,
                 connections: getTorrentConnections()
             }))
+            engine._releaseDhtListeners = releaseDhtListeners
         } catch (err) {
+            releaseDhtListeners()
             console.error('[Torrent] Failed to create engine:', err.message)
             pendingEngines.delete(infoHash)
             return reject(err)
@@ -672,7 +713,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             if (engine.infoHash) frozenTorrents.delete(engine.infoHash)
             invalidateStatusCache()
             notifyTorrentChange()
-            engine.destroy()
+            destroyEngine(engine)
             reject(err)
         })
 
@@ -714,7 +755,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 })
                 console.warn(`[Torrent] ${timeoutError.message}`)
                 pendingEngines.delete(infoHash)
-                engine.destroy()
+                destroyEngine(engine)
                 reject(timeoutError)
             }, METADATA_TIMEOUT_MS)
 
@@ -1159,7 +1200,7 @@ export const destroyAllTorrents = () => {
     const uniqueEngines = new Set(engines.values())
     for (const engine of uniqueEngines) {
         try {
-            engine.destroy()
+            destroyEngine(engine)
         } catch (e) {
             console.warn('[Shutdown] Engine destroy failed:', e.message)
         }
@@ -1170,7 +1211,7 @@ export const destroyAllTorrents = () => {
     console.log(`[Shutdown] Clearing ${frozenTorrents.size} frozen torrents...`)
     for (const [hash, frozen] of frozenTorrents.entries()) {
         try {
-            frozen.engine.destroy()
+            destroyEngine(frozen.engine)
         } catch (e) { }
     }
     frozenTorrents.clear()
@@ -1213,7 +1254,7 @@ export const enterDegradedMode = () => {
     // 1. Clear all frozen torrents (they're just cache)
     for (const [hash, frozen] of frozenTorrents.entries()) {
         try {
-            frozen.engine.destroy()
+            destroyEngine(frozen.engine)
             freedCount++
         } catch (e) { }
     }

@@ -63,7 +63,7 @@ it('advances the image fallback chain and ends with a readable title card', () =
     expect(screen.getAllByText('Лидер').length).toBeGreaterThan(1)
 })
 
-it('keeps ranked cards fixed and adds shadow to the focused signature', () => {
+it('keeps ranked cards fixed and marks focus without a coloured frame', () => {
     const view = render(
         <RankedRow id="size" title="Рейтинг" items={[{ id: 24, title: 'Лидер' }]} isActive />
     )
@@ -72,9 +72,29 @@ it('keeps ranked cards fixed and adds shadow to the focused signature', () => {
 
     expect(articleClasses).toContain('w-[300px]')
     expect(articleClasses).toContain('h-[180px]')
-    expect(backdropClasses).toContain('border-[#63F5C7]')
+    // The mint frame read as decoration on the Top-10 row; focus is now
+    // carried by scale + elevation, and unfocused cards recede instead.
+    expect(backdropClasses).not.toContain('border-[#63F5C7]')
     expect(backdropClasses).toContain('scale-105')
     expect(backdropClasses).toMatch(/shadow/)
+})
+
+it('recedes unfocused ranked cards so the focused one still reads on a TV', () => {
+    const view = render(
+        <RankedRow
+            id="dim"
+            title="Рейтинг"
+            items={[{ id: 1, title: 'Первый' }, { id: 2, title: 'Второй' }]}
+            isActive
+        />
+    )
+    const [focusedScrim, restingScrim] = [...view.container.querySelectorAll('[data-testid="rank-scrim"]')]
+
+    expect(focusedScrim.className).toContain('opacity-0')
+    expect(restingScrim.className).toContain('opacity-40')
+    // A translucent layer, not filter: brightness — a filter would put a GPU
+    // shader on every unfocused card for the whole time the row is on screen.
+    expect(view.container.innerHTML).not.toContain('brightness')
 })
 
 it('restores a non-zero initial item and selects it before moving right', () => {

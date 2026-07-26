@@ -209,3 +209,30 @@ it('does not report focus again when only parent callbacks rerender', () => {
 
     expect(onFocusChange).toHaveBeenCalledTimes(1)
 })
+
+it('keeps item ref callbacks stable so spatial registration survives a focus move', () => {
+    // Every D-Pad press re-renders the shell. An inline registerRef made
+    // each card's ref callback fresh, so React detached and re-attached
+    // all of them — unregistering and re-registering every card with the
+    // spatial engine on each keypress. HomeRow already avoids this.
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
+    const attachments = []
+    const renderItem = (item, index, focused) => (
+        <span ref={node => { if (node) attachments.push(item.id) }}>
+            {focused ? `[${item.id}]` : item.id}
+        </span>
+    )
+    const view = render(
+        <TVRowShell id="stable-refs" title="Stable refs" items={items} isActive renderItem={renderItem} />
+    )
+    const row = view.getByRole('group', { name: 'Stable refs' })
+
+    const afterMount = attachments.length
+    expect(afterMount).toBe(items.length)
+
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+
+    // Only the two cards whose focused flag flipped may re-render; the
+    // untouched cards must keep their existing DOM nodes and refs.
+    expect(attachments.length - afterMount).toBeLessThanOrEqual(2)
+})

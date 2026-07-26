@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { getBackdropUrl, getTitle } from '../utils/discover'
 import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 import TVRowShell from './TVRowShell'
@@ -27,7 +27,15 @@ const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
             >
                 {rank}
             </span>
-            <div className={`relative z-10 h-full w-full overflow-hidden rounded-xl border-4 bg-[#141821] ${focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_28px_rgba(0,0,0,0.55)]' : 'border-transparent'}`}>
+            {/* No coloured frame here: on the Top-10 row it competed with the
+                rank numerals and read as decoration. Focus is carried by
+                scale, elevation and contrast — unfocused cards recede behind
+                a scrim. The scrim is a plain translucent layer rather than a
+                CSS filter: only one card is focused, so a filter would mean
+                a GPU shader on every *other* card, permanently. */}
+            <div className={`relative z-10 h-full w-full overflow-hidden rounded-xl bg-[#141821] transition-[transform,box-shadow] duration-200 ${focused
+                ? 'scale-105 shadow-[0_18px_40px_rgba(0,0,0,0.7)]'
+                : 'shadow-[0_4px_12px_rgba(0,0,0,0.35)]'}`}>
                 {imageSrc ? (
                     <img
                         src={imageSrc}
@@ -41,6 +49,11 @@ const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
                         {title}
                     </div>
                 )}
+                <div
+                    data-testid="rank-scrim"
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute inset-0 bg-[#080A0F] transition-opacity duration-200 ${focused ? 'opacity-0' : 'opacity-40'}`}
+                />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#080A0F] via-[#080A0F]/85 to-transparent p-3 pt-10 text-[#F4F7FA]">
                     <div className="flex items-center gap-2">
                         <h3 className="min-w-0 flex-1 truncate text-base font-extrabold">{title}</h3>
@@ -77,30 +90,36 @@ const RankedRow = ({
     onNearEnd,
     qualityBadges,
     watchedIds
-}) => (
-    <TVRowShell
-        id={id}
-        title={title}
-        icon={icon}
-        source={source}
-        items={items}
-        initialIndex={initialIndex}
-        isActive={isActive}
-        onSelect={onSelect}
-        onFocusChange={onFocusChange}
-        onNearEnd={onNearEnd}
-        itemWidth="300px"
-        itemHalfWidth="150px"
-        renderItem={(item, index, focused) => (
-            <RankedCard
-                item={item}
-                index={index}
-                focused={focused}
-                qualityBadges={qualityBadges}
-                watched={watchedIds?.has(item.id)}
-            />
-        )}
-    />
-)
+}) => {
+    // Stable identity keeps TVRowShell's memoized items from re-rendering
+    // the whole row on every D-Pad move.
+    const renderItem = useCallback((item, index, focused) => (
+        <RankedCard
+            item={item}
+            index={index}
+            focused={focused}
+            qualityBadges={qualityBadges}
+            watched={watchedIds?.has(item.id)}
+        />
+    ), [qualityBadges, watchedIds])
+
+    return (
+        <TVRowShell
+            id={id}
+            title={title}
+            icon={icon}
+            source={source}
+            items={items}
+            initialIndex={initialIndex}
+            isActive={isActive}
+            onSelect={onSelect}
+            onFocusChange={onFocusChange}
+            onNearEnd={onNearEnd}
+            itemWidth="300px"
+            itemHalfWidth="150px"
+            renderItem={renderItem}
+        />
+    )
+}
 
 export default RankedRow
