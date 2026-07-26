@@ -117,6 +117,12 @@ export function destroyEngine(engine) {
     engine.destroy()
 }
 
+// One 'peer' listener per live engine is by design here — Node's default
+// ceiling of 10 assumes an emitter with few subscribers and would cry leak
+// at the 11th concurrent torrent. Real leaks are handled by destroyEngine();
+// this only silences the false positive.
+sharedDHT.setMaxListeners?.(0)
+
 sharedDHT.listen(DHT_UDP_PORT, () => {
     console.log(`[DHT] Shared DHT listening on UDP port ${DHT_UDP_PORT}`)
 })
