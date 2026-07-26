@@ -53,9 +53,15 @@ export function getTorrentDhtListenPort(env = process.env) {
 
 // DHT bootstrap. bittorrent-dht defaults to router.bittorrent.com,
 // router.utorrent.com and dht.transmissionbt.com — the first two are
-// IP-blocked from RU (measured 2026-07-26) and only stall startup while
-// their queries time out. dht.libtorrent.org answers and is not in the
+// IP-blocked from RU. dht.libtorrent.org answers and is not in the
 // default set.
+//
+// A/B on the NAS 2026-07-26, 45s lookup of a live infoHash, run twice in
+// both orders: the default list found **0 peers** both times, this list
+// found 14 both times. Time-to-'ready' is a decoy — the default reaches
+// 'ready' fastest (2.5s) precisely because most of its bootstrap fails,
+// and the same list varied 3.5s/10.5s across runs. Judge a bootstrap
+// change by peers discovered, not by how quickly it claims to be ready.
 const DEFAULT_DHT_BOOTSTRAP = [
     'dht.transmissionbt.com:6881',
     'dht.libtorrent.org:25401',
