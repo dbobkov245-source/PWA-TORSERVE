@@ -210,6 +210,16 @@ const HomeRow = memo(forwardRef(({
     const registerItem = useCallback((index, node) => {
         itemRefs.current[index] = node
     }, [])
+    // Same reason as TVRowShell: every row keeps its own focusedIndex, so
+    // without this each row on screen lit a card at once and the stale ones
+    // read as a cursor stuck in place.
+    const [hasFocusWithin, setHasFocusWithin] = useState(false)
+    const handleRowFocus = useCallback(() => setHasFocusWithin(true), [])
+    const handleRowBlur = useCallback((event) => {
+        if (event.currentTarget.contains(event.relatedTarget)) return
+        setHasFocusWithin(false)
+    }, [])
+    const showFocus = isActive && hasFocusWithin
     const [showStart, setShowStart] = useState(false)
     const actionCount = (showStart ? 1 : 0) + (onMoreClick ? 1 : 0)
     const itemCount = items.length + actionCount
@@ -316,6 +326,8 @@ const HomeRow = memo(forwardRef(({
                 className="snap-container tv-center-row gap-4 overflow-x-auto scrollbar-hide py-6 -my-4"
                 style={centerRowStyle}
                 onKeyDown={handleKeyDown}
+                onFocus={handleRowFocus}
+                onBlur={handleRowBlur}
                 onScroll={handleScroll}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
@@ -326,7 +338,7 @@ const HomeRow = memo(forwardRef(({
                     <RowAction
                         index={startIndex}
                         registerItem={registerItem}
-                        focused={isFocused(startIndex)}
+                        focused={showFocus && isFocused(startIndex)}
                         label="В начало"
                         icon="←"
                         onClick={goToStart}
@@ -353,7 +365,7 @@ const HomeRow = memo(forwardRef(({
                         imageErrors={imageErrors}
                         qualityBadges={qualityBadges}
                         watched={watchedIds?.has(item.id)}
-                        focused={isFocused(index + mediaOffset)}
+                        focused={showFocus && isFocused(index + mediaOffset)}
                     />
                 ))}
 
@@ -361,7 +373,7 @@ const HomeRow = memo(forwardRef(({
                     <RowAction
                         index={moreIndex}
                         registerItem={registerItem}
-                        focused={isFocused(moreIndex)}
+                        focused={showFocus && isFocused(moreIndex)}
                         label="Показать все"
                         icon="→"
                         onClick={() => onMoreClick(categoryId)}

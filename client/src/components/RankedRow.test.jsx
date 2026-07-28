@@ -123,3 +123,11 @@ it('restores a non-zero initial item and selects it before moving right', () => 
     fireEvent.keyDown(row, { key: 'Enter' })
     expect(onSelect).toHaveBeenLastCalledWith(items[2])
 })
+
+it('opts the ranked row out of the global focus ring', () => {
+    const view = render(
+        <RankedRow id="ring" title="Рейтинг" items={[{ id: 7, title: 'Лидер' }]} isActive />
+    )
+
+    expect(view.container.querySelector('.snap-item').className).toContain('tv-no-focus-ring')
+})

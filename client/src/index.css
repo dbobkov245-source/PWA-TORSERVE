@@ -56,6 +56,15 @@ body {
   }
 }
 
+/* Rows that draw their own focus treatment. The rule above paints a mint
+   ring on the wrapper, so a card removing its own border still ended up
+   framed — and its 1.05 scale compounded with the card's own. Keep the
+   stacking context so the focused card still renders above its siblings. */
+.focusable.tv-no-focus-ring:focus {
+  scale: 1;
+  box-shadow: none;
+}
+
 /* ─────────────────────────────────────────────────────────────
    Horizontal Snap Containers
    ───────────────────────────────────────────────────────────── */

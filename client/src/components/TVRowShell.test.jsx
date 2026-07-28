@@ -227,12 +227,111 @@ it('keeps item ref callbacks stable so spatial registration survives a focus mov
     )
     const row = view.getByRole('group', { name: 'Stable refs' })
 
+    // Mount plus the row's first focus settle; what matters is the delta
+    // per keypress afterwards, not this baseline.
+    expect(attachments.length).toBeGreaterThan(0)
     const afterMount = attachments.length
-    expect(afterMount).toBe(items.length)
 
     fireEvent.keyDown(row, { key: 'ArrowRight' })
 
     // Only the two cards whose focused flag flipped may re-render; the
     // untouched cards must keep their existing DOM nodes and refs.
     expect(attachments.length - afterMount).toBeLessThanOrEqual(2)
+})
+
+it('keeps item refs intact when the list reorders', async () => {
+    // Rows on Home reorder as batches arrive. React detaches the old index
+    // before the new owner attaches, so clearing a slot unconditionally
+    // wiped a live node: itemRefs[i] went null, useTVNavigation could not
+    // call node.focus(), and the D-Pad appeared frozen on the first card.
+    const first = { id: 'a' }
+    const second = { id: 'b' }
+    const props = {
+        id: 'reorder',
+        title: 'Reorder',
+        isActive: true,
+        initialIndex: 0,
+        renderItem: item => <span>{item.id}</span>
+    }
+
+    const view = render(<TVRowShell {...props} items={[first, second]} />)
+    const row = view.getByRole('group', { name: 'Reorder' })
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('a'))
+
+    view.rerender(<TVRowShell {...props} items={[second, first]} />)
+
+    // Focus must still be able to travel to the other card.
+    fireEvent.keyDown(row, { key: 'ArrowRight' })
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('a'))
+})
+
+it('can opt a row out of the global mint focus ring', () => {
+    // .focusable:focus in index.css paints a 4px rgba(45,212,191) ring on
+    // the wrapper. Removing a card's own border does nothing about it —
+    // the ring is applied by the cascade, outside the card component.
+    const items = [{ id: 1 }, { id: 2 }]
+    const props = { id: 'ring', title: 'Ring', items, isActive: true, renderItem: item => <span>{item.id}</span> }
+
+    const withRing = render(<TVRowShell {...props} />)
+    expect(withRing.container.querySelector('.snap-item').className).not.toContain('tv-no-focus-ring')
+    withRing.unmount()
+
+    const withoutRing = render(<TVRowShell {...props} focusRing={false} />)
+    expect(withoutRing.container.querySelector('.snap-item').className).toContain('tv-no-focus-ring')
+})
+
+it('drops the focus highlight when the row loses input, but keeps it reachable', () => {
+    // Opening the sidebar flips isActive to false. The row kept its
+    // focusedIndex, so a card stayed lit while the D-Pad was driving the
+    // sidebar — it read as a stuck cursor on a frozen page.
+    const items = [{ id: 1 }, { id: 2 }]
+    const props = {
+        id: 'inactive-highlight',
+        title: 'Inactive highlight',
+        items,
+        initialIndex: 0,
+        renderItem: (item, _index, focused) => <span>{focused ? `[${item.id}]` : item.id}</span>
+    }
+
+    const view = render(<TVRowShell {...props} isActive />)
+    expect(view.getByText('[1]')).toBeTruthy()
+
+    view.rerender(<TVRowShell {...props} isActive={false} />)
+
+    expect(view.queryByText('[1]')).toBeNull()
+    expect(view.getByText('1')).toBeTruthy()
+    // Still the row's entry point, so returning from the sidebar lands here.
+    expect(view.container.querySelectorAll('.snap-item')[0].tabIndex).toBe(0)
+
+    view.rerender(<TVRowShell {...props} isActive />)
+    expect(view.getByText('[1]')).toBeTruthy()
+})
+
+it('only highlights a card while the focus actually sits in this row', () => {
+    // Every row keeps its own focusedIndex, so each one lit a card even
+    // though the D-Pad was in a different row. Two or three posters glowed
+    // at once and the stale ones looked like a cursor stuck in place.
+    const items = [{ id: 1 }, { id: 2 }]
+    const props = {
+        id: 'one-highlight',
+        title: 'One highlight',
+        items,
+        isActive: true,
+        initialIndex: 0,
+        renderItem: (item, _index, focused) => <span>{focused ? `[${item.id}]` : item.id}</span>
+    }
+
+    const view = render(<TVRowShell {...props} />)
+    const cards = view.container.querySelectorAll('.snap-item')
+
+    fireEvent.focus(cards[0])
+    expect(view.getByText('[1]')).toBeTruthy()
+
+    // Focus leaves for another row entirely.
+    fireEvent.blur(cards[0], { relatedTarget: document.body })
+    expect(view.queryByText('[1]')).toBeNull()
+
+    // Coming back restores the remembered card.
+    fireEvent.focus(cards[0])
+    expect(view.getByText('[1]')).toBeTruthy()
 })

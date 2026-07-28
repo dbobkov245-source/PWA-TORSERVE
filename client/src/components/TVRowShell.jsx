@@ -1,11 +1,11 @@
-import { useEffect, useRef, useCallback, memo } from 'react'
+import { useEffect, useRef, useState, useCallback, memo } from 'react'
 import useTVNavigation from '../hooks/useTVNavigation'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 // memo + stable props: a D-Pad move re-renders the shell, and without this
 // every card in the row re-rendered (and re-registered itself with the
 // spatial engine) on each keypress. Callers must pass a stable renderItem.
-const TVRowItem = memo(({ item, index, isFocused, setFocusedIndex, registerRef, renderItem, onSelect }) => {
+const TVRowItem = memo(({ item, index, isFocused, showFocus, setFocusedIndex, registerRef, renderItem, onSelect, focusRing }) => {
     const spatialRef = useSpatialItem('main')
     const setComboRef = useCallback((node) => {
         spatialRef(node)
@@ -18,9 +18,9 @@ const TVRowItem = memo(({ item, index, isFocused, setFocusedIndex, registerRef, 
             onFocus={() => setFocusedIndex(index)}
             onClick={() => onSelect?.(item)}
             tabIndex={isFocused ? 0 : -1}
-            className={`focusable snap-item shrink-0 outline-none ${isFocused ? 'focused' : ''}`}
+            className={`focusable snap-item shrink-0 outline-none ${showFocus ? 'focused' : ''} ${focusRing ? '' : 'tv-no-focus-ring'}`}
         >
-            {renderItem(item, index, isFocused)}
+            {renderItem(item, index, showFocus)}
         </div>
     )
 })
@@ -40,10 +40,22 @@ const TVRowShell = ({
     onNearEnd,
     itemWidth = '130px',
     itemHalfWidth = '65px',
+    // Rows that paint their own focus treatment opt out of the global
+    // .focusable:focus ring (see index.css).
+    focusRing = true,
     renderItem
 }) => {
     const refs = useRef([])
     const lastReportedIndexRef = useRef(null)
+    // Each row remembers its own focusedIndex, so without this every row on
+    // screen lit a card at once and the stale ones read as a stuck cursor.
+    // Track whether the focus is actually inside this row.
+    const [hasFocusWithin, setHasFocusWithin] = useState(false)
+    const handleRowFocus = useCallback(() => setHasFocusWithin(true), [])
+    const handleRowBlur = useCallback((event) => {
+        if (event.currentTarget.contains(event.relatedTarget)) return
+        setHasFocusWithin(false)
+    }, [])
     const registerRef = useCallback((index, node) => { refs.current[index] = node }, [])
     const { focusedIndex, setFocusedIndex, containerProps, isFocused } = useTVNavigation({
         itemCount: items.length,
@@ -83,6 +95,8 @@ const TVRowShell = ({
             </header>
             <div
                 {...containerProps}
+                onFocus={handleRowFocus}
+                onBlur={handleRowBlur}
                 role="group"
                 aria-label={title}
                 className="snap-container tv-center-row gap-4 py-6 -my-4 overflow-x-auto scrollbar-hide"
@@ -99,10 +113,12 @@ const TVRowShell = ({
                         item={item}
                         index={index}
                         isFocused={isFocused(index)}
+                        showFocus={isActive && hasFocusWithin && isFocused(index)}
                         setFocusedIndex={setFocusedIndex}
                         registerRef={registerRef}
                         renderItem={renderItem}
                         onSelect={isActive ? onSelect : undefined}
+                        focusRing={focusRing}
                     />
                 ))}
 

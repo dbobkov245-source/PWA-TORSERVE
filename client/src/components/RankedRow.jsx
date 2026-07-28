@@ -117,6 +117,7 @@ const RankedRow = ({
             onNearEnd={onNearEnd}
             itemWidth="300px"
             itemHalfWidth="150px"
+            focusRing={false}
             renderItem={renderItem}
         />
     )
