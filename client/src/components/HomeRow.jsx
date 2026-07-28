@@ -14,7 +14,7 @@ const createImageErrorCache = () => {
 }
 
 // O3: MovieCard now has local isBroken state to prevent full row re-renders
-const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, imageErrors, qualityBadges, watched, focused }) => {
+const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, imageErrors, qualityBadges, watched, focused, showFocus }) => {
     const spatialRef = useSpatialItem('main')
     const isBackdrop = layout === 'backdrop_below'
     const isPosterBelow = layout === 'poster_below'
@@ -59,7 +59,7 @@ const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, im
                 <div className={`relative w-full overflow-hidden rounded-lg bg-gray-800 border transition-all duration-300 ${
                     isBackdrop ? 'aspect-[16/9]' : 'aspect-[2/3]'
                 } ${
-                    focused ? 'border-[#63F5C7] scale-105 shadow-[0_12px_24px_rgba(0,0,0,0.55)] z-10' : 'border-transparent'
+                    showFocus ? 'border-[#63F5C7] scale-105 shadow-[0_12px_24px_rgba(0,0,0,0.55)] z-10' : 'border-transparent'
                 }`}>
                     {imgSrc && !isBroken ? (
                         <img
@@ -117,7 +117,7 @@ const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, im
             role="button"
             aria-label={title}
             tabIndex={focused ? 0 : -1}
-            className={`focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border overflow-hidden relative ${focused ? 'focused border-[#63F5C7] scale-[1.05]' : 'border-transparent'}`}
+            className={`focusable tv-card snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800 border overflow-hidden relative ${showFocus ? 'focused border-[#63F5C7] scale-[1.05]' : 'border-transparent'}`}
             onClick={() => onItemClick?.(item)}
             onFocus={onFocus}
         >
@@ -165,7 +165,7 @@ const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, im
     )
 }
 
-const RowAction = ({ index, registerItem, focused, label, icon, onClick, onFocus }) => {
+const RowAction = ({ index, registerItem, focused, showFocus, label, icon, onClick, onFocus }) => {
     const spatialRef = useSpatialItem('main')
     const setActionRef = useCallback((node) => {
         spatialRef(node)
@@ -179,7 +179,7 @@ const RowAction = ({ index, registerItem, focused, label, icon, onClick, onFocus
             tabIndex={focused ? 0 : -1}
             onClick={onClick}
             onFocus={onFocus}
-            className={`focusable snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800/60 border-2 flex flex-col items-center justify-center gap-2 ${focused ? 'focused border-white scale-[1.05]' : 'border-gray-600'}`}
+            className={`focusable snap-item w-[130px] aspect-[2/3] rounded-lg bg-gray-800/60 border-2 flex flex-col items-center justify-center gap-2 ${showFocus ? 'focused border-white scale-[1.05]' : 'border-gray-600'}`}
         >
             <span className="text-5xl text-gray-300" aria-hidden="true">{icon}</span>
             <span className="text-gray-300 text-sm font-semibold">{label}</span>
@@ -338,7 +338,8 @@ const HomeRow = memo(forwardRef(({
                     <RowAction
                         index={startIndex}
                         registerItem={registerItem}
-                        focused={showFocus && isFocused(startIndex)}
+                        focused={isFocused(startIndex)}
+                        showFocus={showFocus && isFocused(startIndex)}
                         label="В начало"
                         icon="←"
                         onClick={goToStart}
@@ -365,7 +366,8 @@ const HomeRow = memo(forwardRef(({
                         imageErrors={imageErrors}
                         qualityBadges={qualityBadges}
                         watched={watchedIds?.has(item.id)}
-                        focused={showFocus && isFocused(index + mediaOffset)}
+                        focused={isFocused(index + mediaOffset)}
+                        showFocus={showFocus && isFocused(index + mediaOffset)}
                     />
                 ))}
 
@@ -373,7 +375,8 @@ const HomeRow = memo(forwardRef(({
                     <RowAction
                         index={moreIndex}
                         registerItem={registerItem}
-                        focused={showFocus && isFocused(moreIndex)}
+                        focused={isFocused(moreIndex)}
+                        showFocus={showFocus && isFocused(moreIndex)}
                         label="Показать все"
                         icon="→"
                         onClick={() => onMoreClick(categoryId)}
