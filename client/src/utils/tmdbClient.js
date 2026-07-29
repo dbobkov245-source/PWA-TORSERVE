@@ -136,8 +136,7 @@ const IMAGE_MIRRORS = [
     'nl.imagetmdb.com',
     'imagetmdb.com',
     'de.imagetmdb.com',
-    'pl.imagetmdb.com',
-    'lampa.byskaz.ru/tmdb/img'
+    'pl.imagetmdb.com'
 ]
 
 // ANTI-05: Image Mirror Warmup - test mirrors on module load
@@ -166,15 +165,13 @@ async function warmupImageMirrors() {
         }
     }))
 
-    if (IMAGE_MIRRORS.every(m => mirrorStats[m].banned)) {
+    if (IMAGE_MIRRORS.every(isMirrorBanned)) {
         enableImageProxyMode('warmup: all mirrors unreachable')
     }
 }
 
 function markMirrorBanned(mirror) {
-    if (mirrorStats[mirror]) {
-        mirrorStats[mirror].banned = true
-    }
+    banMirror(mirror)
 }
 
 // Auto-warmup after 2 seconds
@@ -262,11 +259,35 @@ function getApiBase({ allowNativeDefault = false } = {}) {
     return ''
 }
 
-// Mirror error tracking - auto-ban after 20 errors in 10 seconds
+// Mirror error tracking - auto-ban after 20 errors in 10 seconds.
+// The ban is temporary: a blip during a fast scroll used to cost the
+// mirror for the whole session, and once every mirror had blipped the
+// posters stayed blank until a cold start.
+export const MIRROR_BAN_TTL_MS = 2 * 60 * 1000
+
 const mirrorStats = {}
-IMAGE_MIRRORS.forEach(mirror => {
-    mirrorStats[mirror] = { errors: [], banned: false }
-})
+function initMirrorStats() {
+    IMAGE_MIRRORS.forEach(mirror => {
+        mirrorStats[mirror] = { errors: [], bannedUntil: 0 }
+    })
+}
+initMirrorStats()
+
+export function _resetMirrorStatsForTest() {
+    initMirrorStats()
+    mirrorsWarmedUp = false
+}
+
+function isMirrorBanned(mirror) {
+    const until = mirrorStats[mirror]?.bannedUntil || 0
+    return until > Date.now()
+}
+
+function banMirror(mirror) {
+    if (mirrorStats[mirror]) {
+        mirrorStats[mirror].bannedUntil = Date.now() + MIRROR_BAN_TTL_MS
+    }
+}
 
 /**
  * Get current active image mirror (Lampa-style ImageMirror)
@@ -274,7 +295,7 @@ IMAGE_MIRRORS.forEach(mirror => {
  */
 export function getCurrentImageMirror() {
     migrateImageRoutingState()
-    const freeMirrors = IMAGE_MIRRORS.filter(m => !mirrorStats[m].banned)
+    const freeMirrors = IMAGE_MIRRORS.filter(m => !isMirrorBanned(m))
     const preferredMirror = IMAGE_MIRRORS[0]
     const lastMirror = localStorage.getItem('tmdb_img_mirror') || ''
 
@@ -314,14 +335,14 @@ export function reportBrokenImage(url) {
             console.log(`[ImageMirror] ${mirror} errors: ${stats.errors.length}`)
 
             if (stats.errors.length >= 20) {
-                stats.banned = true
+                banMirror(mirror)
                 stats.errors = []
                 console.warn(`[ImageMirror] BANNED: ${mirror}`)
                 // Clear saved mirror to trigger switch
                 localStorage.removeItem('tmdb_img_mirror')
 
                 // Check if ALL mirrors are banned
-                const allBanned = IMAGE_MIRRORS.every(m => mirrorStats[m].banned)
+                const allBanned = IMAGE_MIRRORS.every(isMirrorBanned)
                 if (allBanned) {
                     enableImageProxyMode('all mirrors banned via error reports')
                 }
