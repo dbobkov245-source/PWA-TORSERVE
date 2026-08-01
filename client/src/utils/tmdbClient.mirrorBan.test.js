@@ -66,3 +66,38 @@ describe('image mirror bans expire', () => {
         expect(getCurrentImageMirror()).toBe(PREFERRED)
     })
 })
+
+describe('warmup does not pin proxy mode', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        vi.useRealTimers()
+        _resetMirrorStatsForTest()
+    })
+
+    it('leaves proxy mode alone when every warmup probe fails', async () => {
+        // Warmup runs once during the cold start, while hundreds of posters
+        // compete for the connection. Judging mirrors there and writing a
+        // 6h proxy-mode flag meant one unlucky start broke posters for half
+        // a day, across restarts.
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('timeout'))))
+
+        const { _warmupImageMirrorsForTest } = await import('./tmdbClient.js')
+        await _warmupImageMirrorsForTest()
+
+        expect(localStorage.getItem('tmdb_image_proxy_enabled')).toBe(null)
+        vi.unstubAllGlobals()
+    })
+
+    it('clears a stuck proxy-mode flag when the routing version changes', async () => {
+        const { getCurrentImageMirror, IMAGE_ROUTE_VERSION } = await import('./tmdbClient.js')
+
+        localStorage.setItem('tmdb_image_proxy_enabled', 'true')
+        localStorage.setItem('tmdb_image_proxy_enabled_at', String(Date.now()))
+        localStorage.setItem('tmdb_image_route_version', 'nl-direct-v2')
+
+        getCurrentImageMirror()
+
+        expect(localStorage.getItem('tmdb_image_proxy_enabled')).toBe(null)
+        expect(localStorage.getItem('tmdb_image_route_version')).toBe(IMAGE_ROUTE_VERSION)
+    })
+})

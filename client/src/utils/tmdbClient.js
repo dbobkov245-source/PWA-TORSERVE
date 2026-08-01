@@ -140,6 +140,7 @@ const IMAGE_MIRRORS = [
 ]
 
 // ANTI-05: Image Mirror Warmup - test mirrors on module load
+const WARMUP_TIMEOUT_MS = 8000
 let mirrorsWarmedUp = false
 
 async function warmupImageMirrors() {
@@ -156,7 +157,7 @@ async function warmupImageMirrors() {
         try {
             await fetch(`https://${mirror}${testPath}`, {
                 method: 'HEAD',
-                signal: timeoutSignal(3000)
+                signal: timeoutSignal(WARMUP_TIMEOUT_MS)
             })
             console.log(`[TMDB] ✅ Mirror ${mirror} OK (${Date.now() - start}ms)`)
         } catch {
@@ -165,13 +166,23 @@ async function warmupImageMirrors() {
         }
     }))
 
-    if (IMAGE_MIRRORS.every(isMirrorBanned)) {
-        enableImageProxyMode('warmup: all mirrors unreachable')
-    }
+    // Deliberately does NOT switch to proxy mode. Warmup runs once, during
+    // the cold start, while hundreds of posters compete for the same
+    // connection — the worst possible moment to judge a mirror. Measured on
+    // the emulator: a HEAD of one 92px image took 1.2-2.3s with every mirror
+    // answering 200. A single unlucky start used to pin proxy mode in
+    // localStorage for six hours, surviving restarts. Bans from here are
+    // temporary (MIRROR_BAN_TTL_MS); only real image errors, counted in
+    // reportBrokenImage, are allowed to flip proxy mode.
 }
 
 function markMirrorBanned(mirror) {
     banMirror(mirror)
+}
+
+export async function _warmupImageMirrorsForTest() {
+    mirrorsWarmedUp = false
+    await warmupImageMirrors()
 }
 
 // Auto-warmup after 2 seconds
@@ -181,7 +192,7 @@ const PROXY_MODE_KEY = 'tmdb_image_proxy_enabled'
 const PROXY_MODE_TS_KEY = 'tmdb_image_proxy_enabled_at'
 const PROXY_MODE_TTL_MS = 6 * 60 * 60 * 1000 // retry mirrors after 6h
 const IMAGE_ROUTE_VERSION_KEY = 'tmdb_image_route_version'
-export const IMAGE_ROUTE_VERSION = 'nl-direct-v2'
+export const IMAGE_ROUTE_VERSION = 'nl-direct-v3'
 
 function migrateImageRoutingState() {
     try {
