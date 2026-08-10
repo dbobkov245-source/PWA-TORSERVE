@@ -146,3 +146,112 @@ describe('SpatialEngine zone lifecycle', () => {
         expect(SpatialEngine.idMap.main['temporary-item']).toBeUndefined()
     })
 })
+
+describe('focus sitting outside the zone', () => {
+    it('moves in the requested direction instead of jumping to the first registered element', () => {
+        // The top bar buttons carry .focusable and tabIndex=0 but never call
+        // useSpatialItem, so they are not in any zone. Landing on one made
+        // every arrow press call elements[0].focus() — the first element
+        // registered that session, regardless of direction — so the cursor
+        // sat at the top of the screen and neither Up nor Down did anything
+        // useful.
+        const topBarButton = makeFocusable({ left: 300, top: 0, width: 40, height: 40 })
+        const firstRegistered = makeFocusable({ left: 32, top: 900 })
+        const justBelowTopBar = makeFocusable({ left: 300, top: 200 })
+
+        SpatialEngine.zones.main = new Set([firstRegistered, justBelowTopBar])
+        SpatialEngine.activeZone = 'main'
+        topBarButton.focus()
+
+        const nearFocus = vi.spyOn(justBelowTopBar, 'focus')
+        const farFocus = vi.spyOn(firstRegistered, 'focus')
+
+        SpatialEngine.move('ArrowDown')
+
+        expect(nearFocus).toHaveBeenCalled()
+        expect(farFocus).not.toHaveBeenCalled()
+    })
+
+    it('still falls back to a registered element when nothing lies that way', () => {
+        const strayFocus = makeFocusable({ left: 300, top: 900, width: 40, height: 40 })
+        const above = makeFocusable({ left: 32, top: 100 })
+
+        SpatialEngine.zones.main = new Set([above])
+        SpatialEngine.activeZone = 'main'
+        strayFocus.focus()
+
+        const focus = vi.spyOn(above, 'focus')
+        SpatialEngine.move('ArrowDown')
+
+        expect(focus).toHaveBeenCalled()
+    })
+})
+
+describe('dead end at a lazy row', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals()
+    })
+
+    it('scrolls when nothing is registered further down, so lazy rows can mount', () => {
+        // Rows below the fold render as placeholders with no .focusable child
+        // until they intersect the viewport. With focus on the last mounted
+        // row, Down found no candidate, so nothing moved; nothing moving meant
+        // no scroll, and no scroll meant the placeholder never mounted. The
+        // cursor was stuck for good.
+        const current = makeFocusable({ left: 32, top: 300 })
+        SpatialEngine.zones.main = new Set([current])
+        SpatialEngine.activeZone = 'main'
+        current.focus()
+
+        const scrollBy = vi.fn()
+        vi.stubGlobal('scrollBy', scrollBy)
+
+        SpatialEngine.move('ArrowDown')
+
+        expect(scrollBy).toHaveBeenCalled()
+        expect(scrollBy.mock.calls[0][0].top).toBeGreaterThan(0)
+    })
+
+    it('scrolls back up the same way', () => {
+        const current = makeFocusable({ left: 32, top: 300 })
+        SpatialEngine.zones.main = new Set([current])
+        SpatialEngine.activeZone = 'main'
+        current.focus()
+
+        const scrollBy = vi.fn()
+        vi.stubGlobal('scrollBy', scrollBy)
+
+        SpatialEngine.move('ArrowUp')
+
+        expect(scrollBy.mock.calls[0][0].top).toBeLessThan(0)
+    })
+
+    it('does not scroll when a real candidate exists', () => {
+        const current = makeFocusable({ left: 32, top: 300 })
+        const below = makeFocusable({ left: 32, top: 600 })
+        SpatialEngine.zones.main = new Set([current, below])
+        SpatialEngine.activeZone = 'main'
+        current.focus()
+
+        const scrollBy = vi.fn()
+        vi.stubGlobal('scrollBy', scrollBy)
+
+        SpatialEngine.move('ArrowDown')
+
+        expect(scrollBy).not.toHaveBeenCalled()
+    })
+
+    it('leaves horizontal dead ends alone', () => {
+        const current = makeFocusable({ left: 32, top: 300 })
+        SpatialEngine.zones.main = new Set([current])
+        SpatialEngine.activeZone = 'main'
+        current.focus()
+
+        const scrollBy = vi.fn()
+        vi.stubGlobal('scrollBy', scrollBy)
+
+        SpatialEngine.move('ArrowRight')
+
+        expect(scrollBy).not.toHaveBeenCalled()
+    })
+})

@@ -65,7 +65,9 @@ const LazyRow = ({ category, onVisible }) => {
                 onVisible(category)
                 obs.disconnect()
             }
-        }, { rootMargin: '300px' })
+            // 300px was barely one row ahead, so the D-Pad kept arriving at a
+            // placeholder that had not started loading. Stay a screen ahead.
+        }, { rootMargin: '1200px' })
         obs.observe(el)
         return () => obs.disconnect()
         // eslint-disable-next-line react-hooks/exhaustive-deps

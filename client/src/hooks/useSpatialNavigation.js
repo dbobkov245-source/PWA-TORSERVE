@@ -101,9 +101,22 @@ const SpatialEngine = {
             return;
         }
 
-        // If nothing focused, focus first or best
+        // Focus can sit on something outside the zone: the top bar buttons and
+        // the picker banner carry .focusable and a tab stop but never register
+        // via useSpatialItem. Jumping straight to elements[0] — whichever
+        // element happened to register first that session — ignored the
+        // direction entirely, so the cursor parked at the top of the screen and
+        // neither Up nor Down went anywhere. Steer by geometry when the current
+        // element has some, and keep the blind jump only as a last resort.
         if (!elements.includes(current)) {
-            elements[0].focus({ preventScroll: true });
+            const fromOutside = current && typeof current.getBoundingClientRect === 'function'
+                ? this.findNearest(current, elements, direction)
+                : null;
+            const target = fromOutside || elements[0];
+            target.focus({ preventScroll: true });
+            if (fromOutside && (direction === 'ArrowUp' || direction === 'ArrowDown')) {
+                target.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+            }
             return;
         }
 
@@ -113,6 +126,18 @@ const SpatialEngine = {
             if (direction === 'ArrowUp' || direction === 'ArrowDown') {
                 next.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
             }
+            return;
+        }
+
+        // Nothing registered that way. Vertically that usually means the next
+        // row is still a lazy placeholder with no focusable child: it mounts
+        // when it intersects the viewport, but the viewport only moves when
+        // focus moves, and focus cannot move because the row has not mounted.
+        // Nudging the page breaks that deadlock — the row mounts and the next
+        // press lands on it. Horizontal dead ends are genuine row edges.
+        if (direction === 'ArrowUp' || direction === 'ArrowDown') {
+            const step = Math.round(window.innerHeight * 0.8);
+            window.scrollBy({ top: direction === 'ArrowDown' ? step : -step, behavior: 'auto' });
         }
     },
 
