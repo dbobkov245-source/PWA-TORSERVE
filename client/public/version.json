@@ -1,7 +1,7 @@
 {
-    "version": "3.17.2",
-    "versionCode": 37,
+    "version": "3.18.0",
+    "versionCode": 45,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.17.2/pwa-torserve-v3.17.2.apk",
-    "notes": "v3.17.2\n- Серверный proxy сам добавляет TMDB API key для TMDB URL без ключа\n- Подборки по годам обходят stale TMDB cache\n- Локальный NAS updater отдаёт APK без GitHub release"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.0/pwa-torserve-v3.18.0.apk",
+    "notes": "v3.18.0\n- Курсор больше не залипает: убран скролл страницы на упоре в край списка\n- Убран случайный перескок фокуса — при потере фокуса курсор встаёт на верхний видимый элемент\n- Ошибки приложения теперь уходят на сервер, а не теряются в консоли ТВ\n- Навигация по D-Pad стала дешевле: убраны лишние измерения геометрии на каждое нажатие"
 }

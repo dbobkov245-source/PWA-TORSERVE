@@ -58,3 +58,24 @@ test('index.js has GET /api/status/stream SSE endpoint', () => {
     expect(indexSrc).toContain('/api/status/stream')
     expect(indexSrc).toContain('text/event-stream')
 })
+
+test('both version.json copies agree', async () => {
+    // There are two tracked copies: the repo root one, which GitHub raw serves
+    // to the updater, and client/public/version.json, which the build copies to
+    // dist and the server serves locally. appUpdater checks the LOCAL sources
+    // first, so when these drift the newest release becomes invisible over LAN.
+    // They sat three releases apart (3.18.0 vs 3.17.2) before this test existed.
+    const { readFileSync } = await import('fs')
+    const { fileURLToPath } = await import('url')
+    const { dirname, join } = await import('path')
+
+    const here = dirname(fileURLToPath(import.meta.url))
+    const repoRoot = join(here, '..', '..')
+
+    const root = JSON.parse(readFileSync(join(repoRoot, 'version.json'), 'utf8'))
+    const published = JSON.parse(readFileSync(join(repoRoot, 'client', 'public', 'version.json'), 'utf8'))
+
+    expect(published.version).toBe(root.version)
+    expect(published.versionCode).toBe(root.versionCode)
+    expect(published.url).toBe(root.url)
+})
