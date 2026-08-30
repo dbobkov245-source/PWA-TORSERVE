@@ -9,6 +9,7 @@
  * - D-pad friendly (focusable buttons)
  */
 import { Component } from 'react'
+import { reportClientEvent } from '../utils/clientTrace'
 
 class ErrorBoundary extends Component {
     constructor(props) {
@@ -32,8 +33,14 @@ class ErrorBoundary extends Component {
 
         this.setState({ errorInfo })
 
-        // Optional: Send to error tracking service
-        // reportErrorToService(error, errorInfo)
+        // The TV console is unreachable, so the console lines above are lost the
+        // moment the screen is photographed. Ship it to the server timeline.
+        reportClientEvent({
+            kind: 'react-render',
+            message: error?.message ? `${error.name}: ${error.message}` : String(error),
+            stack: error?.stack ? String(error.stack).slice(0, 2000) : null,
+            componentStack: String(errorInfo?.componentStack || '').slice(0, 2000)
+        })
     }
 
     handleReload = () => {

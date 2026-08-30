@@ -9,10 +9,90 @@
 
 import { useCallback, useRef, useEffect } from 'react';
 
+/**
+ * Short, human-readable identity for an element, for diagnostics only.
+ * Kept tiny because it is rendered on a TV screen and read off a photo.
+ */
+export const describeElement = (element) => {
+    if (!element) return 'none'
+    const tag = element.tagName || '?'
+    if (tag === 'BODY' || tag === 'HTML') return tag
+    const id = element.id ? `#${element.id}` : ''
+    const cls = typeof element.className === 'string' && element.className
+        ? `.${element.className.trim().split(/\s+/)[0]}`
+        : ''
+    return `${tag}${id}${cls}`
+}
+
+/**
+ * How many candidates sit strictly above / below the cursor.
+ *
+ * This is what separates "the list really ends here" from "a row failed to
+ * mount". Without it a dead end and a lost row look identical in the trace.
+ */
+const countNeighbours = (current, elements) => {
+    if (!current || typeof current.getBoundingClientRect !== 'function') {
+        return { aboveCount: null, belowCount: null }
+    }
+    const rect = current.getBoundingClientRect()
+    let aboveCount = 0
+    let belowCount = 0
+    for (const candidate of elements) {
+        if (candidate === current) continue
+        const other = candidate.getBoundingClientRect()
+        if (other.bottom <= rect.top + 5) aboveCount++
+        else if (other.top >= rect.bottom - 5) belowCount++
+    }
+    return { aboveCount, belowCount }
+}
+
+/**
+ * Where to put the cursor when it is not in the zone at all (usually <body>,
+ * after the focused row unmounted).
+ *
+ * The old fallback was `elements[0]` — whichever element happened to register
+ * first that session — which read on the device as a random teleport. Prefer
+ * whatever the viewer can actually see.
+ */
+const topmostVisible = (elements) => {
+    const height = window.innerHeight || 0
+    let best = null
+    let bestTop = Infinity
+    for (const candidate of elements) {
+        const rect = candidate.getBoundingClientRect?.()
+        if (!rect) continue
+        if (rect.bottom <= 0 || rect.top >= height) continue
+        if (rect.top < bestTop) {
+            bestTop = rect.top
+            best = candidate
+        }
+    }
+    return best
+}
+
 const SpatialEngine = {
     zones: {},
     activeZone: 'main',
     idMap: {}, // zone -> id -> element
+
+    // Optional observer for move(). Null in normal builds, so this costs nothing;
+    // the diagnostics overlay installs a sink to record why the cursor did or did
+    // not move on a real device.
+    diagnosticsSink: null,
+
+    setDiagnosticsSink(sink) {
+        this.diagnosticsSink = typeof sink === 'function' ? sink : null
+    },
+
+    /** Emit one diagnostics record. Never let a sink break navigation. */
+    reportMove(record) {
+        if (!this.diagnosticsSink) return
+        try {
+            this.diagnosticsSink({ ...record, at: Date.now() })
+        } catch {
+            // A broken sink must not take the D-Pad down with it.
+        }
+    },
 
     register(zone, element, id = null) {
         if (!this.zones[zone]) this.zones[zone] = new Set();
@@ -97,7 +177,33 @@ const SpatialEngine = {
         const elements = candidates
             .filter(el => document.body.contains(el) && el.offsetParent !== null && el.tabIndex !== -1); // Filter valid, visible, and focusable
 
+        // Snapshot for diagnostics before anything moves.
+        const before = describeElement(current);
+        const base = {
+            key: direction,
+            zone: this.activeZone,
+            zoneSize: allZoneElements.length,
+            candidateCount: elements.length,
+            currentInZone: elements.includes(current),
+            // Distinguishes "geometry found nothing" from "the cursor is on a
+            // node that has been unmounted" — a lazy row or a virtualised card
+            // can pull the focused element out from under the D-Pad.
+            beforeInDom: Boolean(current && document.body.contains(current)),
+            // Neighbour counts cost a getBoundingClientRect per candidate, so
+            // only pay for them when something is actually listening.
+            ...(this.diagnosticsSink ? countNeighbours(current, elements) : {}),
+            before
+        };
+
         if (!elements.length) {
+            this.reportMove({
+                ...base,
+                found: false,
+                target: null,
+                after: describeElement(document.activeElement),
+                moved: false,
+                outcome: 'no-candidates'
+            });
             return;
         }
 
@@ -112,11 +218,24 @@ const SpatialEngine = {
             const fromOutside = current && typeof current.getBoundingClientRect === 'function'
                 ? this.findNearest(current, elements, direction)
                 : null;
-            const target = fromOutside || elements[0];
+            const onScreen = fromOutside ? null : topmostVisible(elements);
+            const target = fromOutside || onScreen || elements[0];
+            const recovery = fromOutside
+                ? 'steered'
+                : (onScreen ? 'topmost-visible' : 'first-registered');
             target.focus({ preventScroll: true });
             if (fromOutside && (direction === 'ArrowUp' || direction === 'ArrowDown')) {
                 target.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
             }
+            this.reportMove({
+                ...base,
+                found: Boolean(fromOutside),
+                target: describeElement(target),
+                after: describeElement(document.activeElement),
+                moved: document.activeElement === target,
+                recovery,
+                outcome: 'entered-from-outside'
+            });
             return;
         }
 
@@ -126,6 +245,16 @@ const SpatialEngine = {
             if (direction === 'ArrowUp' || direction === 'ArrowDown') {
                 next.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
             }
+            this.reportMove({
+                ...base,
+                found: true,
+                target: describeElement(next),
+                after: describeElement(document.activeElement),
+                // The distinction that matters on the TV: a target was found, but
+                // did focus() actually take?
+                moved: document.activeElement === next,
+                outcome: 'moved'
+            });
             return;
         }
 
@@ -135,10 +264,22 @@ const SpatialEngine = {
         // focus moves, and focus cannot move because the row has not mounted.
         // Nudging the page breaks that deadlock — the row mounts and the next
         // press lands on it. Horizontal dead ends are genuine row edges.
-        if (direction === 'ArrowUp' || direction === 'ArrowDown') {
-            const step = Math.round(window.innerHeight * 0.8);
-            window.scrollBy({ top: direction === 'ArrowDown' ? step : -step, behavior: 'auto' });
-        }
+        // A dead end used to scroll the page, on the theory that the next row
+        // was an unmounted lazy placeholder. Measured over two device sessions
+        // and 434 dead ends, candidateCount never rose once — and scrolling the
+        // real container was actively worse, moving content 80% of a screen away
+        // from a cursor that stayed put. A dead end now does nothing; the
+        // above/below counts in the record say whether it was a true list edge.
+        const isVertical = direction === 'ArrowUp' || direction === 'ArrowDown';
+
+        this.reportMove({
+            ...base,
+            found: false,
+            target: null,
+            after: describeElement(document.activeElement),
+            moved: false,
+            outcome: isVertical ? 'nudged' : 'edge'
+        });
     },
 
     findNearest(current, elements, direction) {

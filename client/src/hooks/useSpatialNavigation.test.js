@@ -192,12 +192,12 @@ describe('dead end at a lazy row', () => {
         vi.unstubAllGlobals()
     })
 
-    it('scrolls when nothing is registered further down, so lazy rows can mount', () => {
-        // Rows below the fold render as placeholders with no .focusable child
-        // until they intersect the viewport. With focus on the last mounted
-        // row, Down found no candidate, so nothing moved; nothing moving meant
-        // no scroll, and no scroll meant the placeholder never mounted. The
-        // cursor was stuck for good.
+    // The lazy-row theory this block was written for did not survive the device.
+    // Across two traced sessions and 434 vertical dead ends, candidateCount never
+    // rose once after a scroll — and the user confirmed the dead ends line up
+    // with the end of the rows. A dead end is a list edge, so it now does
+    // nothing rather than sliding the page out from under the cursor.
+    it('does not scroll when nothing is registered further down', () => {
         const current = makeFocusable({ left: 32, top: 300 })
         SpatialEngine.zones.main = new Set([current])
         SpatialEngine.activeZone = 'main'
@@ -208,11 +208,11 @@ describe('dead end at a lazy row', () => {
 
         SpatialEngine.move('ArrowDown')
 
-        expect(scrollBy).toHaveBeenCalled()
-        expect(scrollBy.mock.calls[0][0].top).toBeGreaterThan(0)
+        expect(scrollBy).not.toHaveBeenCalled()
+        expect(document.activeElement).toBe(current)
     })
 
-    it('scrolls back up the same way', () => {
+    it('does not scroll on an upward dead end either', () => {
         const current = makeFocusable({ left: 32, top: 300 })
         SpatialEngine.zones.main = new Set([current])
         SpatialEngine.activeZone = 'main'
@@ -223,7 +223,8 @@ describe('dead end at a lazy row', () => {
 
         SpatialEngine.move('ArrowUp')
 
-        expect(scrollBy.mock.calls[0][0].top).toBeLessThan(0)
+        expect(scrollBy).not.toHaveBeenCalled()
+        expect(document.activeElement).toBe(current)
     })
 
     it('does not scroll when a real candidate exists', () => {

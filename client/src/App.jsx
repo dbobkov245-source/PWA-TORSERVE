@@ -22,6 +22,7 @@ import TorrentModal from './components/TorrentModal'
 import AutoDownloadPanel from './components/AutoDownloadPanel'
 import HomePanel from './components/HomePanel'
 import UpdateModal from './components/UpdateModal'
+import DPadDiagnostics from './components/DPadDiagnostics'
 
 // Utilities
 import { checkForUpdate, tryInstallPending } from './utils/appUpdater'
@@ -1054,6 +1055,9 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Off unless VITE_DPAD_DIAG=1 at build time. */}
+      <DPadDiagnostics />
     </div>
   )
 }

@@ -3,6 +3,7 @@
 import express from 'express'
 import cors from 'cors'
 import path from 'path'
+import { createDpadTrace, createFileAppender } from './dpadTrace.js'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import fs from 'fs'
@@ -346,6 +347,37 @@ app.post('/api/library/rescan', async (req, res) => {
 import { smartFetch, insecureAgent } from './utils/doh.js'
 import proxyRouter from './routes/proxy.js'
 import traktRouter from './routes/trakt.js'
+
+// ────────────────────────────────────────────────────────
+// 🎮 D-Pad trace — device-side navigation diagnostics
+// ────────────────────────────────────────────────────────
+// The TV's focus bug is intermittent over hundreds of presses, so the device
+// streams every press here instead of showing six lines on screen. Bounded in
+// memory, mirrored to a JSONL file next to the DB so a run can be read off the
+// NAS after the fact.
+const dpadTraceFile = path.join(path.dirname(process.env.DB_PATH || 'db.json'), 'dpad-trace.jsonl')
+const dpadTrace = createDpadTrace({
+    append: createFileAppender({ path: dpadTraceFile, maxBytes: 5 * 1024 * 1024, fs })
+})
+
+app.post('/api/debug/dpad', (req, res) => {
+    const accepted = dpadTrace.record(req.body?.events)
+    res.json({ accepted, size: dpadTrace.size() })
+})
+
+app.get('/api/debug/dpad', (req, res) => {
+    res.json({ size: dpadTrace.size(), file: dpadTraceFile, events: dpadTrace.all() })
+})
+
+app.delete('/api/debug/dpad', (req, res) => {
+    dpadTrace.clear()
+    try {
+        fs.unlinkSync(dpadTraceFile)
+    } catch {
+        // Nothing recorded yet, or already gone.
+    }
+    res.json({ cleared: true })
+})
 
 app.use('/api/proxy', proxyRouter)
 app.use('/api/trakt', traktRouter)

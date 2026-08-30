@@ -6,7 +6,7 @@
 import { Capacitor } from '@capacitor/core'
 import { resolveInitialServerUrl, resolveServerBaseUrl } from './helpers'
 
-function getServerBase() {
+export function getServerBase() {
     if (typeof window === 'undefined') return ''
     const stored = localStorage.getItem('serverUrl')
     const isNative = Capacitor.isNativePlatform()
