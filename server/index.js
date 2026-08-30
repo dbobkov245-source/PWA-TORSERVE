@@ -26,6 +26,7 @@ import {
     initTsFailover,
     getTsDownloadStatusItems,
     getActiveTsJob,
+    getFinishedTsFile,
     removeTsJob,
     getTsJobsMetrics,
     isTsAvailable,
@@ -1216,13 +1217,27 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
         } catch (err) {
             console.warn('[LocalLibrary] Stream refresh failed:', err.message)
         }
-        const localFile = getLocalFile(infoHash, index)
-        if (!localFile) return res.status(404).send('Torrent not found')
-        file = {
-            name: localFile.name,
-            length: localFile.length
+        // A finished TorrServer download keeps its real infoHash, but it has no
+        // native engine and getActiveTsJob answers only while downloading. The
+        // local library indexes files under a synthetic sha1 of their path, so
+        // the real hash missed there and every freshly grabbed film 404'd. The
+        // job record knows the exact path.
+        const finishedTsFile = getFinishedTsFile(infoHash, index)
+        if (finishedTsFile && fs.existsSync(finishedTsFile.absPath)) {
+            file = {
+                name: finishedTsFile.name,
+                length: finishedTsFile.length
+            }
+            localDiskPath = finishedTsFile.absPath
+        } else {
+            const localFile = getLocalFile(infoHash, index)
+            if (!localFile) return res.status(404).send('Torrent not found')
+            file = {
+                name: localFile.name,
+                length: localFile.length
+            }
+            localDiskPath = localFile.absPath
         }
-        localDiskPath = localFile.absPath
     }
 
     // ────────────────────────────────────────────────────────

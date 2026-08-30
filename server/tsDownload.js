@@ -183,6 +183,43 @@ export function getTsDownloadStatusItems() {
     return Array.from(jobs.values()).map(mapJobToStatusItem)
 }
 
+/**
+ * Where a finished job's file actually sits on disk.
+ *
+ * `getActiveTsJob` deliberately answers only while a job is downloading, so the
+ * player gets redirected to TorrServer for the live bytes. Once the job is done
+ * nothing answered for that infoHash at all: the native engine never existed,
+ * and the local library indexes files under a synthetic sha1 of their path, so
+ * the real hash missed and playback 404'd. The job record has known the exact
+ * path all along.
+ *
+ * @returns {{name: string, length: number, absPath: string} | null}
+ */
+export function resolveFinishedTsFile(job, fileIndex, downloadPath) {
+    if (!job || job.status !== 'done') return null
+
+    const file = job.files?.[fileIndex]
+    if (!file?.path) return null
+
+    try {
+        return {
+            name: path.basename(file.path),
+            length: file.length,
+            absPath: safeJoinDownloadPath(downloadPath, file.path)
+        }
+    } catch {
+        // safeJoinDownloadPath throws on traversal; a job that points outside
+        // the download folder is not something to serve.
+        return null
+    }
+}
+
+/** Same, looked up by infoHash against the live job map. */
+export function getFinishedTsFile(infoHash, fileIndex, downloadPath = process.env.DOWNLOAD_PATH || './downloads') {
+    const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
+    return resolveFinishedTsFile(job, fileIndex, downloadPath)
+}
+
 export function getActiveTsJob(infoHash) {
     const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
     return job && job.status === 'downloading' ? job : null
