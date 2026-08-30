@@ -1,7 +1,7 @@
 # Handoff — peer discovery, TorrServer failover, TV focus (2026-07-26 … 2026-07-28)
 
 Branch: `codex/full-project-audit`, worktree `.worktrees/full-project-audit`.
-Last pushed commit: `8abdff6`. **Five commits ahead are unpushed** (see below).
+Pushed through `1c8b0ca`; remote matches local.
 
 ---
 
@@ -101,23 +101,41 @@ painted on the wrapper, which is why it enclosed the rank numeral and why its
 
 ## 2. Still open
 
-### The D-Pad deadlock (`5aa3d69`) — fix written, NOT verified on a device
+### 🔴 The D-Pad deadlock — STILL BROKEN, `5aa3d69` did not fix it
 
-User's report: cursor sticks near the top, neither Up nor Down works, Left still
-opens the sidebar.
+User's report, unchanged after installing the build with `5aa3d69`: cursor
+sticks near the top of Home, neither Up nor Down moves it, Left still opens the
+sidebar.
 
-Mechanism found in the code: rows below the fold render as `LazyRow`
-placeholders with **no focusable child** until they intersect the viewport. That
-closes a loop — focus cannot move down (no candidate), the page cannot scroll
-(scrolling follows focus), the row cannot mount (viewport never reaches it).
-Left keeps working because that path does not go through the spatial engine.
+**The LazyRow theory did not hold.** Rows below the fold do render as
+placeholders with no focusable child, and that does close a loop on paper —
+focus cannot move down (no candidate), the page cannot scroll (scrolling follows
+focus), the row cannot mount (viewport never reaches it). The fix nudges the
+page by 80% of the viewport on a candidate-less vertical move, and widened the
+lazy observer margin 300px → 1200px. It changed nothing for the user, so either
+the theory is wrong or it is only part of the story. Treat it as an open
+question, not as groundwork.
 
-Fix: a vertical move with no candidate nudges the page by 80% of the viewport;
-the lazy observer margin went 300px → 1200px.
+What *is* established, from a CDP session against the emulator's WebView:
 
-**Unverified — the emulator went down before the release build was ready.**
-Next session: confirm on the device. Symptom of a hit: the first press jolts the
-page, the second lands on the row.
+- Every row exposes exactly one tab stop; geometry of the rows below is sane
+  (`offsetParent` set, `tabIndex` 0, sensible rects).
+- `SpatialEngine.activeZone` is `main`, the zone held 553 elements, 33 passed
+  the `tabIndex !== -1` filter, and the focused card was in the zone.
+- Calling `SpatialEngine.move('ArrowDown')` **directly** found the next row and
+  moved focus. Synthetic `keydown` on `window` walked rows 0 → 22.
+- With a clean start, physical D-Pad presses also walked 0 → 8, all 8 keys
+  observed by a capture-phase listener.
+
+So on the emulator the engine works and the keys arrive. Whatever the TV does
+differently has not been captured yet. **Next session must start by measuring on
+a real device, not by proposing another mechanism.**
+
+Two false leads already burned, do not repeat them:
+- The top bar buttons *are* registered (`App.jsx:196`, `useSpatialItem('main')`).
+  I claimed otherwise after grepping only for the `focusable` class.
+- A "stuck cursor" I reproduced twice was `GrantPermissionsActivity` swallowing
+  the D-Pad after a debug install, not the bug.
 
 ### Cosmetic, noted but not fixed
 
@@ -151,6 +169,13 @@ page, the second lands on the row.
   (`create_connection(..., suppress_origin=True)` with `websocket-client`).
   A debug APK is signed with a different key — uninstall the release first, and
   it will not go to the TV.
+- **Push failing with `Permission denied (publickey)` is not a GitHub problem.**
+  There was no `~/.ssh/config`, so after a reboot the key was not loaded into the
+  agent, even though its passphrase sits in the Keychain. Fixed by adding
+  `Host * / UseKeychain yes / AddKeysToAgent yes / IdentityFile ~/.ssh/id_ed25519`.
+  Verified with `SSH_AUTH_SOCK= ssh -T git@github.com`, which authenticates with
+  no agent at all. One-shot recovery if it ever recurs:
+  `ssh-add --apple-load-keychain`.
 - **`cat file | ssh "cat > dest"` truncates larger files.** Deploy with
   `base64 -i f | ssh host "base64 -d > /path/f"` and compare `md5`.
 - **Dead tracker domains are genuinely dead, not blocked.** `gbitt.info`,
@@ -163,9 +188,10 @@ page, the second lands on the row.
 
 ## 4. State of the world
 
-**Unpushed commits on `codex/full-project-audit`:**
+**Commits on `codex/full-project-audit` (pushed):**
 
 ```
+1c8b0ca docs: hand off the discovery and TV focus work
 5aa3d69 fix: break the D-Pad deadlock at an unmounted lazy row
 4250791 fix: stop warmup from pinning proxy mode for six hours
 361bccf fix: let image mirror bans expire
