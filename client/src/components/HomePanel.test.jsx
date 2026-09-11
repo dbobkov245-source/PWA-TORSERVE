@@ -104,7 +104,7 @@ vi.mock('../utils/serverApi', () => ({
 }))
 vi.mock('../utils/traktApi', () => ({ getTraktSynced: mocks.getTraktSynced }))
 vi.mock('../hooks/useQualityBadges', () => ({ useQualityBadges: mocks.useQualityBadges }))
-vi.mock('../hooks/useSpatialNavigation', () => ({ useSpatialItem: () => vi.fn() }))
+vi.mock('../hooks/useSpatialNavigation', async importOriginal => ({ ...await importOriginal(), useSpatialItem: () => vi.fn() }))
 vi.mock('./HomeRow', () => ({
     default: props => <RowMock {...props} id={props.categoryId} onSelect={props.onItemClick} testId="poster-row" />
 }))
@@ -152,6 +152,7 @@ vi.mock('./Sidebar', () => ({
 }))
 
 import HomePanel from './HomePanel'
+import SpatialEngine from '../hooks/useSpatialNavigation'
 
 const item = (id, extra = {}) => ({ id, title: `Item ${id}`, ...extra })
 const row = (id, layout = 'poster', extra = {}) => ({
@@ -970,4 +971,33 @@ describe('bounded loading', () => {
         expect(src).toContain('const cat = rowsByIdRef.current[categoryId]')
         expect(src).not.toContain('}, [categories, setActiveCategory])')
     })
+})
+
+it('does not open sidebar after an earlier listener moved left', async () => {
+    const current = document.createElement('button'), next = document.createElement('button')
+    document.body.append(current, next)
+    const moveFirst = event => { if (event.key === 'ArrowLeft') next.focus() }
+    window.addEventListener('keydown', moveFirst)
+    SpatialEngine.activeZone = 'main'
+    const setShowSidebar = vi.fn()
+    try {
+        render(<HomePanel {...baseProps} setShowSidebar={setShowSidebar} />)
+        current.focus()
+        fireEvent.keyDown(current, { key: 'ArrowLeft' })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+        expect(document.activeElement).toBe(next)
+        expect(setShowSidebar).not.toHaveBeenCalled()
+    } finally {
+        window.removeEventListener('keydown', moveFirst)
+        current.remove(); next.remove()
+    }
+})
+it('ignores a left edge behind the search overlay', async () => {
+    const setShowSidebar = vi.fn()
+    render(<HomePanel {...baseProps} setShowSidebar={setShowSidebar} />)
+    SpatialEngine.activeZone = 'search'
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+    expect(setShowSidebar).not.toHaveBeenCalled()
+    SpatialEngine.activeZone = 'main'
 })

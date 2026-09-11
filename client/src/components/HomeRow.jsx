@@ -322,6 +322,7 @@ const HomeRow = memo(forwardRef(({
             {/* Snap Container (with touch scroll support) */}
             <div
                 ref={scrollRef}
+                data-tv-local-navigation
                 tabIndex={containerProps.tabIndex}
                 className="snap-container tv-center-row gap-4 overflow-x-auto scrollbar-hide py-6 -my-4"
                 style={centerRowStyle}

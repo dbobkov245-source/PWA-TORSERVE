@@ -34,7 +34,12 @@ const ResumeCard = ({ item, onResume }) => {
             tabIndex={0}
             className="focusable tv-card snap-item w-[200px] aspect-video rounded-lg bg-gray-800 border border-transparent overflow-hidden relative shrink-0"
             onClick={() => onResume(item)}
-            onKeyDown={(e) => { if (e.key === 'Enter') onResume(item) }}
+            onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                e.preventDefault()
+                e.stopPropagation()
+                if (!e.repeat) onResume(item)
+            }}
         >
             {poster ? (
                 <img

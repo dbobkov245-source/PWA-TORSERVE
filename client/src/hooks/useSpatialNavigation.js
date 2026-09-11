@@ -8,6 +8,30 @@
  */
 
 import { useCallback, useRef, useEffect } from 'react';
+import { dispatchSystemBack } from '../utils/backButton';
+
+const isNavigable = element => document.body.contains(element) &&
+    element.offsetParent !== null && !element.disabled && element.tabIndex !== -1 &&
+    !element.closest('[inert], [hidden]') &&
+    window.getComputedStyle(element).visibility !== 'hidden';
+
+// A nested dialog can share a zone with its underlying screen. An explicit
+// zone also keeps an empty downloading dialog isolated from background buttons.
+const scopedElements = (elements, zone) => {
+    const scopes = [...document.querySelectorAll('[data-tv-focus-scope]')];
+    const scope = scopes.reverse().find(node => !node.closest('[hidden], [inert]') &&
+        window.getComputedStyle(node).display !== 'none' &&
+        (node.dataset.tvFocusScope === zone || elements.some(el =>
+            node.contains(el) && document.body.contains(el) && el.offsetParent !== null)));
+    return scope ? elements.filter(el => scope.contains(el)) : elements;
+};
+
+const revealTarget = (target, direction) => {
+    const vertical = direction === 'ArrowUp' || direction === 'ArrowDown';
+    if (vertical || !target.closest('[data-tv-local-navigation]')) {
+        target.scrollIntoView({ behavior: 'auto', block: vertical ? 'center' : 'nearest', inline: 'nearest' });
+    }
+};
 
 /**
  * Short, human-readable identity for an element, for diagnostics only.
@@ -73,6 +97,7 @@ const topmostVisible = (elements) => {
 const SpatialEngine = {
     zones: {},
     activeZone: 'main',
+    zoneRevision: 0,
     idMap: {}, // zone -> id -> element
 
     // Optional observer for move(). Null in normal builds, so this costs nothing;
@@ -140,9 +165,9 @@ const SpatialEngine = {
     focusId(zone, id) {
         if (this.idMap[zone] && this.idMap[zone][id]) {
             const element = this.idMap[zone][id];
-            if (element.offsetParent !== null && !element.disabled) { // Check visibility and enabled state
+            if (isNavigable(element)) {
                 console.log(`[SpatialNav] Focusing element with ID '${id}' in zone '${zone}'`);
-                this.activeZone = zone; // Set active zone if focusing by ID
+                this.setActiveZone(zone);
                 element.focus();
                 element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 return true;
@@ -160,6 +185,7 @@ const SpatialEngine = {
 
         console.log(`[SpatialNav] Active Zone: ${this.activeZone} -> ${zone}`);
         this.activeZone = zone;
+        this.zoneRevision++;
         return true;
     },
 
@@ -174,8 +200,7 @@ const SpatialEngine = {
         const candidates = currentRow
             ? Array.from(currentRow.querySelectorAll('.focusable')).filter(element => zoneElements.has(element))
             : allZoneElements;
-        const elements = candidates
-            .filter(el => document.body.contains(el) && el.offsetParent !== null && el.tabIndex !== -1); // Filter valid, visible, and focusable
+        const elements = scopedElements(candidates, this.activeZone).filter(isNavigable);
 
         // Snapshot for diagnostics before anything moves.
         const before = describeElement(current);
@@ -224,9 +249,7 @@ const SpatialEngine = {
                 ? 'steered'
                 : (onScreen ? 'topmost-visible' : 'first-registered');
             target.focus({ preventScroll: true });
-            if (fromOutside && (direction === 'ArrowUp' || direction === 'ArrowDown')) {
-                target.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
-            }
+            revealTarget(target, direction);
             this.reportMove({
                 ...base,
                 found: Boolean(fromOutside),
@@ -242,9 +265,7 @@ const SpatialEngine = {
         const next = this.findNearest(current, elements, direction);
         if (next) {
             next.focus({ preventScroll: true });
-            if (direction === 'ArrowUp' || direction === 'ArrowDown') {
-                next.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
-            }
+            revealTarget(next, direction);
             this.reportMove({
                 ...base,
                 found: true,
@@ -284,8 +305,13 @@ const SpatialEngine = {
 
     findNearest(current, elements, direction) {
         const curRect = current.getBoundingClientRect();
+        const vertical = direction === 'ArrowUp' || direction === 'ArrowDown';
+        const currentRow = vertical ? current.closest?.('.home-row') : null;
+        const currentRowRect = currentRow?.getBoundingClientRect();
+        const rowRects = new Map();
         let bestCandidate = null;
         let minDistance = Infinity;
+        let minRowGap = Infinity;
 
         elements.forEach(candidate => {
             if (candidate === current) return;
@@ -301,6 +327,21 @@ const SpatialEngine = {
             }
 
             if (!isCorrectDirection) return;
+
+            // A row's remembered tab stop may be far to the left. Prefer the
+            // adjacent row before comparing horizontal alignment, so Up/Down
+            // cannot jump over it to a more aligned header or distant row.
+            let rowGap = 0;
+            if (currentRowRect) {
+                const candidateRow = candidate.closest?.('.home-row');
+                if (candidateRow && !rowRects.has(candidateRow)) {
+                    rowRects.set(candidateRow, candidateRow.getBoundingClientRect());
+                }
+                const targetRect = rowRects.get(candidateRow) || candRect;
+                rowGap = direction === 'ArrowUp'
+                    ? Math.max(0, currentRowRect.top - targetRect.bottom)
+                    : Math.max(0, targetRect.top - currentRowRect.bottom);
+            }
 
             // 2. Distance Calculation
             // For vertical navigation: if the candidate spans most of the viewport width (like a banner),
@@ -322,7 +363,8 @@ const SpatialEngine = {
                 ? dx + dy * 2
                 : dy + dx * 2;
 
-            if (distance < minDistance) {
+            if (rowGap < minRowGap || (rowGap === minRowGap && distance < minDistance)) {
+                minRowGap = rowGap;
                 minDistance = distance;
                 bestCandidate = candidate;
             }
@@ -333,15 +375,16 @@ const SpatialEngine = {
 
     recoverFocus(zone, retryCount = 5) {
         const targetZone = zone || this.activeZone;
+        const revision = this.zoneRevision;
         this.pruneZone(targetZone);
 
         const attempt = () => {
-            const elements = Array.from(this.zones[targetZone] || [])
-                .filter(el => document.body.contains(el) && el.offsetParent !== null && !el.disabled);
+            if (this.zoneRevision !== revision) return false;
+            const elements = scopedElements(Array.from(this.zones[targetZone] || []), targetZone).filter(isNavigable);
 
             if (elements.length > 0) {
                 console.log(`[SpatialNav] Recovering focus in ${targetZone}, ${elements.length} candidates`);
-                this.activeZone = targetZone;
+                this.setActiveZone(targetZone);
 
                 // Prefer elements in current viewport (visible without scroll) - BUG-1 fix v2
                 const viewportHeight = window.innerHeight;
@@ -398,31 +441,35 @@ export const useSpatialArbiter = (onBack) => {
 
     useEffect(() => {
         const handleKeyDown = (e) => {
+            if (e.defaultPrevented) return;
             const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+            const isSelect = document.activeElement.tagName === 'SELECT';
 
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                 // Allow Up/Down to escape input, and Left/Right if not typing
-                if (isTyping && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+                if ((isSelect && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) ||
+                    (isTyping && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) return;
 
                 e.preventDefault();
                 SpatialEngine.move(e.key);
             }
 
             if (e.key === 'Enter' || e.key === ' ') {
-                if (isTyping) return;
+                if (isTyping || isSelect) return;
 
                 e.preventDefault();
+                if (e.repeat) return;
                 const active = document.activeElement;
-                if (active && active.classList.contains('focusable')) {
+                const allowed = scopedElements(Array.from(SpatialEngine.zones[SpatialEngine.activeZone] || []), SpatialEngine.activeZone);
+                if (active && active.classList.contains('focusable') && !active.disabled && allowed.includes(active)) {
                     active.click();
                 }
             }
 
             if (e.key === 'Escape' || e.key === 'Backspace') {
                 if (isTyping && e.key === 'Backspace') return;
-                if (onBack) {
-                    onBack();
-                }
+                e.preventDefault();
+                if (!e.repeat) dispatchSystemBack(onBack);
             }
         };
 

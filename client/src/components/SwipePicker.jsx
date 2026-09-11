@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getBackdropUrl, getPosterUrl } from '../utils/discover'
 import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
+import { pushBackHandler } from '../utils/backButton'
 
 const noop = () => {}
 
@@ -22,15 +23,21 @@ export default function SwipePicker({
         dialogRef.current?.focus()
     }, [items.length])
 
+    useEffect(() => {
+        if (!items.length) return
+        return pushBackHandler(() => { onClose(); return true })
+    }, [onClose, items.length])
+
     if (items.length === 0) return null
 
     const title = item.title || item.name || 'Без названия'
     const advance = () => setIndex((value) => (value + 1) % items.length)
 
     const handleKeyDown = async (event) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Backspace'].includes(event.key)) return
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Backspace'].includes(event.key)) return
         event.preventDefault()
         event.stopPropagation()
+        if (event.repeat && ['Enter', 'Escape', 'Backspace'].includes(event.key)) return
         if (event.key === 'ArrowLeft') {
             onSkip(item)
         }

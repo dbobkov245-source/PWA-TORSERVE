@@ -68,7 +68,7 @@ const TVRowShell = ({
     })
 
     useEffect(() => {
-        if (focusedIndex < 0 || !items[focusedIndex]) return
+        if (!isActive || !hasFocusWithin || focusedIndex < 0 || !items[focusedIndex]) return
 
         const previousIndex = lastReportedIndexRef.current
         if (previousIndex === focusedIndex) return
@@ -76,7 +76,7 @@ const TVRowShell = ({
         onFocusChange?.(items[focusedIndex], focusedIndex)
         const moved = previousIndex !== null
         if (moved && focusedIndex >= items.length - 3) onNearEnd?.(focusedIndex)
-    }, [focusedIndex, items, onFocusChange, onNearEnd])
+    }, [focusedIndex, items, onFocusChange, onNearEnd, isActive, hasFocusWithin])
 
     if (items.length === 0) return null
 
@@ -95,6 +95,7 @@ const TVRowShell = ({
             </header>
             <div
                 {...containerProps}
+                data-tv-local-navigation
                 onFocus={handleRowFocus}
                 onBlur={handleRowBlur}
                 role="group"

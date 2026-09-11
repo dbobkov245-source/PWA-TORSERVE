@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SwipeHero from './SwipeHero'
 import SwipePicker from './SwipePicker'
+import { dispatchSystemBack } from '../utils/backButton'
 
 const imageMocks = vi.hoisted(() => ({
     getPosterUrl: vi.fn(item => item?.poster_path ? `https://images.test${item.poster_path}` : null),
@@ -136,7 +137,7 @@ describe('SwipePicker', () => {
         expect(view.queryByText('Три')).toBeNull()
     })
 
-    it.each(['ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Backspace'])(
+    it.each(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Backspace'])(
         'isolates handled %s from underlying window navigation',
         async (key) => {
             const globalKeyDown = vi.fn()
@@ -178,4 +179,12 @@ describe('SwipePicker', () => {
         resolveFavorite()
         await waitFor(() => expect(view.getByText('Два')).toBeTruthy())
     })
+})
+
+it('picker consumes Android Back before the underlying screen', () => {
+    const onClose = vi.fn(), fallback = vi.fn()
+    render(<SwipePicker items={[{ id: 1, title: 'One' }]} onClose={onClose} />)
+    act(() => dispatchSystemBack(fallback))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(fallback).not.toHaveBeenCalled()
 })

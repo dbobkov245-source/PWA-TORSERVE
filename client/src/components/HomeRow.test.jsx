@@ -164,11 +164,9 @@ it('ignores row navigation while inactive', () => {
         />
     )
     const scroller = view.container.querySelector('.snap-container')
-    const firstCard = screen.getByRole('button', { name: /^Первый/ })
-
-    expect(document.activeElement).toBe(firstCard)
+    expect(document.activeElement).toBe(document.body)
     expect(fireEvent.keyDown(scroller, { key: 'ArrowRight' })).toBe(true)
-    expect(document.activeElement).toBe(firstCard)
+    expect(document.activeElement).toBe(document.body)
 })
 
 it('leaves inactive Enter and Space untouched for parent navigation', () => {

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { pushBackHandler } from '../utils/backButton.js'
 import { getImageUrl, getPersonDetails, getPersonCredits, getPersonImages , handleImageErrorFallback } from '../utils/tmdbClient'
 import { getPosterUrl } from '../utils/discover'
-import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const FilterTab = ({ label, active, onClick }) => {
     const spatialRef = useSpatialItem('person')
@@ -123,23 +123,29 @@ const PersonDetail = ({
 
     // Global ArrowUp handler: if spatial nav can't find anything above, jump to Back button
     useEffect(() => {
+        const pendingFrames = new Set()
         const handleArrowUp = (e) => {
-            if (e.key !== 'ArrowUp') return
+            if (e.key !== 'ArrowUp' || SpatialEngine.activeZone !== 'person') return
             const current = document.activeElement
             if (!current || current === backBtnDomRef.current) return
 
             // After spatial nav processes, check if focus stayed on the same element
-            requestAnimationFrame(() => {
-                if (document.activeElement === current && current !== backBtnDomRef.current) {
+            const frame = requestAnimationFrame(() => {
+                pendingFrames.delete(frame)
+                if (SpatialEngine.activeZone === 'person' && document.activeElement === current && current !== backBtnDomRef.current) {
                     // Focus didn't move — edge reached, jump to Back button
                     backBtnDomRef.current?.focus()
                     backBtnDomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }
             })
+            pendingFrames.add(frame)
         }
 
-        window.addEventListener('keydown', handleArrowUp)
-        return () => window.removeEventListener('keydown', handleArrowUp)
+        window.addEventListener('keydown', handleArrowUp, true)
+        return () => {
+            window.removeEventListener('keydown', handleArrowUp, true)
+            pendingFrames.forEach(cancelAnimationFrame)
+        }
     }, [])
 
     if (loading) {

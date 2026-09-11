@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
+import { pushBackHandler } from '../utils/backButton'
 import { cleanTitle, getMaxEpisodeNumber } from '../utils/helpers'
 
 // TV Remote focusable button — registered in spatial navigation
@@ -109,23 +110,12 @@ export default function AutoDownloadPanel({ serverUrl, torrents = [], onClose })
         }
     }, [])
 
-    // Close on Escape/Backspace only — spatial engine handles arrow navigation
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if (e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009) {
-                e.preventDefault()
-                e.stopPropagation()
-                if (showPicker) {
-                    setShowPicker(false)
-                } else {
-                    onClose()
-                }
-            }
-        }
-
-        window.addEventListener('keydown', handleKeyDown, true)
-        return () => window.removeEventListener('keydown', handleKeyDown, true)
-    }, [showPicker, onClose])
+    // Android Back and DOM Escape use the same topmost-handler stack.
+    useEffect(() => pushBackHandler(() => {
+        if (showPicker) setShowPicker(false)
+        else onClose()
+        return true
+    }), [showPicker, onClose])
 
     // Fetch rules and settings
     const fetchRules = useCallback(async () => {

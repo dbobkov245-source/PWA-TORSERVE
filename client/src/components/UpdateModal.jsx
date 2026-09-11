@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation';
 import { downloadAndInstall } from '../utils/appUpdater';
+import { pushBackHandler } from '../utils/backButton';
 
 export default function UpdateModal({ updateInfo, onDismiss }) {
     const [status, setStatus] = useState('idle'); // idle | downloading | error
@@ -15,6 +16,11 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
     // Spatial refs — same area as other modals
     const updateBtnRef = useSpatialItem('modal', 'update-install');
     const laterBtnRef = useSpatialItem('modal', 'update-later');
+
+    useEffect(() => pushBackHandler(() => {
+        if (!updateInfo.forceUpdate && status !== 'downloading') onDismiss();
+        return true;
+    }), [onDismiss, status, updateInfo.forceUpdate]);
 
     useEffect(() => {
         previousActiveRef.current = document.activeElement;
@@ -51,7 +57,7 @@ export default function UpdateModal({ updateInfo, onDismiss }) {
     }, [updateInfo.url, updateInfo.version, updateInfo.versionCode]);
 
     return (
-        <div className="details-overlay" style={{ zIndex: 9999 }}>
+        <div className="details-overlay" data-tv-focus-scope="modal" style={{ zIndex: 9999 }}>
             <div
                 style={{
                     background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',

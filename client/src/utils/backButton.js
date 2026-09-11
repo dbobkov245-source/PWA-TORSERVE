@@ -6,9 +6,9 @@
  * (e.g. TorrentModal's delete-confirm would close together with the whole
  * modal). Instead: components push handlers onto a LIFO stack; one global
  * listener (wired in App.jsx) asks the topmost handler first and stops at
- * the first one that consumes the press. The DOM Escape/Backspace path in
- * useSpatialArbiter is intentionally untouched — this covers only the
- * system Back key, which never reaches the DOM.
+ * the first one that consumes the press. useSpatialArbiter routes DOM
+ * Escape/Backspace through the same stack; Backspace in text fields
+ * remains a native editing action.
  */
 
 const handlers = []

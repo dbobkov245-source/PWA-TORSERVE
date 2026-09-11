@@ -106,7 +106,8 @@ export const useTVNavigation = ({
             case ' ':
                 if (boundedFocusedIndex >= 0 && onSelect) {
                     e.preventDefault()
-                    onSelect(boundedFocusedIndex)
+                    e.stopPropagation()
+                    if (!e.repeat) onSelect(boundedFocusedIndex)
                     return
                 }
                 break
@@ -115,7 +116,8 @@ export const useTVNavigation = ({
             case 'Backspace':
                 if (onBack) {
                     e.preventDefault()
-                    onBack()
+                    e.stopPropagation()
+                    if (!e.repeat) onBack()
                     return
                 }
                 break
@@ -134,7 +136,12 @@ export const useTVNavigation = ({
     // queued smooth animations fight each other under rapid TV remote repeats.
     useEffect(() => {
         const node = itemRefs?.current?.[boundedFocusedIndex]
-        if (boundedFocusedIndex < 0 || !node) return
+        if (!isActive || boundedFocusedIndex < 0 || !node) return
+        // A remembered entry point does not grant ownership of DOM focus.
+        // Late rows must not steal focus from another row or an overlay.
+        const active = document.activeElement
+        if (active !== document.body && active !== document.documentElement &&
+            !itemRefs.current.includes(active)) return
 
         node.focus({ preventScroll: true })
         const container = node.closest?.('.snap-container')
@@ -145,6 +152,8 @@ export const useTVNavigation = ({
         }
 
         scrollFrameRef.current = requestAnimationFrame(() => {
+            scrollFrameRef.current = null
+            if (document.activeElement !== node || !node.isConnected) return
             const itemRect = node.getBoundingClientRect()
             const containerRect = container.getBoundingClientRect()
             const itemCenter = itemRect.left + itemRect.width / 2
@@ -163,7 +172,7 @@ export const useTVNavigation = ({
                 scrollFrameRef.current = null
             }
         }
-    }, [boundedFocusedIndex, itemRefs])
+    }, [boundedFocusedIndex, itemRefs, isActive])
 
     return {
         focusedIndex: boundedFocusedIndex,

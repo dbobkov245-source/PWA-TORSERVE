@@ -88,7 +88,7 @@ const TorrentModal = ({
     const playAllBtnRef = useSpatialItem('modal')
     const expandBtnRef = useSpatialItem('modal')
     const copyBtnRef = useSpatialItem('modal')
-    const deleteBtnRef = useSpatialItem('modal')
+    const deleteBtnRef = useSpatialItem('modal', 'torrent-delete')
     const deleteCancelBtnRef = useSpatialItem('modal', 'delete-confirm-cancel')
     const deleteConfirmBtnRef = useSpatialItem('modal', 'delete-confirm-confirm')
 
@@ -126,6 +126,7 @@ const TorrentModal = ({
         if (!showDeleteConfirm) return
 
         SpatialEngine.focusId('modal', 'delete-confirm-cancel')
+        return () => { SpatialEngine.focusId('modal', 'torrent-delete') }
     }, [showDeleteConfirm])
 
     useEffect(() => {
@@ -296,6 +297,7 @@ const TorrentModal = ({
 
                 {showDeleteConfirm && (
                     <div
+                        data-tv-focus-scope="modal"
                         className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 p-4"
                         onClick={() => !deletePending && setShowDeleteConfirm(false)}
                     >

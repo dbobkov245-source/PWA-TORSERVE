@@ -56,6 +56,10 @@ describe('SpatialEngine scroll ownership', () => {
     it('moves horizontal focus without starting a competing scroll', () => {
         const current = makeFocusable({ left: 0 })
         const next = makeFocusable({ left: 200 })
+        const row = document.createElement('div')
+        row.setAttribute('data-tv-local-navigation', '')
+        row.append(current, next)
+        document.body.append(row)
         const focus = vi.spyOn(next, 'focus')
         SpatialEngine.zones.main = new Set([current, next])
         current.focus()

@@ -19,6 +19,7 @@ import CategoryPage from './CategoryPage'
 import MovieDetail from './MovieDetail'
 import PersonDetail from './PersonDetail'
 import Sidebar from './Sidebar'
+import SpatialEngine from '../hooks/useSpatialNavigation'
 import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { addFavorite, getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
 import { getTraktSynced } from '../utils/traktApi'
@@ -526,26 +527,33 @@ const HomePanel = ({
     // ADR-003: ArrowLeft at edge → open sidebar (enables remote control access)
     useEffect(() => {
         // Don't add this handler if sidebar is open or we're in a sub-view
-        if (showSidebar || activeMovie || activePerson || activeCategory) return
+        if (showSidebar || pickerActive || activeMovie || activePerson || activeCategory) return
+        const pendingFrames = new Set()
 
         const handleArrowLeftAtEdge = (e) => {
-            if (e.key !== 'ArrowLeft') return
+            if (e.key !== 'ArrowLeft' || SpatialEngine.activeZone !== 'main') return
 
             const activeEl = document.activeElement
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl?.tagName)) return
             // Use rAF to check if focus moved after spatial navigation processed the key
-            requestAnimationFrame(() => {
+            const frame = requestAnimationFrame(() => {
+                pendingFrames.delete(frame)
                 // If focus didn't change, we hit the left edge → open sidebar
-                if (document.activeElement === activeEl) {
+                if (SpatialEngine.activeZone === 'main' && document.activeElement === activeEl) {
                     console.log('[HomePanel] ArrowLeft at edge → opening sidebar')
                     setShowSidebar(true)
                 }
             })
+            pendingFrames.add(frame)
         }
 
-        // Use capture phase to run after SpatialEngine (which uses bubbling)
-        window.addEventListener('keydown', handleArrowLeftAtEdge)
-        return () => window.removeEventListener('keydown', handleArrowLeftAtEdge)
-    }, [showSidebar, activeMovie, activePerson, activeCategory, setShowSidebar])
+        // Sample before all local/global handlers, independent of effect order.
+        window.addEventListener('keydown', handleArrowLeftAtEdge, true)
+        return () => {
+            window.removeEventListener('keydown', handleArrowLeftAtEdge, true)
+            pendingFrames.forEach(cancelAnimationFrame)
+        }
+    }, [showSidebar, pickerActive, activeMovie, activePerson, activeCategory, setShowSidebar])
 
     // ADR-003: Centralized keyboard handler
     useEffect(() => {

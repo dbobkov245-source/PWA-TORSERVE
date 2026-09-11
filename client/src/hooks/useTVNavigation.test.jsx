@@ -5,7 +5,7 @@ import { useTVNavigation } from './useTVNavigation'
 
 const key = (name) => ({ key: name, preventDefault: vi.fn(), stopPropagation: vi.fn() })
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); document.body.replaceChildren() })
 
 describe('useTVNavigation activation', () => {
   it('focuses and centers once without mutating container geometry', () => {
@@ -17,13 +17,11 @@ describe('useTVNavigation activation', () => {
       getBoundingClientRect: () => ({ left: 0, width: 1000 }),
       scrollTo
     }
-    const node = {
-      offsetWidth: 200,
-      focus: vi.fn(),
-      closest: vi.fn(() => container),
-      getBoundingClientRect: () => ({ left: 700, width: 200 }),
-      scrollIntoView: vi.fn()
-    }
+    const node = document.createElement('button')
+    document.body.append(node)
+    vi.spyOn(node, 'focus')
+    node.closest = vi.fn(() => container)
+    node.getBoundingClientRect = () => ({ left: 700, width: 200 })
     let frameCallback
     vi.stubGlobal('requestAnimationFrame', callback => {
       frameCallback = callback
