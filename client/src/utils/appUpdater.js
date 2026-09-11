@@ -25,11 +25,6 @@ function getLocalUpdaterBase() {
     } catch { return ''; }
 }
 
-function getLocalApkUrl(localBase, version) {
-    if (!localBase || !version) return '';
-    return `${localBase}/pwa-torserve-v${version}.apk`;
-}
-
 // Fallback version if native call fails (web mode)
 const FALLBACK_VERSION = { versionName: '0.0.0', versionCode: 0 };
 
@@ -106,6 +101,21 @@ function isNewerVersion(remote, local) {
     return compareVersions(remote, local) > 0;
 }
 
+function parseVersionResponse(response) {
+    if (response?.status !== 200) return null;
+
+    try {
+        const data = typeof response.data === 'string'
+            ? JSON.parse(response.data)
+            : response.data;
+        return typeof data?.version === 'string' && data.version.trim()
+            ? data
+            : null;
+    } catch {
+        return null;
+    }
+}
+
 function hasInstalledPendingVersion(currentVersion, pending) {
     if (!pending || !currentVersion) return false;
 
@@ -147,50 +157,60 @@ export async function checkForUpdate() {
 
     try {
         // Try local server first (HTTP, no TLS) — saves devices with broken CA trust
-        // or skewed clock. Fallback to GitHub raw if local server unreachable.
+        // or skewed clock. Fall through to GitHub when local metadata is invalid,
+        // unreachable, or no newer than the installed APK.
         const localBase = getLocalUpdaterBase();
-        let remoteRes = null;
-        let fromLocalStatic = false;
+        let remote = null;
         if (localBase) {
             const localCandidates = [
-                { url: `${localBase}/version.json`, static: true },
-                { url: `${localBase}/api/updater/version.json`, static: false }
+                `${localBase}/api/updater/version.json`,
+                `${localBase}/version.json`
             ];
-            for (const candidate of localCandidates) {
+            for (const candidateUrl of localCandidates) {
                 try {
-                    remoteRes = await CapacitorHttp.get({
-                        url: candidate.url,
+                    const response = await CapacitorHttp.get({
+                        url: candidateUrl,
                         headers: { 'Cache-Control': 'no-cache' },
                         connectTimeout: 5000,
                         readTimeout: 5000
                     });
-                    if (remoteRes.status === 200) {
-                        fromLocalStatic = candidate.static;
+                    const parsed = parseVersionResponse(response);
+                    if (parsed) {
+                        remote = parsed;
                         break;
                     }
-                    remoteRes = null;
                 } catch (e) {
                     console.warn('[Updater] Local version.json failed, trying next source:', e?.message || e);
-                    remoteRes = null;
                 }
             }
         }
-        if (!remoteRes) {
-            remoteRes = await CapacitorHttp.get({
-                url: VERSION_URL,
-                headers: { 'Cache-Control': 'no-cache' }
-            });
-        }
         const local = await getCurrentVersion();
 
-        if (remoteRes.status !== 200) {
-            console.warn('[Updater] Failed to fetch version.json:', remoteRes.status);
+        // A reachable NAS can keep serving an old bundled version.json long after
+        // a GitHub release. Once its metadata is no newer than the installed APK,
+        // continue to GitHub instead of treating the stale 200 response as final.
+        if (!remote || !isNewerVersion(remote.version, local.versionName)) {
+            try {
+                const githubResponse = await CapacitorHttp.get({
+                    url: VERSION_URL,
+                    headers: { 'Cache-Control': 'no-cache' },
+                    connectTimeout: 5000,
+                    readTimeout: 10000
+                });
+                const github = parseVersionResponse(githubResponse);
+                if (github && (!remote || isNewerVersion(github.version, remote.version))) {
+                    remote = github;
+                }
+            } catch (e) {
+                console.warn('[Updater] GitHub version.json failed:', e?.message || e);
+            }
+        }
+
+        if (!remote) {
+            console.warn('[Updater] Failed to fetch valid version.json');
             return { available: false };
         }
 
-        const remote = typeof remoteRes.data === 'string'
-            ? JSON.parse(remoteRes.data)
-            : remoteRes.data;
         const available = isNewerVersion(remote.version, local.versionName);
 
         // Check if force update is needed (current version is below minVersion)
@@ -208,7 +228,7 @@ export async function checkForUpdate() {
             version: remote.version,
             versionCode: remote.versionCode,
             notes: remote.notes || '',
-            url: fromLocalStatic ? (getLocalApkUrl(localBase, remote.version) || remote.url) : remote.url,
+            url: remote.url,
             currentVersion: local.versionName
         };
     } catch (e) {

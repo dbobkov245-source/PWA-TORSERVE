@@ -64,10 +64,84 @@ describe('checkForUpdate', () => {
         const update = await checkForUpdate()
 
         expect(mockCapacitorHttp.get).toHaveBeenCalledWith(expect.objectContaining({
-            url: 'http://192.168.8.203:3000/version.json'
+            url: 'http://192.168.8.203:3000/api/updater/version.json'
         }))
         expect(update.available).toBe(true)
-        expect(update.url).toBe('http://192.168.8.203:3000/pwa-torserve-v3.17.1.apk')
+        expect(update.url).toBe('https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.17.1/pwa-torserve-v3.17.1.apk')
+    })
+
+    it('falls through stale NAS metadata and discovers a newer GitHub release', async () => {
+        localStorage.setItem('serverUrl', '192.168.8.203:3000')
+        mockTVPlayer.getAppVersion.mockResolvedValue({
+            versionName: '3.18.0',
+            versionCode: 45
+        })
+        mockCapacitorHttp.get
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    version: '3.18.0',
+                    versionCode: 45,
+                    url: 'https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.0/pwa-torserve-v3.18.0.apk'
+                }
+            })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    version: '3.18.1',
+                    versionCode: 46,
+                    url: 'https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.1/pwa-torserve-v3.18.1.apk'
+                }
+            })
+
+        const update = await checkForUpdate()
+
+        expect(mockCapacitorHttp.get).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            url: 'http://192.168.8.203:3000/api/updater/version.json'
+        }))
+        expect(mockCapacitorHttp.get).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            url: 'https://raw.githubusercontent.com/dbobkov245-source/PWA-TORSERVE/main/version.json'
+        }))
+        expect(update).toMatchObject({
+            available: true,
+            version: '3.18.1',
+            versionCode: 46,
+            url: 'https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.1/pwa-torserve-v3.18.1.apk'
+        })
+    })
+
+    it('ignores a 200 HTML fallback instead of treating it as version metadata', async () => {
+        localStorage.setItem('serverUrl', '192.168.8.203:3000')
+        mockTVPlayer.getAppVersion.mockResolvedValue({
+            versionName: '3.18.0',
+            versionCode: 45
+        })
+        mockCapacitorHttp.get
+            .mockResolvedValueOnce({ status: 200, data: '<!doctype html><title>PWA</title>' })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    version: '3.18.0',
+                    versionCode: 45,
+                    url: 'https://example.com/old.apk'
+                }
+            })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    version: '3.18.1',
+                    versionCode: 46,
+                    url: 'https://example.com/new.apk'
+                }
+            })
+
+        const update = await checkForUpdate()
+
+        expect(update).toMatchObject({
+            available: true,
+            version: '3.18.1',
+            url: 'https://example.com/new.apk'
+        })
     })
 })
 
