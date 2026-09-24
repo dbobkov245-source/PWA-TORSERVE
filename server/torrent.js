@@ -213,6 +213,10 @@ export const PUBLIC_TRACKERS = [
 // Metadata bootstrap timeout policy (can be tuned via env without rebuild)
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
+// A swarm with no connected peer after this long will not deliver metadata
+// natively (Coyote vs Acme 2026-09-24: 0/0 for the full 90s, TorrServer found it in
+// 6s). Giving up early lets /api/add hand the magnet to TorrServer right away.
+const NO_PEER_TIMEOUT_MS = parseInt(process.env.TORRENT_NO_PEER_TIMEOUT_MS || '15000', 10)
 const SAFE_TORRENT_CONNECTIONS = 55
 
 export const METADATA_TIMEOUT_CODE = 'METADATA_TIMEOUT'
@@ -710,6 +714,8 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearInterval(engine._logInterval)
                 delete engine._logInterval
             }
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
 
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
@@ -768,6 +774,8 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearInterval(engine._logInterval)
                 delete engine._logInterval
             }
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
 
             console.error('[Torrent] Engine error:', err.message)
             pendingEngines.delete(infoHash)
@@ -826,6 +834,8 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
         // Metadata has arrived; hashing local files needs its own, longer budget.
         engine.once('verifying', () => {
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
             clearTimeout(engine._timeoutId)
             clearInterval(engine._logInterval)
             const configured = Number(process.env.TORRENT_VERIFY_TIMEOUT_MS)
@@ -838,6 +848,18 @@ export const addTorrent = (magnetURI, skipSave = false) => {
 
         // Start first timeout cycle
         scheduleTimeout()
+
+        engine._noPeerTimeoutId = setTimeout(() => {
+            if (engineFailed || engines.has(magnetURI)) return
+            // Known-but-unreachable peers do not count: failed ones linger in
+            // _peers during reconnect backoff (NAS: 77 known, 0 connected).
+            if (getSwarmPeerSnapshot(engine.swarm).connectedPeers > 0) return
+
+            clearInterval(logInterval)
+            const timeoutError = createMetadataTimeoutError({ elapsedMs: Date.now() - startTime, peers: 0 })
+            console.warn(`[Torrent] ${timeoutError.message}`)
+            engine.emit('error', timeoutError)
+        }, NO_PEER_TIMEOUT_MS)
         engine._logInterval = logInterval // Store to clear on ready/error
     })
 }
