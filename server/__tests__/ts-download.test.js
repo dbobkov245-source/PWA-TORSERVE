@@ -242,3 +242,20 @@ test('the failover watchdog tells evaluateDownloadFailover about active playback
     const src = readFileSync(join(here, '..', 'tsDownload.js'), 'utf8')
     expect(src).toContain('streaming: isStreamActive(hash)')
 })
+
+// A direct TorrServer download has no name until metadata arrives. A null name
+// in /api/status crashed the TV app's Poster (getGradient(null).length) right as
+// /api/add answered — the torrent was added, the user saw an error screen.
+test('mapJobToStatusItem never reports a null name', () => {
+    const item = mapJobToStatusItem({ infoHash: '70e211914b5b65d057fd2c491b9501c60eccb0b3', name: null, status: 'downloading', written: 0, files: [] })
+    expect(item.name).toBe('70e211914b5b65d057fd2c491b9501c60eccb0b3')
+})
+
+test('extractMagnetName reads the display name from a magnet', async () => {
+    const { extractMagnetName } = await import('../tsDownload.js')
+    expect(extractMagnetName('magnet:?xt=urn:btih:70e211914b5b65d057fd2c491b9501c60eccb0b3&dn=Coyote.vs.Acme.2026.mkv&tr=udp%3A%2F%2Fx'))
+        .toBe('Coyote.vs.Acme.2026.mkv')
+    expect(extractMagnetName('magnet:?xt=urn:btih:abc&dn=%D0%9A%D0%BE%D0%B9%D0%BE%D1%82+2026')).toBe('Койот 2026')
+    expect(extractMagnetName('magnet:?xt=urn:btih:abc')).toBe(null)
+    expect(extractMagnetName(null)).toBe(null)
+})

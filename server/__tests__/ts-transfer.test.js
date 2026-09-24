@@ -140,3 +140,24 @@ test('TorrServer retry preserves completed files and resumes the interrupted fil
         assert.equal(await fs.promises.readFile(path.join(f.directory, 'second.mkv'), 'utf8'), '0123456789')
     } finally { await f.dispose() }
 })
+
+test('TorrServer metadata name replaces the magnet dn placeholder', async () => {
+    // dn is often transliterated ("Prizrak-v-kletke…"); the library card is keyed
+    // by the real on-disk name, so keeping dn would show the film twice.
+    const f = await fixture(async (url, options = {}) => {
+        if (url.endsWith('/torrents')) {
+            const { action } = JSON.parse(options.body)
+            if (action === 'get') {
+                return new Response(JSON.stringify({ name: 'Coyote.vs.Acme.2026.mkv', file_stats: [{ id: 1, path: 'Coyote.vs.Acme.2026.mkv', length: 10 }] }))
+            }
+            return new Response('{}')
+        }
+        return new Response('0123456789', { status: 200 })
+    })
+    try {
+        const current = await f.startFailover({ infoHash: 'b'.repeat(40), magnet: 'magnet:?xt=urn:btih:' + 'b'.repeat(40), name: 'Koyot-protiv-Akme' })
+        for (let i = 0; i < 50 && current.status === 'downloading'; i++) await new Promise(r => setTimeout(r, 20))
+        assert.equal(current.status, 'done')
+        assert.equal(current.name, 'Coyote.vs.Acme.2026.mkv')
+    } finally { await f.dispose() }
+})

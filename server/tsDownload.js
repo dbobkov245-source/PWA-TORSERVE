@@ -113,7 +113,8 @@ export function mapJobToStatusItem(job) {
 
     return {
         infoHash: job.infoHash,
-        name: job.name,
+        // A direct download has no name until TorrServer resolves metadata.
+        name: job.name || job.infoHash,
         progress,
         isReady: job.status === 'done',
         downloaded: job.written,
@@ -362,7 +363,8 @@ async function runJob(config, job) {
         const videos = pickVideoFiles(stat.file_stats)
         if (videos.length === 0) throw new Error('No video files in torrent')
 
-        job.name = job.name || stat.name || stat.title || 'Unknown Torrent'
+        // TorrServer's name matches the files on disk; a magnet dn is only a placeholder.
+        job.name = stat.name || stat.title || job.name || 'Unknown Torrent'
         job.files = videos.map((f) => ({ path: f.path, length: f.length, tsId: f.id }))
         job.totalSize = videos.reduce((sum, f) => sum + f.length, 0)
         job.written = 0
@@ -450,6 +452,13 @@ export async function startFailover(item, config = getTsConfig()) {
 
 const MAGNET_HEX_HASH_RE = /urn:btih:([a-fA-F0-9]{40})/i
 
+/** The magnet's `dn` display name, or null. */
+export function extractMagnetName(magnet) {
+    if (typeof magnet !== 'string') return null
+    const query = magnet.slice(magnet.indexOf('?') + 1)
+    return new URLSearchParams(query).get('dn') || null
+}
+
 export function extractMagnetHash(magnet) {
     const match = typeof magnet === 'string' ? magnet.match(MAGNET_HEX_HASH_RE) : null
     return match ? match[1].toLowerCase() : null
@@ -479,7 +488,7 @@ export async function startDirectTsDownload(magnet, config = getTsConfig()) {
     }
 
     log.info('Native metadata failed → direct TorrServer download', { hash: infoHash })
-    return startFailover({ infoHash, magnet, name: null }, config)
+    return startFailover({ infoHash, magnet, name: extractMagnetName(magnet) }, config)
 }
 
 /** Returns the removed job (so the caller can clean its files), or null. */

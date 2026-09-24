@@ -20,3 +20,9 @@ it('never displays the previous film poster after its name changes', async () =>
     rerender(<Poster name="Missing" progress={0} />)
     expect(container.querySelector('img')).toBeNull()
 })
+
+it('renders a card whose name is still unknown instead of crashing', () => {
+    getMetadata.mockReturnValue(null)
+    resolveMetadata.mockReturnValue(new Promise(() => {}))
+    expect(() => render(<Poster name={null} progress={0} />)).not.toThrow()
+})
