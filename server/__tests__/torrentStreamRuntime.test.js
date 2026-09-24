@@ -24,7 +24,7 @@ var CHOKE_TIMEOUT = 5000
     expect(patched).toContain('var CHOKE_TIMEOUT = 5000')
 })
 
-test('patchTorrentStreamSource leaves stock source unchanged when explicitly pinned to 5', async () => {
+test('patchTorrentStreamSource preserves the stock request limit while patching uTP when pinned to 5', async () => {
     const { patchTorrentStreamSource } = await import('../torrentStreamRuntime.js')
 
     const source = 'var MAX_REQUESTS = 5\nvar swarm = pws(infoHash, opts.id, { size: (opts.connections || opts.size), speed: 10 })'
@@ -32,4 +32,11 @@ test('patchTorrentStreamSource leaves stock source unchanged when explicitly pin
 
     expect(patched).toContain('var MAX_REQUESTS = 5')
     expect(patched).toContain('utp: opts.utp')
+})
+
+
+test('getTorrentStream applies the uTP patch even at the stock request limit', async () => {
+    const { getTorrentStream } = await import('../torrentStreamRuntime.js')
+    // Inspect the compiled runtime rather than only the source patch helper.
+    expect(getTorrentStream({ TORRENT_MAX_REQUESTS: '5' }).toString()).toContain('utp: opts.utp')
 })

@@ -6,7 +6,10 @@ import { useSpatialItem } from '../hooks/useSpatialNavigation'
 const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount, backend }) => {
     const spatialRef = useSpatialItem('main')
     const cleanedName = cleanTitle(name)
-    const [bgImage, setBgImage] = useState(() => getMetadata(cleanedName)?.poster || null)
+    const [resolvedImage, setResolvedImage] = useState(null)
+    const bgImage = resolvedImage?.name === cleanedName
+        ? resolvedImage.url
+        : getMetadata(cleanedName)?.poster || null
 
     useEffect(() => {
         if (!cleanedName) return
@@ -17,7 +20,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
             try {
                 const metadata = await resolveMetadata(cleanedName)
                 if (isMounted && metadata?.poster) {
-                    setBgImage(metadata.poster)
+                    setResolvedImage({ name: cleanedName, url: metadata.poster })
                 }
             } catch (err) {
                 console.warn('[Poster] Load failed:', cleanedName, err)
@@ -37,7 +40,6 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
           focusable relative group aspect-[2/3] rounded-xl overflow-hidden shadow-xl
           transition-all duration-300
           focus:scale-105 focus:ring-4 focus:ring-blue-500 focus:z-20 outline-none
-          hover:scale-105
           bg-gray-800
         `}
             style={{
@@ -52,7 +54,7 @@ const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, 
                     className="w-full h-full object-cover transition-opacity duration-500"
                     loading="lazy"
                     decoding="async"
-                    onError={() => setBgImage(getNextImageUrl(bgImage))}
+                    onError={() => setResolvedImage({ name: cleanedName, url: getNextImageUrl(bgImage) })}
                 />
             ) : (
                 <>

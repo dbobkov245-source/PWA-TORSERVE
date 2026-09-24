@@ -78,35 +78,37 @@ public class TVPlayer extends Plugin {
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
-            if (packageName != null && !packageName.isEmpty()) {
+            boolean useChooser = packageName == null || packageName.isEmpty();
+            if (!useChooser) {
                 intent.setPackage(packageName);
+            }
 
-                // Common extras for result
-                intent.putExtra("return_result", true);
+            // The system chooser does not tell us the selected player in advance.
+            // Include supported extras so its selected player can resume and report progress.
+            intent.putExtra("return_result", true);
 
-                // Vimu Player extras (net.gtvbox.videoplayer)
-                if (packageName.contains("gtvbox")) {
-                    intent.putExtra("forcename", title); // Show title instead of URL
-                    intent.putExtra("forcedirect", true); // Direct access without buffering
-                    if (position > 0)
-                        intent.putExtra("startfrom", position); // Resume Vimu
-                }
+            // Vimu Player extras (net.gtvbox.videoplayer)
+            if (useChooser || packageName.contains("gtvbox")) {
+                intent.putExtra("forcename", title); // Show title instead of URL
+                intent.putExtra("forcedirect", true); // Direct access without buffering
+                if (position > 0)
+                    intent.putExtra("startfrom", position); // Resume Vimu
+            }
 
-                // MX Player extras (com.mxtech.videoplayer)
-                if (packageName.contains("mxtech")) {
-                    intent.putExtra("title", title);
-                    intent.putExtra("sticky", false);
-                    if (position > 0)
-                        intent.putExtra("position", position); // Resume MX
-                }
+            // MX Player extras (com.mxtech.videoplayer)
+            if (useChooser || packageName.contains("mxtech")) {
+                intent.putExtra("title", title);
+                intent.putExtra("sticky", false);
+                if (position > 0)
+                    intent.putExtra("position", position); // Resume MX
+            }
 
-                // VLC extras
-                if (packageName.contains("videolan")) {
-                    intent.putExtra("title", title);
-                    if (position > 0)
-                        intent.putExtra("from_start", false); // VLC specific?
-                    // VLC doesn't support standard position extra well, depends on version
-                }
+            // VLC extras
+            if (useChooser || packageName.contains("videolan")) {
+                if (!useChooser) intent.putExtra("title", title);
+                if (position > 0)
+                    intent.putExtra("from_start", false); // VLC specific?
+                // VLC doesn't support standard position extra well, depends on version
             }
 
             startActivityForResult(call, intent, "playerResult");

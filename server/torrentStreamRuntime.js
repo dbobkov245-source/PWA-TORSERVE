@@ -67,9 +67,5 @@ function loadPatchedTorrentStream(maxRequests) {
 
 export function getTorrentStream(env = process.env) {
     const maxRequests = getTorrentMaxRequests(env)
-    if (maxRequests === STOCK_TORRENT_MAX_REQUESTS) {
-        return require('torrent-stream')
-    }
-
     return loadPatchedTorrentStream(maxRequests)
 }

@@ -32,6 +32,44 @@ describe('watchHistory', () => {
         expect(getResumeItems()).toHaveLength(0)
     })
 
+    it.each([
+        undefined, null, {}, { position: -1 }, { position: null },
+        { position: '600000' }, { position: 'invalid' }, { position: NaN },
+        { position: Infinity }, { position: -Infinity }
+    ])('preserves the existing entry when player progress is unavailable: %j', (result) => {
+        recordPlaybackResult({ ...base, tmdbId: 603, result: { position: 600000, duration: 7200000 } })
+        const previous = getResumeEntry(base.infoHash, 0)
+        recordPlaybackResult({ ...base, result })
+        expect(getResumeEntry(base.infoHash, 0)).toEqual(previous)
+    })
+
+    it('clears explicit completion even when the player has no position', () => {
+        recordPlaybackResult({ ...base, result: { position: 600000, duration: 7200000 } })
+        recordPlaybackResult({ ...base, result: { position: -1, finished: true } })
+        expect(getResumeEntry(base.infoHash, 0)).toBeNull()
+    })
+
+    it('clears a prior entry when the player explicitly reports restarting near the beginning', () => {
+        recordPlaybackResult({ ...base, result: { position: 600000, duration: 7200000 } })
+        recordPlaybackResult({ ...base, result: { position: 0 } })
+        expect(getResumeEntry(base.infoHash, 0)).toBeNull()
+    })
+
+    it.each(['7200000', Infinity, NaN, -1])('does not store malformed duration %j', (duration) => {
+        recordPlaybackResult({ ...base, result: { position: 600000, duration } })
+        expect(getResumeEntry(base.infoHash, 0).duration).toBe(0)
+    })
+
+    it.each([
+        { position: Infinity, duration: 7200000 },
+        { position: '7200000', duration: 7200000 },
+        { position: 7200000, duration: '7200000' },
+        { position: -1, finished: 'false' },
+        null
+    ])('does not infer completion from malformed result %j', (result) => {
+        expect(isFinishedResult(result)).toBe(false)
+    })
+
     it('95% watched counts as finished even without the flag', () => {
         expect(isFinishedResult({ position: 6900000, duration: 7200000 })).toBe(true)
         recordPlaybackResult({ ...base, result: { position: 6900000, duration: 7200000, finished: false } })

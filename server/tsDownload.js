@@ -13,6 +13,8 @@
  */
 
 import fs from 'fs'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import path from 'path'
 import { db, safeWrite } from './db.js'
 import { safeJoinDownloadPath } from './utils/filePath.js'
@@ -52,7 +54,7 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.m4v', '.mov', '.webm
 export function evaluateDownloadFailover(item, config = getTsConfig()) {
     if (!config.enabled) return false
     if (!item || !item.infoHash) return false
-    if (item.isReady || (item.progress || 0) >= 0.99) return false
+    if (item.isReady) return false
     if ((item.ageMs || 0) < config.graceMs) return false
     // Metadata not resolved yet → nothing to compare, let native keep trying
     if (!item.totalSize) return false
@@ -243,11 +245,11 @@ export function getTsJobsMetrics() {
 
 async function persistJob(job) {
     db.data.tsDownloads ||= []
-    const existing = db.data.tsDownloads.find((j) => j.infoHash === job.infoHash)
-    if (!existing) {
-        db.data.tsDownloads.push({ infoHash: job.infoHash, magnet: job.magnet, name: job.name })
-        await safeWrite(db)
-    }
+    const saved = { infoHash: job.infoHash, magnet: job.magnet, name: job.name, fresh: job.fresh }
+    const index = db.data.tsDownloads.findIndex(j => j.infoHash === job.infoHash)
+    if (index < 0) db.data.tsDownloads.push(saved)
+    else db.data.tsDownloads[index] = saved
+    await safeWrite(db)
 }
 
 async function unpersistJob(infoHash) {
@@ -271,81 +273,80 @@ async function markCompletedInDb(job) {
 }
 
 async function downloadFileFromTs(config, job, file) {
-    const downloadPath = process.env.DOWNLOAD_PATH || './downloads'
-    // TorrServer file paths already include the torrent folder name
-    const target = safeJoinDownloadPath(downloadPath, file.path)
+    const target = safeJoinDownloadPath(process.env.DOWNLOAD_PATH || './downloads', file.path)
     await fs.promises.mkdir(path.dirname(target), { recursive: true })
-
-    // Migrated jobs start clean: the native engine wrote pieces at sparse
-    // offsets, so file size ≠ valid sequential prefix. Resume-by-size is
-    // only safe for files this module wrote itself (restart of a TS job).
-    if (job.fresh) {
-        await fs.promises.rm(target, { force: true })
-    }
-
     let existingSize = 0
-    try {
-        existingSize = (await fs.promises.stat(target)).size
-    } catch { /* file does not exist yet */ }
-
-    const offset = computeResumeOffset(existingSize, file.length)
-    if (offset >= file.length) {
-        job.written += file.length
-        return
+    try { existingSize = (await fs.promises.stat(target)).size } catch (err) {
+        if (err.code !== 'ENOENT') throw err
     }
-    job.written += offset
+    // Oversized leftovers cannot represent a valid sequential prefix.
+    let offset = existingSize > file.length ? 0 : computeResumeOffset(existingSize, file.length)
+    if (offset === file.length) { job.written += offset; return }
 
-    const url = buildTsStreamUrl(config.url, job.infoHash, file.tsId)
-    const headers = offset > 0 ? { Range: `bytes=${offset}-` } : {}
-    // Stall guard: a dead swarm leaves the fetch body hanging forever.
-    // Abort after stallTimeoutMs without bytes — job goes to 'error' and the
-    // watchdog may retry the migration after its cooldown.
     const aborter = new AbortController()
-    const res = await fetch(url, { headers, signal: aborter.signal })
-    if (!res.ok || !res.body) {
-        throw new Error(`TS stream HTTP ${res.status} for ${file.path}`)
+    const parentSignal = job.abortController?.signal
+    const cancel = () => aborter.abort(parentSignal.reason)
+    parentSignal?.throwIfAborted()
+    parentSignal?.addEventListener('abort', cancel, { once: true })
+    let idleTimer
+    const resetIdle = () => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => aborter.abort(new Error('TorrServer stream stalled')), config.stallTimeoutMs)
     }
-
-    const writeStream = fs.createWriteStream(target, { flags: offset > 0 ? 'r+' : 'w', start: offset })
     let lastBytes = job.written
     let lastTick = Date.now()
-    let lastProgressAt = Date.now()
     const speedTimer = setInterval(() => {
         const now = Date.now()
-        if (job.written > lastBytes) lastProgressAt = now
-        if (now - lastProgressAt > config.stallTimeoutMs) {
-            aborter.abort(new Error(`No data from TorrServer for ${Math.round(config.stallTimeoutMs / 60000)}min`))
-            return
-        }
-        job.speedBps = ((job.written - lastBytes) * 1000) / Math.max(now - lastTick, 1)
+        job.speedBps = (job.written - lastBytes) * 1000 / Math.max(now - lastTick, 1)
         lastBytes = job.written
         lastTick = now
         notifyTorrentsChanged()
     }, 3000)
-
+    resetIdle() // Covers waiting for response headers as well as a stalled body.
     try {
-        for await (const chunk of res.body) {
-            // Respect backpressure: without the drain wait a fast swarm and
-            // a slow HDD balloon RSS with buffered chunks.
-            if (!writeStream.write(chunk)) {
-                await new Promise((resolve) => writeStream.once('drain', resolve))
+        const headers = offset > 0 ? { Range: 'bytes=' + offset + '-' } : {}
+        const res = await fetch(buildTsStreamUrl(config.url, job.infoHash, file.tsId), { headers, signal: aborter.signal })
+        if (!res.ok || !res.body) throw new Error('TS stream HTTP ' + res.status + ' for ' + file.path)
+        if (res.status === 206) {
+            const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range') || '')
+            if (!range || Number(range[1]) !== offset || Number(range[2]) !== file.length - 1 || Number(range[3]) !== file.length) {
+                throw new Error('Invalid TorrServer Content-Range')
             }
-            job.written += chunk.length
-        }
-        await new Promise((resolve, reject) => {
-            writeStream.end((err) => (err ? reject(err) : resolve()))
+        } else if (res.status === 200) {
+            offset = 0 // Upstream ignored Range: replace file with its complete response.
+        } else throw new Error('Unexpected TorrServer stream status ' + res.status)
+
+        const expected = file.length - offset
+        let received = 0
+        job.written += offset
+        const count = new Transform({
+            transform(chunk, encoding, callback) {
+                received += chunk.length
+                if (received > expected) return callback(new Error('TorrServer body exceeds expected length'))
+                resetIdle()
+                job.written += chunk.length
+                callback(null, chunk)
+            }
         })
+        const output = fs.createWriteStream(target, { flags: offset > 0 ? 'r+' : 'w', start: offset })
+        await pipeline(Readable.fromWeb(res.body), count, output, { signal: aborter.signal })
+        if (received !== expected) throw new Error('Incomplete TorrServer body: ' + received + '/' + expected + ' bytes')
     } finally {
+        clearTimeout(idleTimer)
         clearInterval(speedTimer)
+        parentSignal?.removeEventListener('abort', cancel)
+        aborter.abort()
         job.speedBps = 0
-        if (!writeStream.writableEnded) writeStream.destroy()
     }
 }
 
 async function runJob(config, job) {
+    job.abortController = new AbortController()
+    const signal = job.abortController.signal
     try {
         await tsAdd(config, job.magnet)
         const stat = await tsWaitFiles(config, job.infoHash)
+        signal.throwIfAborted()
         const videos = pickVideoFiles(stat.file_stats)
         if (videos.length === 0) throw new Error('No video files in torrent')
 
@@ -356,8 +357,20 @@ async function runJob(config, job) {
 
         // TorrServer confirmed working — now release the native engine.
         // Order matters: never leave the user with zero engines on a failure.
-        removeTorrent(job.infoHash, true)
         await persistJob(job)
+        signal.throwIfAborted()
+        removeTorrent(job.infoHash, true)
+        // Clear every sparse native file before any sequential transfer starts.
+        // Persist the phase so interruption halfway through reset is safe to retry.
+        if (job.fresh) {
+            for (const file of job.files) {
+                signal.throwIfAborted()
+                await fs.promises.rm(safeJoinDownloadPath(process.env.DOWNLOAD_PATH || './downloads', file.path), { force: true })
+            }
+            signal.throwIfAborted()
+            job.fresh = false
+            await persistJob(job)
+        }
         notifyTorrentsChanged()
 
         log.info('Failover download started', {
@@ -368,19 +381,23 @@ async function runJob(config, job) {
         })
 
         for (const file of job.files) {
+            signal.throwIfAborted()
             const statSnapshot = await tsGet(config, job.infoHash).catch(() => null)
             job.peers = statSnapshot?.active_peers || job.peers || 0
             await downloadFileFromTs(config, job, file)
         }
 
+        signal.throwIfAborted()
+        await markCompletedInDb(job)
         job.status = 'done'
         job.written = job.totalSize
-        await markCompletedInDb(job)
         await unpersistJob(job.infoHash)
         await tsRemove(config, job.infoHash)
         notifyTorrentsChanged()
         log.info('Failover download complete', { hash: job.infoHash, name: job.name })
     } catch (err) {
+        if (signal.aborted) return
+        job.failedAt = Date.now()
         job.status = 'error'
         job.error = err.message
         job.speedBps = 0
@@ -457,6 +474,7 @@ export function removeTsJob(infoHash) {
     const hash = infoHash?.toLowerCase?.() || infoHash
     const job = jobs.get(hash)
     if (!job) return false
+    job.abortController?.abort(new Error('Download cancelled'))
     jobs.delete(hash)
     unpersistJob(hash).catch(() => {})
     tsRemove(getTsConfig(), hash)
@@ -480,21 +498,20 @@ async function watchdogTick(config) {
     if (!tsAvailable) return
 
     const now = Date.now()
+    // Migrated jobs no longer have a native engine. Retry them independently.
+    for (const job of jobs.values()) {
+        if (job.status !== 'error' || now - (job.failedAt ?? job.startedAt) < 10 * 60 * 1000) continue
+        if (getTsJobsMetrics().downloading >= config.maxConcurrentJobs) break
+        job.status = 'downloading'
+        job.error = null
+        job.startedAt = now
+        runJob(config, job)
+    }
     for (const item of getAllTorrents()) {
         const hash = item.infoHash?.toLowerCase()
         if (!hash) continue
 
-        const existingJob = jobs.get(hash)
-        if (existingJob) {
-            // A failed migration must not block retries forever — the swarm
-            // (or TorrServer) may recover. Native kept downloading meanwhile.
-            const RETRY_ERRORED_AFTER_MS = 10 * 60 * 1000
-            if (existingJob.status === 'error' && now - existingJob.startedAt > RETRY_ERRORED_AFTER_MS) {
-                jobs.delete(hash)
-            } else {
-                continue
-            }
-        }
+        if (jobs.has(hash)) continue
 
         if (!engineAddedAt.has(hash)) {
             engineAddedAt.set(hash, now)
@@ -548,7 +565,7 @@ export async function restoreTsDownloads(config = getTsConfig()) {
             peers: 0,
             status: 'downloading',
             error: null,
-            fresh: false, // our own sequential writes — resume by size
+            fresh: saved.fresh === true, // older saved jobs were sequential; newer jobs record reset phase
             startedAt: Date.now()
         }
         jobs.set(saved.infoHash, job)
@@ -577,7 +594,7 @@ export function initTsFailover(config = getTsConfig()) {
             available: tsAvailable,
             version: version || 'unreachable'
         })
-        if (tsAvailable) restoreTsDownloads(config)
+        if (tsAvailable) restoreTsDownloads(config).catch(err => log.warn('Download restore failed', { error: err.message }))
     })
 }
 

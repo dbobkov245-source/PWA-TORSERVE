@@ -38,9 +38,11 @@ function save(map) {
 }
 
 /** Treats a player result as "watched to the end"? */
-export function isFinishedResult({ position = 0, duration = 0, finished = false } = {}) {
-    if (finished) return true
-    if (duration > 0 && position / duration >= FINISHED_RATIO) return true
+export function isFinishedResult(result) {
+    const { position, duration, finished } = result || {}
+    if (finished === true) return true
+    if (Number.isFinite(position) && position >= 0 && Number.isFinite(duration)
+        && duration > 0 && position / duration >= FINISHED_RATIO) return true
     return false
 }
 
@@ -50,11 +52,15 @@ export function isFinishedResult({ position = 0, duration = 0, finished = false 
  */
 export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentName, tmdbId = null, mediaType = null, result }) {
     if (!infoHash || !Number.isInteger(fileIndex)) return
+    const finished = isFinishedResult(result)
+    const position = result?.position
+    // External players may close without a result (-1). Keep the last known
+    // progress unless completion or a real nonnegative position was reported.
+    if (!finished && (!Number.isFinite(position) || position < 0)) return
     const map = load()
     const key = entryKey(infoHash, fileIndex)
-    const position = Math.max(0, result?.position || 0)
 
-    if (isFinishedResult(result) || position < MIN_RESUME_POSITION_MS) {
+    if (finished || position < MIN_RESUME_POSITION_MS) {
         if (map[key]) {
             delete map[key]
             save(map)
@@ -73,7 +79,7 @@ export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentNam
         tmdbId: tmdbId ?? map[key]?.tmdbId ?? null,
         mediaType: mediaType ?? map[key]?.mediaType ?? null,
         position,
-        duration: Math.max(0, result?.duration || 0),
+        duration: Number.isFinite(result?.duration) ? Math.max(0, result.duration) : 0,
         updatedAt: Date.now()
     }
     save(map)

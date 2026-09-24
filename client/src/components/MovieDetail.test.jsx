@@ -218,3 +218,11 @@ describe('MovieDetail action row', () => {
         expect(addFavoriteMock).toHaveBeenCalledTimes(1)
     })
 })
+
+ it('accepts an item arriving after an empty render and being cleared', async () => {
+    const { rerender, container } = render(<MovieDetail item={null} />)
+    await act(async () => { rerender(<MovieDetail item={{ id: 603, title: 'Matrix' }} />) })
+    expect(container.querySelector('.movie-detail')).not.toBeNull()
+    await act(async () => { rerender(<MovieDetail item={null} />) })
+    expect(container.innerHTML).toBe('')
+})

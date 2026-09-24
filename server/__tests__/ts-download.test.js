@@ -43,7 +43,7 @@ test('evaluateDownloadFailover skips fast downloads', () => {
 
 test('evaluateDownloadFailover skips completed and metadata-less torrents', () => {
     expect(evaluateDownloadFailover(makeItem({ isReady: true }), config)).toBe(false)
-    expect(evaluateDownloadFailover(makeItem({ progress: 0.995 }), config)).toBe(false)
+    expect(evaluateDownloadFailover(makeItem({ progress: 0.995 }), config)).toBe(true)
     expect(evaluateDownloadFailover(makeItem({ totalSize: 0 }), config)).toBe(false)
 })
 

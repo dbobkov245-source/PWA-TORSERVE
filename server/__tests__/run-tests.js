@@ -34,6 +34,13 @@ await import('./dpad-trace.test.js')
 await import('./ts-finished-file.test.js')
 await import('./doh.test.js')
 await import('./trakt-discovery.test.js')
+await import('./torrentStreamRuntime.test.js')
+await import('./stream-lifecycle.test.js')
+await import('./db-queue.test.js')
+await import('./proxy-lifecycle.test.js')
+await import('./persistence-routes.test.js')
+await import('./ts-transfer.test.js')
+await import('./torrent-startup.test.js')
 
 // Run all registered tests
 await runTests()

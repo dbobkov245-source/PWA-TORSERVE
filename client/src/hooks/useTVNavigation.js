@@ -30,6 +30,7 @@ export const useTVNavigation = ({
     const boundedFocusedIndex = itemCount === 0
         ? -1
         : Math.min(Math.max(focusedIndex, -1), itemCount - 1)
+    if (focusedIndex !== boundedFocusedIndex) setFocusedIndex(boundedFocusedIndex)
 
     const handleKeyDown = useCallback((e) => {
         if (!isActive || itemCount === 0) return
@@ -184,7 +185,7 @@ export const useTVNavigation = ({
             tabIndex: 0
         },
         // Helper for checking if item is focused
-        isFocused: (index) => boundedFocusedIndex === index
+        isFocused: (index) => index >= 0 && index < itemCount && boundedFocusedIndex === index
     }
 }
 
