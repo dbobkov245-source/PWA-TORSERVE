@@ -17,18 +17,15 @@ let pendingWrites = 0
 export function safeWrite(db) {
     pendingWrites++
 
-    writeQueue = writeQueue
+    const operation = writeQueue
         .then(() => db.write())
-        .then(() => {
+        .finally(() => {
             pendingWrites--
-        })
-        .catch((err) => {
-            pendingWrites--
-            console.error('[DB] Write failed:', err.message)
-            // Don't break the chain - allow subsequent writes
         })
 
-    return writeQueue
+    // Recover only the queue tail. The caller still sees its own write failure.
+    writeQueue = operation.catch(err => console.error('[DB] Write failed:', err.message))
+    return operation
 }
 
 /**

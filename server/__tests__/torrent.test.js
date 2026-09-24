@@ -111,7 +111,7 @@ test('buildTorrentEngineOptions keeps discovery config aligned across torrent en
     expect(options.connections).toBe(12)
     expect(options.uploads).toBe(10)
     expect(options.utp).toBe(false)
-    expect(options.verify).toBe(false)
+    expect(options.verify).toBe(true)
     expect(options.tracker).toBe(true)
     expect(options.dht).toBe(sharedDHT)
     expect(Array.isArray(options.trackers)).toBe(true)
@@ -450,4 +450,46 @@ test('trackDhtPeerListeners tolerates a missing or DHT-less engine', async () =>
     expect(trackDhtPeerListeners(null)()).toBe(0)
     expect(trackDhtPeerListeners(undefined)()).toBe(0)
     expect(trackDhtPeerListeners({})()).toBe(0)
+})
+
+
+test('completion requires every selected video piece, including the final one percent', async () => {
+    const { areVideoFilesComplete } = await import('../torrent.js')
+    const engine = {
+        torrent: { pieceLength: 1024, pieces: Array(100).fill('hash') },
+        files: [{ name: 'movie.mkv', offset: 0, length: 102400 }],
+        bitfield: { get: index => index < 99 }
+    }
+    expect(areVideoFilesComplete(engine)).toBe(false)
+    engine.bitfield.get = () => true
+    expect(areVideoFilesComplete(engine)).toBe(true)
+})
+
+test('completion checks all video files but does not require unselected extras', async () => {
+    const { areVideoFilesComplete } = await import('../torrent.js')
+    const engine = {
+        torrent: { pieceLength: 1024, pieces: Array(4).fill('hash') },
+        files: [
+            { name: 'E01.mkv', offset: 0, length: 1024 },
+            { name: 'E02.mp4', offset: 1024, length: 1024 },
+            { name: 'cover.jpg', offset: 2048, length: 2048 }
+        ],
+        bitfield: { get: index => index === 0 }
+    }
+    expect(areVideoFilesComplete(engine)).toBe(false)
+    engine.bitfield.get = index => index < 2
+    expect(areVideoFilesComplete(engine)).toBe(true)
+    engine.files = [{ name: 'cover.jpg', offset: 0, length: 1024 }]
+    expect(areVideoFilesComplete(engine)).toBe(false)
+})
+
+test('failed engine cleanup removes every alias and frozen record without removing other engines', async () => {
+    const { removeEngineReferences } = await import('../torrent.js')
+    const failed = { infoHash: 'failed' }
+    const other = { infoHash: 'other' }
+    const active = new Map([['failed', failed], ['magnet:failed', failed], ['other', other]])
+    const frozen = new Map([['failed', { engine: failed }], ['other', { engine: other }]])
+    removeEngineReferences(failed, active, frozen)
+    expect([...active.keys()]).toEqual(['other'])
+    expect([...frozen.keys()]).toEqual(['other'])
 })

@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test": "node server/__tests__/run-tests.js",
+    "test:download": "node scripts/test-torrent-download.mjs",
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "client:install": "cd client && npm install",

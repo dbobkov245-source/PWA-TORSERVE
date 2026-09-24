@@ -207,6 +207,7 @@ const MovieDetail = ({
             setShowTrailerInline(false)
             try {
                 const details = await getDetails(item.id, mediaType)
+                if (controller.signal.aborted) return
                 if (details && mediaType === 'tv') setSeasons(details.seasons || [])
 
                 // Коллекция / Франшиза (COLL-01)
@@ -217,6 +218,7 @@ const MovieDetail = ({
                 }
 
                 const creditsData = await getCredits(item.id, mediaType)
+                if (controller.signal.aborted) return
                 setDirectors(creditsData.crew?.filter(p => p.job === 'Director') || [])
                 setCast(creditsData.cast?.slice(0, 8) || [])
 
@@ -232,8 +234,10 @@ const MovieDetail = ({
                 setCrew(keyCrew)
 
                 const videosData = await getVideos(item.id, mediaType)
+                if (controller.signal.aborted) return
                 setTrailer(videosData.results?.find(v => v.type === 'Trailer') || videosData.results?.[0])
                 const recData = await getRecommendations(item.id, mediaType)
+                if (controller.signal.aborted) return
                 setRecommendations(recData.results || [])
 
                 // Ключевые слова (KW-01)

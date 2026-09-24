@@ -288,7 +288,12 @@ router.get('/', async (req, res) => {
         }
 
         const transport = isHttps ? https : http;
-        const proxyReq = transport.request(config.resolvedIP ? options : upstreamUrl, (proxyRes) => {
+        let fallbackTried = false;
+        const onResponse = (proxyRes) => {
+            if (fallbackTried || shouldSkipProxyWrite(res)) {
+                proxyRes.destroy();
+                return;
+            }
             // Surface upstream socket aborts on the response stream so we can
             // close `res` and free the client socket. Without this listener,
             // an upstream RST mid-body either crashes Node ('error' event with
@@ -330,7 +335,10 @@ router.get('/', async (req, res) => {
             } else {
                 proxyRes.pipe(res);
             }
-        });
+        };
+        const proxyReq = config.resolvedIP
+            ? transport.request(options, onResponse)
+            : transport.request(upstreamUrl, options, onResponse);
 
         proxyReq.on('error', (err) => {
             console.error('[Proxy] Request Error:', err.message, upstreamUrl.replace(/api_key=[^&]+/, 'api_key=***'));
@@ -346,19 +354,13 @@ router.get('/', async (req, res) => {
         // Last-resort fallback: smartFetch races the Worker proxy when
         // WORKER_PROXY_URL is set, so even a poisoned direct path recovers.
         // Only runs when no bytes have been sent yet.
-        let fallbackTried = false;
         // Guard against a misbehaving upstream returning a huge payload via
         // the buffered smartFetch path. /api/proxy only fronts TMDB/KP/wsrv
         // (max ~5MB images), so anything beyond this cap is almost certainly
         // a bug or hostile response.
         const FALLBACK_MAX_BYTES = 25 * 1024 * 1024;
         async function tryFallback(reason) {
-            if (fallbackTried || res.headersSent) {
-                if (!res.headersSent) {
-                    res.status(502).json({ error: 'Proxy request failed', details: reason });
-                }
-                return;
-            }
+            if (fallbackTried || shouldSkipProxyWrite(res)) return;
             fallbackTried = true;
             try {
                 const result = await smartFetch(upstreamUrl, { timeout: 20000, responseType: 'arraybuffer' });

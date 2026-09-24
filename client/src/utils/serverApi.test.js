@@ -10,6 +10,15 @@ vi.mock('@capacitor/core', () => ({
     }
 }))
 
+// This API test controls the native deployment default; LAN configuration is
+// covered separately by helpers tests and must not couple this suite to a host.
+vi.mock('./helpers', async (importOriginal) => ({
+    ...await importOriginal(),
+    resolveInitialServerUrl: ({ isNative, storedUrl }) => isNative
+        ? storedUrl || 'http://native-server.test:3000'
+        : ''
+}))
+
 import { searchTorrents, getAIPicks, getFavorites } from './serverApi.js'
 
 describe('searchTorrents', () => {
@@ -138,6 +147,6 @@ describe('favorites base URL', () => {
 
         await getFavorites()
 
-        expect(fetchSpy).toHaveBeenCalledWith('http://192.168.8.203:3000/api/favorites')
+        expect(fetchSpy).toHaveBeenCalledWith('http://native-server.test:3000/api/favorites')
     })
 })

@@ -34,7 +34,7 @@ const TsBoostButton = ({ torrent, onForceTs }) => {
     const [state, setState] = useState('idle') // idle | busy | done | error
     const [errorMessage, setErrorMessage] = useState('')
 
-    if (!onForceTs || torrent.isReady || (torrent.progress || 0) >= 0.99 || torrent.backend === 'torrserve') {
+    if (!onForceTs || torrent.isReady || torrent.backend === 'torrserve') {
         return null
     }
 

@@ -150,7 +150,8 @@ export const buildServerRequestUrl = (url, options) => {
 /**
  * Generate gradient based on string hash (for fallback poster background)
  */
-export const getGradient = (str) => {
+export const getGradient = (str = '') => {
+    str = str || ''
     let hash = 0
     for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
     const h1 = Math.abs(hash % 360)

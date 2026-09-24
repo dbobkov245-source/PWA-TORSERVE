@@ -60,6 +60,11 @@ describe('TorrentModal delete confirmation', () => {
         view.unmount()
         expect(document.activeElement).toBe(previous)
         previous.remove()
+})
+
+    it('offers TorrServer for a stalled native download above 99 percent', () => {
+        render(<TorrentModal torrent={{ infoHash: 'partial', name: 'Partial', progress: 0.995, isReady: false, files: [] }} onClose={() => {}} onForceTs={vi.fn()} />)
+        expect(screen.getByRole('button', { name: '🚀 Ускорить через TorrServer' })).toBeTruthy()
     })
 
     it('asks for in-app confirmation before deleting a torrent', async () => {

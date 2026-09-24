@@ -130,6 +130,34 @@ sharedDHT.on('ready', () => console.log('[DHT] Shared DHT bootstrapped'))
 sharedDHT.on('error', (err) => console.warn('[DHT] Error:', err.message))
 
 const engines = new Map()
+
+/** Remove every alias of a failed engine so retry cannot reuse a destroyed swarm. */
+export function removeEngineReferences(engine, active = engines, frozen = frozenTorrents) {
+    for (const [key, value] of active) {
+        if (value === engine) active.delete(key)
+    }
+    for (const [key, value] of frozen) {
+        if (value.engine === engine) frozen.delete(key)
+    }
+}
+
+const VIDEO_EXTENSION = /\.(mp4|mkv|avi|webm|mov|mpg|mpeg)$/i
+
+/** Disk allocation and received-byte estimates cannot prove that playback pieces exist. */
+export function areVideoFilesComplete(engine) {
+    const pieceLength = engine.torrent?.pieceLength
+    if (!engine.bitfield || !Number.isFinite(pieceLength) || pieceLength <= 0) return false
+    const videos = (engine.files || []).filter(file => VIDEO_EXTENSION.test(file.name) && file.length > 0)
+    if (!videos.length) return false
+    return videos.every(file => {
+        const first = Math.floor(file.offset / pieceLength)
+        const last = Math.ceil((file.offset + file.length) / pieceLength) - 1
+        for (let index = first; index <= last; index++) {
+            if (!engine.bitfield.get(index)) return false
+        }
+        return true
+    })
+}
 // Tracks infoHashes whose engine is being constructed but has not yet
 // reached the 'ready' event (engines.set happens inside that handler).
 // Without this guard, two concurrent addTorrent() calls for the same
@@ -185,6 +213,10 @@ export const PUBLIC_TRACKERS = [
 // Metadata bootstrap timeout policy (can be tuned via env without rebuild)
 const METADATA_TIMEOUT_MS = parseInt(process.env.TORRENT_METADATA_TIMEOUT_MS || '90000', 10)
 const METADATA_GRACE_CYCLES = parseInt(process.env.TORRENT_METADATA_GRACE_CYCLES || '2', 10)
+// A swarm with no connected peer after this long will not deliver metadata
+// natively (Coyote vs Acme 2026-09-24: 0/0 for the full 90s, TorrServer found it in
+// 6s). Giving up early lets /api/add hand the magnet to TorrServer right away.
+const NO_PEER_TIMEOUT_MS = parseInt(process.env.TORRENT_NO_PEER_TIMEOUT_MS || '15000', 10)
 const SAFE_TORRENT_CONNECTIONS = 55
 
 export const METADATA_TIMEOUT_CODE = 'METADATA_TIMEOUT'
@@ -243,7 +275,8 @@ export function buildTorrentEngineOptions({ path, connections, env = process.env
         uploads: getTorrentUploadSlots(env),
         utp: getTorrentUtpEnabled(env),
         dht: resolveTorrentDhtOption(env),
-        verify: false,
+        // Hash existing pieces before requesting peers; also covers re-adding retained files.
+        verify: true,
         tracker: true,
         trackers: PUBLIC_TRACKERS,
     }
@@ -408,8 +441,14 @@ async function saveTorrentToDB(magnetURI, name) {
     db.data.torrents ||= []
     // Avoid duplicates
     if (!db.data.torrents.find(t => t.magnet === magnetURI)) {
-        db.data.torrents.push({ magnet: magnetURI, name, addedAt: Date.now(), completed: false })
-        await safeWrite(db)
+        const entry = { magnet: magnetURI, name, addedAt: Date.now(), completed: false }
+        db.data.torrents.push(entry)
+        try {
+            await safeWrite(db)
+        } catch (err) {
+            db.data.torrents = db.data.torrents.filter(torrent => torrent !== entry)
+            throw err
+        }
         console.log('[Persistence] Saved torrent:', name)
     }
 }
@@ -420,8 +459,15 @@ async function markTorrentCompleted(infoHash) {
     const torrent = db.data.torrents?.find(t => t.magnet.toLowerCase().includes(hashLower))
     if (torrent && !torrent.completed) {
         torrent.completed = true
-        await safeWrite(db)
-        console.log('[Persistence] Marked as completed:', torrent.name)
+        try {
+            await safeWrite(db)
+            completedCache.delete(hashLower)
+            console.log('[Persistence] Marked as completed:', torrent.name)
+        } catch (err) {
+            torrent.completed = false
+            completedCache.delete(hashLower)
+            throw err
+        }
     }
 }
 
@@ -581,7 +627,9 @@ export const addTorrent = (magnetURI, skipSave = false) => {
         for (const engine of engines.values()) {
             if (engine.infoHash?.toLowerCase() === infoHash) {
                 console.log(`[Torrent] Dedup: Engine already exists for hash ${infoHash}`)
-                return resolve(formatEngine(engine))
+                const saved = skipSave ? Promise.resolve() : saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
+                saved.then(() => resolve(formatEngine(engine))).catch(reject)
+                return
             }
         }
 
@@ -653,7 +701,10 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             console.log(`[Torrent] Listening on port ${engine.port} (inbound TCP enabled)`)
         })
 
-        engine.on('ready', () => {
+        let engineFailed = false
+        engine.on('ready', async () => {
+            // Local verification may finish after a timeout destroyed the engine.
+            if (engineFailed) return
             // ✅ FIX: Очищаем таймаут при успешном подключении
             if (engine._timeoutId) {
                 clearTimeout(engine._timeoutId)
@@ -663,6 +714,8 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearInterval(engine._logInterval)
                 delete engine._logInterval
             }
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
 
             console.log('[Torrent] Engine ready:', engine.infoHash)
 
@@ -672,7 +725,7 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             if (engine.files && engine.files.length > 0) {
                 // 1. Filter video extensions
                 const videoFiles = engine.files.filter(f =>
-                    /\.(mp4|mkv|avi|webm|mov|mpg|mpeg)$/i.test(f.name)
+                    VIDEO_EXTENSION.test(f.name)
                 )
 
                 if (videoFiles.length > 0) {
@@ -699,15 +752,19 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             invalidateStatusCache()
 
             // Save to DB for persistence (unless restoring)
-            if (!skipSave) {
-                saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
+            try {
+                if (!skipSave) await saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
+                notifyTorrentChange()
+                resolve(formatEngine(engine))
+            } catch (err) {
+                console.warn('[Persistence] Failed to save torrent:', err.message)
+                reject(err)
             }
-
-            notifyTorrentChange()
-            resolve(formatEngine(engine))
         })
 
         engine.on('error', (err) => {
+            if (engineFailed) return
+            engineFailed = true
             // ✅ FIX: Очищаем таймаут при ошибке
             if (engine._timeoutId) {
                 clearTimeout(engine._timeoutId)
@@ -717,15 +774,17 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                 clearInterval(engine._logInterval)
                 delete engine._logInterval
             }
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
 
             console.error('[Torrent] Engine error:', err.message)
             pendingEngines.delete(infoHash)
-            removeEngineAliases(engine)
-            frozenTorrents.delete(infoHash)
-            if (engine.infoHash) frozenTorrents.delete(engine.infoHash)
+            removeEngineReferences(engine)
+            diskDownloadCache.delete(engine.infoHash)
+            completedCache.delete(engine.infoHash?.toLowerCase())
             invalidateStatusCache()
-            notifyTorrentChange()
             destroyEngine(engine)
+            notifyTorrentChange()
             reject(err)
         })
 
@@ -766,17 +825,41 @@ export const addTorrent = (magnetURI, skipSave = false) => {
                     peers
                 })
                 console.warn(`[Torrent] ${timeoutError.message}`)
-                pendingEngines.delete(infoHash)
-                destroyEngine(engine)
-                reject(timeoutError)
+                engine.emit('error', timeoutError)
             }, METADATA_TIMEOUT_MS)
 
             // ✅ FIX: Очищаем таймаут при успешном подключении (внутри engine.on('ready'))
             engine._timeoutId = timeoutId
         }
 
+        // Metadata has arrived; hashing local files needs its own, longer budget.
+        engine.once('verifying', () => {
+            clearTimeout(engine._noPeerTimeoutId)
+            delete engine._noPeerTimeoutId
+            clearTimeout(engine._timeoutId)
+            clearInterval(engine._logInterval)
+            const configured = Number(process.env.TORRENT_VERIFY_TIMEOUT_MS)
+            const verifyTimeoutMs = Number.isFinite(configured) && configured > 0 ? configured : 60 * 60 * 1000
+            console.log(`[Torrent] ${infoHash.slice(0, 8)} verifying saved pieces`)
+            engine._timeoutId = setTimeout(() => {
+                engine.emit('error', new Error('Torrent timeout: local piece verification exceeded its time budget'))
+            }, verifyTimeoutMs)
+        })
+
         // Start first timeout cycle
         scheduleTimeout()
+
+        engine._noPeerTimeoutId = setTimeout(() => {
+            if (engineFailed || engines.has(magnetURI)) return
+            // Known-but-unreachable peers do not count: failed ones linger in
+            // _peers during reconnect backoff (NAS: 77 known, 0 connected).
+            if (getSwarmPeerSnapshot(engine.swarm).connectedPeers > 0) return
+
+            clearInterval(logInterval)
+            const timeoutError = createMetadataTimeoutError({ elapsedMs: Date.now() - startTime, peers: 0 })
+            console.warn(`[Torrent] ${timeoutError.message}`)
+            engine.emit('error', timeoutError)
+        }, NO_PEER_TIMEOUT_MS)
         engine._logInterval = logInterval // Store to clear on ready/error
     })
 }
@@ -820,7 +903,7 @@ export const removeTorrent = (infoHash, forceDestroy = false) => {
     diskDownloadCache.delete(infoHash)
 
     // Remove from persistent storage
-    removeTorrentFromDB(infoHash)
+    removeTorrentFromDB(infoHash).catch(err => console.warn('[Persistence] Failed to remove torrent:', err.message))
 
     notifyTorrentChange()
     return true
@@ -1012,10 +1095,11 @@ const formatEngine = (engine) => {
     const progress = totalSize > 0 ? Math.min(downloaded / totalSize, 1) : 0
 
     // Check if ready (and save completed status if newly completed)
-    const isReady = wasCompleted || progress >= 0.99
-    if (isReady && !wasCompleted && progress >= 0.99) {
-        // Mark as completed in DB (async, fire-and-forget)
-        markTorrentCompleted(engine.infoHash)
+    const isReady = wasCompleted || areVideoFilesComplete(engine)
+    if (isReady && !wasCompleted) {
+        markTorrentCompleted(engine.infoHash).catch(err => {
+            console.warn('[Persistence] Failed to mark torrent completed:', err.message)
+        })
     }
 
     // Get download speed

@@ -1,3 +1,4 @@
+import { asyncRoute } from '../asyncRoute.js'
 /**
  * Trakt.tv integration — OAuth device flow, scrobble, watched/watchlist sync.
  *
@@ -232,14 +233,14 @@ router.post('/device/poll', async (req, res) => {
 })
 
 // ── Disconnect ────────────────────────────────────────────
-router.post('/disconnect', async (req, res) => {
+router.post('/disconnect', asyncRoute(async (req, res) => {
     db.data.trakt = {
         connected: false, accessToken: null, refreshToken: null, expiresAt: 0,
         pendingDeviceCode: null, slug: null, watchedTmdbIds: [], syncedAt: 0
     }
     await safeWrite(db)
     res.json({ status: 'disconnected' })
-})
+}))
 
 // ── Scrobble ──────────────────────────────────────────────
 // body: { tmdbId, mediaType: 'movie'|'tv', progress: 0..100, action: 'start'|'pause'|'stop' }
