@@ -248,8 +248,27 @@ export function closeStream(infoHash) {
     const s = streams.get(infoHash)
     if (!s) return
     s.activeConns = Math.max(0, s.activeConns - 1)
+    s.lastClosedAt = Date.now()
     // Keep the entry (with cumulative reopen/stall counts) for post-session
     // inspection; it's cheap and resets when a new file is opened on restart.
+}
+
+const STREAM_IDLE_MS = 60 * 1000
+
+/**
+ * Is a player on this torrent right now? Players close and reopen the
+ * connection on every seek, so a short gap after the last close still counts.
+ */
+export function isStreamActive(infoHash, now = Date.now()) {
+    const hash = infoHash?.toLowerCase?.()
+    if (!hash) return false
+    for (const s of streams.values()) {
+        if (s.infoHash?.toLowerCase() !== hash) continue
+        if (s.activeConns > 0) return true
+        const lastAt = Math.max(s.lastClosedAt || 0, s.lastByteAt || 0)
+        if (lastAt && now - lastAt < STREAM_IDLE_MS) return true
+    }
+    return false
 }
 
 // ── Public: getters ──────────────────────────────────────

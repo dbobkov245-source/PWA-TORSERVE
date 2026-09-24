@@ -34,3 +34,15 @@ test('runtime pressure fields preserve V8, external, faults and host pressure', 
     })
 })
 
+
+test('isStreamActive covers open connections and short gaps between player reopens', async () => {
+    const { openStream, closeStream, isStreamActive } = await import('../streamMonitor.js')
+    const hash = 'e4f7a3d390b3b5045281f18f50a3594599e8283e'
+    expect(isStreamActive(hash)).toBe(false)
+    openStream(hash.toUpperCase())
+    expect(isStreamActive(hash)).toBe(true)
+    closeStream(hash.toUpperCase())
+    // Players close and reopen on every seek; that gap is still playback.
+    expect(isStreamActive(hash, Date.now() + 30000)).toBe(true)
+    expect(isStreamActive(hash, Date.now() + 120000)).toBe(false)
+})

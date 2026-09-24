@@ -30,6 +30,8 @@ import {
     getActiveTsJob,
     getFinishedTsFile,
     removeTsJob,
+    getTsJobDiskEntries,
+    withoutTorrentRows,
     getTsJobsMetrics,
     isTsAvailable,
     buildPublicTsStreamUrl,
@@ -1159,6 +1161,18 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
                     console.error(`[Delete Error] Could not remove ${fullPath}: ${e.message}`)
                     await refreshLocalLibrary(true)
                 })
+        } else if (!softDelete && tsJobRemoved && !torrent) {
+            // A TorrServer download has no native engine, so the branch above
+            // never ran: its file and DB row survived and the card needed a
+            // second delete. The job record knows exactly what it wrote.
+            const entries = getTsJobDiskEntries(tsJobRemoved, process.env.DOWNLOAD_PATH || './downloads')
+            entries.forEach(entry => evictLocalLibraryItemByName(entry.name))
+            db.data.torrents = withoutTorrentRows(db.data.torrents || [], infoHash)
+            safeWrite(db).catch(e => console.warn('[Persistence] Failed to drop TorrServer row:', e.message))
+            Promise.all(entries.map(entry => fsPromises.rm(entry.absPath, { recursive: true, force: true })))
+                .then(() => console.log(`[File Hygiene] Removed TorrServer download: ${entries.map(e => e.name).join(', ')}`))
+                .catch(e => console.error(`[Delete Error] Could not remove TorrServer download ${infoHash}: ${e.message}`))
+                .finally(() => refreshLocalLibrary(true).catch(() => {}))
         }
         res.json({
             success: true,

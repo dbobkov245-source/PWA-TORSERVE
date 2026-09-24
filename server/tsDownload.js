@@ -24,6 +24,8 @@ import {
     notifyTorrentsChanged
 } from './torrent.js'
 import { logger } from './utils/logger.js'
+import { isStreamActive } from './streamMonitor.js'
+import { isMagnetHashMatch } from './utils/magnetHash.js'
 
 const log = logger.child('TsDownload')
 
@@ -38,7 +40,12 @@ export function getTsConfig(env = process.env) {
         minSpeedBps: parseInt(env.TS_FAILOVER_MIN_SPEED_BPS || String(800 * 1024), 10),
         checkIntervalMs: parseInt(env.TS_FAILOVER_CHECK_INTERVAL_MS || '30000', 10),
         maxConcurrentJobs: parseInt(env.TS_FAILOVER_MAX_JOBS || '2', 10),
-        stallTimeoutMs: parseInt(env.TS_FAILOVER_STALL_MS || String(30 * 60 * 1000), 10)
+        stallTimeoutMs: parseInt(env.TS_FAILOVER_STALL_MS || String(30 * 60 * 1000), 10),
+        // torrent-stream has no MSE/uTP: on RU swarms it often connects to 0 of 70+
+        // known peers while TorrServer reaches 20+. Don't wait the full grace for that.
+        zeroPeerGraceMs: parseInt(env.TS_FAILOVER_ZERO_PEER_GRACE_MS || '30000', 10),
+        // Migration discards native sparse files; past this point finishing is cheaper.
+        maxProgress: parseFloat(env.TS_FAILOVER_MAX_PROGRESS || '0.5')
     }
 }
 
@@ -50,14 +57,19 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.avi', '.m4v', '.mov', '.webm
  * Decide whether a native download should be migrated to TorrServer.
  * @param {Object} item - status item from getAllTorrents()
  * @param {number} item.ageMs - time since the engine was added
+ * @param {boolean} [item.streaming] - a player is reading it (migration would cut playback)
  */
 export function evaluateDownloadFailover(item, config = getTsConfig()) {
     if (!config.enabled) return false
     if (!item || !item.infoHash) return false
     if (item.isReady) return false
-    if ((item.ageMs || 0) < config.graceMs) return false
     // Metadata not resolved yet → nothing to compare, let native keep trying
     if (!item.totalSize) return false
+    if (item.streaming) return false
+    if ((item.progress || 0) >= config.maxProgress) return false
+    const ageMs = item.ageMs || 0
+    if (item.connectedPeers === 0 && ageMs >= config.zeroPeerGraceMs) return true
+    if (ageMs < config.graceMs) return false
     return (item.downloadSpeed || 0) < config.minSpeedBps
 }
 
@@ -470,16 +482,41 @@ export async function startDirectTsDownload(magnet, config = getTsConfig()) {
     return startFailover({ infoHash, magnet, name: null }, config)
 }
 
+/** Returns the removed job (so the caller can clean its files), or null. */
 export function removeTsJob(infoHash) {
     const hash = infoHash?.toLowerCase?.() || infoHash
     const job = jobs.get(hash)
-    if (!job) return false
+    if (!job) return null
     job.abortController?.abort(new Error('Download cancelled'))
     jobs.delete(hash)
     unpersistJob(hash).catch(() => {})
     tsRemove(getTsConfig(), hash)
     notifyTorrentsChanged()
-    return true
+    return job
+}
+
+/**
+ * Top-level download-folder entries a job wrote to — the same unit the local
+ * library shows as one card and a native hard delete removes.
+ * @returns {{name: string, absPath: string}[]}
+ */
+export function getTsJobDiskEntries(job, downloadPath) {
+    const entries = new Map()
+    for (const file of job?.files || []) {
+        const name = String(file?.path || '').split(/[\\/]/)[0]
+        if (!name || entries.has(name)) continue
+        try {
+            entries.set(name, { name, absPath: safeJoinDownloadPath(downloadPath, name) })
+        } catch {
+            // Traversal attempt — never delete outside the download folder.
+        }
+    }
+    return [...entries.values()]
+}
+
+/** db.torrents without the rows for this infoHash (btih only, never tracker URLs). */
+export function withoutTorrentRows(rows = [], infoHash) {
+    return rows.filter(row => !isMagnetHashMatch(row?.magnet, infoHash))
 }
 
 // ─── Watchdog ──────────────────────────────────────────────────
@@ -520,7 +557,8 @@ async function watchdogTick(config) {
 
         const candidate = {
             ...item,
-            ageMs: now - engineAddedAt.get(hash)
+            ageMs: now - engineAddedAt.get(hash),
+            streaming: isStreamActive(hash)
         }
 
         if (evaluateDownloadFailover(candidate, config)) {

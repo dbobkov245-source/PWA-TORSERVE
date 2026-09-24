@@ -14,7 +14,9 @@ const config = {
     minSpeedBps: 800 * 1024,
     url: 'http://172.17.0.1:8090',
     checkIntervalMs: 30000,
-    maxConcurrentJobs: 2
+    maxConcurrentJobs: 2,
+    zeroPeerGraceMs: 30000,
+    maxProgress: 0.5
 }
 
 function makeItem(overrides = {}) {
@@ -43,7 +45,6 @@ test('evaluateDownloadFailover skips fast downloads', () => {
 
 test('evaluateDownloadFailover skips completed and metadata-less torrents', () => {
     expect(evaluateDownloadFailover(makeItem({ isReady: true }), config)).toBe(false)
-    expect(evaluateDownloadFailover(makeItem({ progress: 0.995 }), config)).toBe(true)
     expect(evaluateDownloadFailover(makeItem({ totalSize: 0 }), config)).toBe(false)
 })
 
@@ -164,4 +165,80 @@ test('startDirectTsDownload explains why it cannot take over', async () => {
         unreachableErr = err
     }
     expect(unreachableErr?.message).toContain('192.0.2.1:8090')
+})
+
+// Migration discards the native engine's sparse files, so a slow tail must never
+// throw away most of a film. Measured 2026-09-24: the native engine routinely sits
+// at 0 connected peers of 77 known while TorrServer reaches 23 on the same swarm.
+
+test('evaluateDownloadFailover keeps a download that is already half done', () => {
+    expect(evaluateDownloadFailover(makeItem({ progress: 0.5 }), config)).toBe(false)
+    expect(evaluateDownloadFailover(makeItem({ progress: 0.995 }), config)).toBe(false)
+    expect(evaluateDownloadFailover(makeItem({ progress: 0.49 }), config)).toBe(true)
+})
+
+test('evaluateDownloadFailover never migrates a torrent that is being watched', () => {
+    expect(evaluateDownloadFailover(makeItem({ streaming: true }), config)).toBe(false)
+})
+
+test('evaluateDownloadFailover moves a swarm with zero connected peers after the short grace', () => {
+    const stuck = { connectedPeers: 0, downloadSpeed: 0 }
+    expect(evaluateDownloadFailover(makeItem({ ...stuck, ageMs: 30000 }), config)).toBe(true)
+    expect(evaluateDownloadFailover(makeItem({ ...stuck, ageMs: 10000 }), config)).toBe(false)
+    // Connected but slow still waits out the normal grace period.
+    expect(evaluateDownloadFailover(makeItem({ connectedPeers: 3, downloadSpeed: 0, ageMs: 30000 }), config)).toBe(false)
+})
+
+test('getTsConfig defaults the zero-peer grace and progress ceiling', () => {
+    const cfg = getTsConfig({})
+    expect(cfg.zeroPeerGraceMs).toBe(30000)
+    expect(cfg.maxProgress).toBe(0.5)
+    const tuned = getTsConfig({ TS_FAILOVER_ZERO_PEER_GRACE_MS: '45000', TS_FAILOVER_MAX_PROGRESS: '0.3' })
+    expect(tuned.zeroPeerGraceMs).toBe(45000)
+    expect(tuned.maxProgress).toBe(0.3)
+})
+
+test('getTsJobDiskEntries lists each top-level entry of a job once', async () => {
+    const { getTsJobDiskEntries } = await import('../tsDownload.js')
+    const single = { files: [{ path: 'The.Fix.2026.mkv' }] }
+    expect(getTsJobDiskEntries(single, '/downloads')).toEqual([
+        { name: 'The.Fix.2026.mkv', absPath: '/downloads/The.Fix.2026.mkv' }
+    ])
+    const season = { files: [{ path: 'Show.S02/E01.mkv' }, { path: 'Show.S02/E02.mkv' }] }
+    expect(getTsJobDiskEntries(season, '/downloads')).toEqual([
+        { name: 'Show.S02', absPath: '/downloads/Show.S02' }
+    ])
+    expect(getTsJobDiskEntries({ files: [{ path: '../../etc/passwd' }] }, '/downloads')).toEqual([])
+    expect(getTsJobDiskEntries(null, '/downloads')).toEqual([])
+})
+
+test('withoutTorrentRows drops only rows for the given hash', async () => {
+    const { withoutTorrentRows } = await import('../tsDownload.js')
+    const hash = 'c5ba12cf189575f8403131d4f8329b2bafcc1e63'
+    const rows = [
+        { magnet: `magnet:?xt=urn:btih:${hash.toUpperCase()}&dn=Oak`, name: 'Oak' },
+        { magnet: 'magnet:?xt=urn:btih:84bcdde207bd8fd6d6aec86cf77ff1a8fa0e3f23&tr=' + hash, name: 'Other' }
+    ]
+    expect(withoutTorrentRows(rows, hash).map(r => r.name)).toEqual(['Other'])
+})
+
+test('the delete route cleans up a TorrServer download without a native engine', async () => {
+    const { readFileSync } = await import('fs')
+    const { fileURLToPath } = await import('url')
+    const { dirname, join } = await import('path')
+    const here = dirname(fileURLToPath(import.meta.url))
+    const src = readFileSync(join(here, '..', 'index.js'), 'utf8')
+    // A TS job never has a native engine, so getTorrent() is null and the old
+    // route skipped the files and the DB row: the card stayed until a second delete.
+    expect(src).toContain('getTsJobDiskEntries(tsJobRemoved')
+    expect(src).toContain('withoutTorrentRows(')
+})
+
+test('the failover watchdog tells evaluateDownloadFailover about active playback', async () => {
+    const { readFileSync } = await import('fs')
+    const { fileURLToPath } = await import('url')
+    const { dirname, join } = await import('path')
+    const here = dirname(fileURLToPath(import.meta.url))
+    const src = readFileSync(join(here, '..', 'tsDownload.js'), 'utf8')
+    expect(src).toContain('streaming: isStreamActive(hash)')
 })
