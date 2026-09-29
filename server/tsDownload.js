@@ -344,6 +344,10 @@ async function downloadFileFromTs(config, job, file) {
         const output = fs.createWriteStream(target, { flags: offset > 0 ? 'r+' : 'w', start: offset })
         await pipeline(Readable.fromWeb(res.body), count, output, { signal: aborter.signal })
         if (received !== expected) throw new Error('Incomplete TorrServer body: ' + received + '/' + expected + ' bytes')
+    } catch (err) {
+        // pipeline() reports an aborted signal as a bare AbortError ("The operation
+        // was aborted"); the reason ("TorrServer stream stalled") is in err.cause.
+        throw err?.name === 'AbortError' && err.cause ? err.cause : err
     } finally {
         clearTimeout(idleTimer)
         clearInterval(speedTimer)

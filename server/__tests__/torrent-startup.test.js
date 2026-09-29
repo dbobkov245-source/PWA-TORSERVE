@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { test } from './test-runner.js'
 
 // Execute the production addTorrent body with controlled engine events and time.
-async function startup(env = {}) {
+async function startup(env = {}, { skipSave = true, saveTorrentToDB = async () => {} } = {}) {
     const source = await fs.readFile(new URL('../torrent.js', import.meta.url), 'utf8')
     const body = source.slice(source.indexOf('export const addTorrent ='), source.indexOf('export const removeTorrent =')).replace('export const addTorrent =', 'globalThis.addTorrent =')
     const snapshot = source.slice(source.indexOf('export function getSwarmPeerSnapshot'), source.indexOf('export function getSwarmConnectionLimit')).replace('export function', 'function')
@@ -22,14 +22,14 @@ async function startup(env = {}) {
         createMetadataTimeoutError: () => new Error('metadata unavailable'),
         getTorrentConnections: () => 55, getTorrentListenPort: () => 6881,
         invalidateStatusCache() {}, notifyTorrentChange() {}, formatEngine: e => ({ infoHash: e.infoHash }),
-        saveTorrentToDB: async () => {}, removeEngineReferences() { engines.clear() },
+        saveTorrentToDB, removeEngineReferences() { engines.clear() },
         METADATA_TIMEOUT_MS: 90_000, METADATA_GRACE_CYCLES: 2, NO_PEER_TIMEOUT_MS: 15_000,
         getMetadataTimeoutDecision: () => 'timeout', VIDEO_EXTENSION: /\.mkv$/,
         setTimeout: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay }); return id },
         clearTimeout: id => timers.delete(id), setInterval: () => ++sequence, clearInterval() {},
     })
     vm.runInContext(snapshot + body, context)
-    const promise = context.addTorrent('magnet:?xt=urn:btih:' + engine.infoHash, true)
+    const promise = context.addTorrent('magnet:?xt=urn:btih:' + engine.infoHash, skipSave)
     return { engine, promise, timers, engines, pendingEngines }
 }
 
@@ -42,6 +42,28 @@ test('local verification replaces the metadata deadline and ready clears it', as
     engine.emit('ready')
     await promise
     assert.equal(timers.size, 0)
+})
+
+test('a failed save destroys the engine instead of leaving it running unpersisted', async () => {
+    // /api/add reports the failure; without cleanup the engine keeps downloading
+    // but is missing from db.json, so a restart silently drops it.
+    const { engine, promise, engines, pendingEngines } = await startup({}, {
+        skipSave: false, saveTorrentToDB: async () => { throw new Error('disk full') }
+    })
+    const rejected = assert.rejects(promise, /disk full/)
+    engine.emit('ready')
+    await rejected
+    assert.equal(engine.destroyed, true)
+    assert.equal(engines.size, 0)
+    assert.equal(pendingEngines.size, 0)
+})
+
+test('a successful save keeps the engine registered', async () => {
+    const { engine, promise, engines } = await startup({}, { skipSave: false })
+    engine.emit('ready')
+    await promise
+    assert.equal(engine.destroyed, undefined)
+    assert.ok(engines.size > 0)
 })
 
 test('verification timeout cannot resurrect a destroyed engine on late ready', async () => {

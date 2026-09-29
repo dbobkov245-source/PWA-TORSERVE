@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { cleanTitle, formatSize, formatSpeed, formatEta, getGradient, extractQualityBadges } from '../utils/helpers'
 import { getMetadata, resolveMetadata, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 
 const Poster = ({ name, onClick, progress, peers, isReady, size, downloadSpeed, downloaded, eta, newFilesCount, backend }) => {
     const spatialRef = useSpatialItem('main')
-    const cleanedName = cleanTitle(name)
+    const cleanedName = useMemo(() => cleanTitle(name), [name])
     const [resolvedImage, setResolvedImage] = useState(null)
-    const bgImage = resolvedImage?.name === cleanedName
-        ? resolvedImage.url
-        : getMetadata(cleanedName)?.poster || null
+    // getMetadata is a synchronous localStorage read + JSON.parse and this card
+    // re-renders on every status tick, so look the cached poster up once per name.
+    const cachedPoster = useMemo(() => getMetadata(cleanedName)?.poster || null, [cleanedName])
+    const bgImage = resolvedImage?.name === cleanedName ? resolvedImage.url : cachedPoster
 
     useEffect(() => {
         if (!cleanedName) return

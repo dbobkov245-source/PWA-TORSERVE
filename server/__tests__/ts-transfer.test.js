@@ -64,6 +64,17 @@ test('TorrServer timeout covers waiting for response headers', async () => {
     } finally { await f.dispose() }
 })
 
+test('TorrServer body stall reports the stall reason instead of a generic abort', async () => {
+    // pipeline() rejects an aborted signal with a bare AbortError ("The operation
+    // was aborted"); the reason that job.error and the log need is in err.cause.
+    const f = await fixture(async () => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array([48, 49, 50, 51])) } // 4 bytes, then silence
+    })))
+    try {
+        await assert.rejects(f.downloadFileFromTs({ ...f.getTsConfig(), stallTimeoutMs: 20 }, job(), file), /stalled/)
+    } finally { await f.dispose() }
+})
+
 test('TorrServer disk write errors reject the transfer without an unhandled stream error', async () => {
     const f = await fixture(async () => new Response('0123456789'))
     try {
