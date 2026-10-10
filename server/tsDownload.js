@@ -199,6 +199,19 @@ export function getTsDownloadStatusItems() {
 }
 
 /**
+ * Native and TorrServer items, one card per infoHash.
+ *
+ * A migration keeps the native engine until TorrServer reports files (and for
+ * good when it never does), so both lists carried the same hash: the user saw
+ * the film twice, and deleting the "duplicate" deleted both — delete is by hash.
+ * While the native engine lives it is the one serving, so its card wins.
+ */
+export function withoutShadowedTsItems(nativeItems = [], tsItems = []) {
+    const nativeHashes = new Set(nativeItems.map((item) => item?.infoHash?.toLowerCase()).filter(Boolean))
+    return [...nativeItems, ...tsItems.filter((item) => !nativeHashes.has(item?.infoHash?.toLowerCase()))]
+}
+
+/**
  * Where a finished job's file actually sits on disk.
  *
  * `getActiveTsJob` deliberately answers only while a job is downloading, so the
@@ -235,9 +248,23 @@ export function getFinishedTsFile(infoHash, fileIndex, downloadPath = process.en
     return resolveFinishedTsFile(job, fileIndex, downloadPath)
 }
 
+/**
+ * A downloading job the player can be redirected to.
+ *
+ * startFailover registers the job before TorrServer has resolved metadata, so
+ * for up to 90s it has no files. Redirecting then has nothing to point at and
+ * the player gets a 404 — while the native engine, which runJob releases only
+ * after metadata arrives, can still serve the bytes. Wait for the file list.
+ */
 export function getActiveTsJob(infoHash) {
     const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
-    return job && job.status === 'downloading' ? job : null
+    return job && job.status === 'downloading' && job.files?.length > 0 ? job : null
+}
+
+/** A downloading job still waiting for TorrServer to report its files. */
+export function isTsJobPending(infoHash) {
+    const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
+    return Boolean(job && job.status === 'downloading' && !job.files?.length)
 }
 
 export function hasTsJob(infoHash) {
