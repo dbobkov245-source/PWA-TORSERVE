@@ -67,6 +67,11 @@ describe('TorrentModal delete confirmation', () => {
         expect(screen.getByRole('button', { name: '🚀 Ускорить через TorrServer' })).toBeTruthy()
     })
 
+    it('hides TorrServer for a native download the server says is already fast', () => {
+        render(<TorrentModal torrent={{ infoHash: 'fast', name: 'Matchbox', progress: 0.05, isReady: false, tsBoostable: false, files: [] }} onClose={() => {}} onForceTs={vi.fn()} />)
+        expect(screen.queryByRole('button', { name: '🚀 Ускорить через TorrServer' })).toBeNull()
+    })
+
     it('asks for in-app confirmation before deleting a torrent', async () => {
         const onDelete = vi.fn(async () => {})
 

@@ -1019,7 +1019,10 @@ function App() {
 
         {selectedTorrent && (
           <TorrentModal
-            torrent={selectedTorrent}
+            // Live row, not the snapshot taken on open: speed, backend and the
+            // boost flag change while the modal is up (and a TorrServer
+            // migration renumbers the files the Play buttons point at).
+            torrent={torrents.find(t => t.infoHash === selectedTorrent.infoHash) || selectedTorrent}
             onClose={() => setSelectedTorrent(null)}
             onPlay={handlePlay}
             onPlayAll={handlePlayAll}

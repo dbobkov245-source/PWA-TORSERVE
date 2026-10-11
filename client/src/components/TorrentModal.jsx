@@ -37,6 +37,12 @@ const TsBoostButton = ({ torrent, onForceTs }) => {
     if (!onForceTs || torrent.isReady || torrent.backend === 'torrserve') {
         return null
     }
+    // The server knows the live speed: on a healthy swarm TorrServer (25
+    // connections, 64MB window) is slower than native. Keep a pressed button
+    // visible so its result is not yanked away by the next status update.
+    if (state === 'idle' && torrent.tsBoostable === false) {
+        return null
+    }
 
     const label = state === 'busy' ? '⏳ Переключаем...'
         : state === 'done' ? '✅ Качается через TorrServer'
