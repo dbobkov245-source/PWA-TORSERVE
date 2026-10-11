@@ -39,3 +39,56 @@ describe('resumeSync', () => {
         expect(JSON.parse(posted[1][1].body)).toEqual({ entry })
     })
 })
+
+describe('resumeSync uploads positions the server does not have', () => {
+    beforeEach(() => localStorage.clear())
+    afterEach(() => vi.unstubAllGlobals())
+
+    const OLD = 'c'.repeat(40)
+    const local = (hash, position, updatedAt) => ({ infoHash: hash, fileIndex: 0, position, duration: 7200000, updatedAt })
+
+    it('pushes a position saved before syncing existed (or while offline)', async () => {
+        localStorage.setItem('watch_history_v1', JSON.stringify({ [`${OLD}:0`]: local(OLD, 1500000, 100) }))
+        const fetchMock = vi.fn(async (url) => new Response(JSON.stringify(
+            url.endsWith('/api/resume') ? { entries: [], tombstones: {} } : { changed: true }
+        )))
+        vi.stubGlobal('fetch', fetchMock)
+
+        await pullResume('http://nas:3000')
+
+        const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')
+        expect(posts.map(([url]) => url)).toEqual([`http://nas:3000/api/resume/${OLD}:0`])
+        expect(JSON.parse(posts[0][1].body).entry.position).toBe(1500000)
+    })
+
+    it('does not re-upload what the server already has, newer or equal', async () => {
+        localStorage.setItem('watch_history_v1', JSON.stringify({ [`${OLD}:0`]: local(OLD, 1500000, 100) }))
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ entries: [local(OLD, 1500000, 100)], tombstones: {} })))
+        vi.stubGlobal('fetch', fetchMock)
+
+        await pullResume('http://nas:3000')
+
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+    })
+
+    it('right before Play it only takes, so a backlog cannot delay the film', async () => {
+        localStorage.setItem('watch_history_v1', JSON.stringify({ [`${OLD}:0`]: local(OLD, 1500000, 100) }))
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ entries: [], tombstones: {} })))
+        vi.stubGlobal('fetch', fetchMock)
+
+        await pullResume('http://nas:3000', { upload: false })
+
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+    })
+
+    it('does not upload a position the other TV already finished', async () => {
+        localStorage.setItem('watch_history_v1', JSON.stringify({ [`${OLD}:0`]: local(OLD, 1500000, 100) }))
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ entries: [], tombstones: { [`${OLD}:0`]: 500 } })))
+        vi.stubGlobal('fetch', fetchMock)
+
+        await pullResume('http://nas:3000')
+
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+        expect(getResumePosition(OLD, 0)).toBe(0)
+    })
+})

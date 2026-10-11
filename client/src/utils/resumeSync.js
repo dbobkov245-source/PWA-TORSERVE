@@ -7,7 +7,7 @@
  * queued and retried on the next sync, so an offline TV catches up later.
  */
 
-import { mergeRemoteResume } from './watchHistory.js'
+import { mergeRemoteResume, getLocalResumeEntries } from './watchHistory.js'
 
 const OUTBOX_KEY = 'resume_outbox_v1'
 const DEFAULT_TIMEOUT_MS = 1500
@@ -83,15 +83,30 @@ export async function pushResumeChange(serverUrl, change, { timeoutMs = DEFAULT_
 }
 
 /**
- * Bring this TV up to date with the other TV's positions. Never throws.
+ * Two-way sync: take the other TV's positions, then upload this TV's that the
+ * server lacks or holds an older copy of — positions saved before syncing
+ * existed (v3.18.4 and earlier) or while the server was unreachable.
+ * `upload: false` only takes — used right before Play, where uploading a
+ * backlog would delay the film. Never throws.
  * @returns {Promise<boolean>} whether local positions changed
  */
-export async function pullResume(serverUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function pullResume(serverUrl, { timeoutMs = DEFAULT_TIMEOUT_MS, upload = true } = {}) {
     try {
         await flushOutbox(serverUrl, timeoutMs)
         const res = await fetchWithTimeout(apiBase(serverUrl), {}, timeoutMs)
         if (!res.ok) return false
-        return mergeRemoteResume(await res.json())
+        const remote = await res.json()
+        // Merge first: a remote tombstone removes the local copy, so a film the
+        // other TV finished is never uploaded back.
+        const changed = mergeRemoteResume(remote)
+        if (!upload) return changed
+        const serverUpdatedAt = new Map((remote.entries || []).map((e) =>
+            [`${String(e.infoHash).toLowerCase()}:${e.fileIndex}`, e.updatedAt]))
+        for (const { key, entry } of getLocalResumeEntries()) {
+            if ((serverUpdatedAt.get(key) ?? -1) >= entry.updatedAt) continue
+            await pushResumeChange(serverUrl, { key, entry }, { timeoutMs })
+        }
+        return changed
     } catch {
         return false
     }

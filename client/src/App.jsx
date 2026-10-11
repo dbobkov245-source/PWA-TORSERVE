@@ -428,7 +428,7 @@ function App() {
       // and resolves with {position, duration, finished} on player exit.
       // The other TV may have moved on since the last sync: ask the server first
       // (capped at 1.5s, a dead server falls back to the local position).
-      await pullResume(base)
+      await pullResume(base, { upload: false })
       const resumeFrom = getResumePosition(hash, index)
       const playOptions = { url: streamUrl, title: fileName }
       if (resumeFrom > 0) playOptions.position = resumeFrom
