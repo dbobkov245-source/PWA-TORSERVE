@@ -1,7 +1,7 @@
 {
-    "version": "3.18.3",
-    "versionCode": 48,
+    "version": "3.18.4",
+    "versionCode": 49,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.3/pwa-torserve-v3.18.3.apk",
-    "notes": "v3.18.3\n- Исправлены возобновление торрентов, повторные попытки TorrServer и зависшие потоки\n- Сохранены исправления D-Pad и обновлений из 3.18.0–3.18.2\n- Исправлены сохранение позиции плеера и восстановление повреждённых частей"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.4/pwa-torserve-v3.18.4.apk",
+    "notes": "v3.18.4\n- «Ускорить через TorrServer» скрыта, когда загрузка и так быстрая\n- Окно торрента обновляется вживую\n- Честный счётчик пиров у загрузок через TorrServer"
 }
