@@ -1,7 +1,7 @@
 {
-    "version": "3.18.6",
-    "versionCode": 51,
+    "version": "3.18.7",
+    "versionCode": 52,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.6/pwa-torserve-v3.18.6.apk",
-    "notes": "v3.18.6\n- Позиции просмотра, сохранённые до 3.18.5, выгружаются на сервер и видны на другом телевизоре"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.7/pwa-torserve-v3.18.7.apk",
+    "notes": "v3.18.7\n- Позиция просмотра снова возвращается из Vimu: продолжение на этом и на другом телевизоре\n- Trakt получает «досмотрел» в конце фильма, а не в начале"
 }
