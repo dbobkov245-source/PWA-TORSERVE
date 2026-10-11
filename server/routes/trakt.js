@@ -29,6 +29,25 @@ function creds() {
     }
 }
 
+/**
+ * Remember why Trakt last failed, and say so in the log. Until 2026-10-11 the
+ * session could vanish (connected:false, no username) with nothing logged and
+ * every scrobble dropped silently. The caller persists db when convenient.
+ */
+function noteTraktError(reason, status = null) {
+    db.data.trakt.lastError = { reason, status, at: Date.now() }
+    console.warn(`[Trakt] ${reason}${status ? ` (HTTP ${status})` : ''}`)
+}
+
+/**
+ * A refresh that Trakt rejects (bad/revoked grant, unknown client) ends the
+ * session; anything else - 5xx, 429, Cloudflare - is transient and must keep
+ * the tokens so the next request can try again.
+ */
+export function classifyRefreshFailure(status) {
+    return status === 400 || status === 401 || status === 403 ? 'signed_out' : 'retry'
+}
+
 function isConfigured() {
     const { clientId, clientSecret } = creds()
     return Boolean(clientId && clientSecret)
@@ -93,6 +112,15 @@ export function normalizeTraktDiscovery(entries, type) {
     }).filter(item => item.id)
 }
 
+// Discovery runs on every Home render: log a failing status once, not per request.
+let lastDiscoveryFailure = null
+function logDiscoveryFailure(status) {
+    if (lastDiscoveryFailure === status) return
+    lastDiscoveryFailure = status
+    // 401/403 here means Trakt rejects TRAKT_CLIENT_ID itself, not a login.
+    noteTraktError('discovery_failed', status)
+}
+
 export function createDiscoveryHandler({
     getClientId = () => creds().clientId,
     fetchDiscovery = traktFetch
@@ -111,6 +139,7 @@ export function createDiscoveryHandler({
         try {
             const upstream = await fetchDiscovery(path)
             if (!upstream.ok) {
+                logDiscoveryFailure(upstream.status)
                 return res.status(502).json({ error: 'trakt_discovery_failed', status: upstream.status })
             }
             res.json({
@@ -160,7 +189,12 @@ async function ensureToken() {
         }
     })
     if (!res.ok) {
-        // Refresh failed → force re-login
+        if (classifyRefreshFailure(res.status) === 'retry') {
+            noteTraktError('refresh_unavailable', res.status)
+            throw new Error('refresh_unavailable')
+        }
+        // Trakt rejected the grant → force re-login
+        noteTraktError('refresh_rejected', res.status)
         t.connected = false
         t.accessToken = null
         t.refreshToken = null
@@ -178,7 +212,8 @@ router.get('/status', (req, res) => {
         configured: isConfigured(),
         connected: Boolean(t.connected && t.accessToken),
         slug: t.slug || null,
-        watchedCount: (t.watchedTmdbIds || []).length
+        watchedCount: (t.watchedTmdbIds || []).length,
+        lastError: t.lastError || null
     })
 })
 
@@ -188,7 +223,11 @@ router.post('/device', async (req, res) => {
     try {
         const { clientId } = creds()
         const r = await traktFetch('/oauth/device/code', { method: 'POST', body: { client_id: clientId } })
-        if (!r.ok) return res.status(502).json({ error: 'device_code_failed', status: r.status })
+        if (!r.ok) {
+            noteTraktError('device_code_failed', r.status)
+            await safeWrite(db)
+            return res.status(502).json({ error: 'device_code_failed', status: r.status })
+        }
         const data = await r.json()
         db.data.trakt.pendingDeviceCode = data.device_code
         await safeWrite(db)
@@ -238,6 +277,7 @@ router.post('/disconnect', asyncRoute(async (req, res) => {
         connected: false, accessToken: null, refreshToken: null, expiresAt: 0,
         pendingDeviceCode: null, slug: null, watchedTmdbIds: [], syncedAt: 0
     }
+    noteTraktError('disconnected')
     await safeWrite(db)
     res.json({ status: 'disconnected' })
 }))
@@ -261,6 +301,8 @@ router.post('/scrobble', async (req, res) => {
         res.json({ status: 'ok' })
     } catch (err) {
         const code = err.message === 'not_connected' ? 401 : 500
+        // Log once per outage, not per scrobble.
+        if (db.data.trakt.lastError?.reason !== 'scrobble_dropped') noteTraktError('scrobble_dropped')
         res.status(code).json({ error: err.message })
     }
 })

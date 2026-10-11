@@ -21,7 +21,7 @@ for (const [label, marker, req, data] of cases) {
         let wrappers = {}
         try { wrappers = await import('../asyncRoute.js') } catch (err) { if (err.code !== 'ERR_MODULE_NOT_FOUND') throw err }
         const { handler } = await loadRoute(marker.startsWith('router') ? '../routes/trakt.js' : '../index.js', marker, {
-            ...wrappers, db, safeWrite, isMagnetHashMatch: () => true,
+            ...wrappers, db, safeWrite, isMagnetHashMatch: () => true, noteTraktError: () => {},
             deleteRule: async () => { await safeWrite(db); return true }
         })
         const res = responseStream()
