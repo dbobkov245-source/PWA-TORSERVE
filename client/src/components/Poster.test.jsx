@@ -21,6 +21,18 @@ it('never displays the previous film poster after its name changes', async () =>
     expect(container.querySelector('img')).toBeNull()
 })
 
+it('reads cached metadata once per name, not on every re-render', () => {
+    // getMetadata is a synchronous localStorage read + JSON.parse; the card
+    // re-renders on every SSE status tick while a torrent is downloading.
+    getMetadata.mockReturnValue({ poster: '/cached.jpg' })
+    resolveMetadata.mockReturnValue(new Promise(() => {}))
+    const { rerender } = render(<Poster name="Film" progress={0} />)
+    const readsAfterMount = getMetadata.mock.calls.length
+    rerender(<Poster name="Film" progress={0.5} />)
+    rerender(<Poster name="Film" progress={0.9} />)
+    expect(getMetadata.mock.calls.length).toBe(readsAfterMount)
+})
+
 it('renders a card whose name is still unknown instead of crashing', () => {
     getMetadata.mockReturnValue(null)
     resolveMetadata.mockReturnValue(new Promise(() => {}))

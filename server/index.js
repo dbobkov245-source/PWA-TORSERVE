@@ -27,7 +27,10 @@ import { safeJoinDownloadPath } from './utils/filePath.js'
 import {
     initTsFailover,
     getTsDownloadStatusItems,
+    withoutShadowedTsItems,
     getActiveTsJob,
+    isTsJobPending,
+    isTsBoostable,
     getFinishedTsFile,
     removeTsJob,
     getTsJobDiskEntries,
@@ -273,7 +276,7 @@ function buildStatusPayload() {
     if (state.serverStatus === 'circuit_open' || state.serverStatus === 'error') {
         return { serverStatus: state.serverStatus, lastStateChange: state.lastStateChange, torrents: [] }
     }
-    const torrents = [...getAllTorrents(), ...getTsDownloadStatusItems()]
+    const torrents = withoutShadowedTsItems(getAllTorrents(), getTsDownloadStatusItems())
     const localItems = getLocalLibrarySnapshot()
     const combined = mergeTorrentAndLocalLibrary(torrents, localItems)
     return {
@@ -1082,6 +1085,10 @@ app.post('/api/torrents/:infoHash/failover', async (req, res) => {
     }
 
     const torrent = getTorrent(infoHash)
+    if (torrent && !isTsBoostable(torrent)) {
+        const speedMBs = ((torrent.downloadSpeed || 0) / 1048576).toFixed(1)
+        return res.status(409).json({ error: `Уже качается быстро (${speedMBs} МБ/с) — через TorrServer будет медленнее` })
+    }
     const job = await startFailover({
         infoHash,
         magnet: saved.magnet,
@@ -1227,6 +1234,11 @@ app.get('/stream/:infoHash/:fileIndex', async (req, res) => {
 
         // 📺 Mark files as seen when playback starts (resets new episode counter)
         markTorrentFilesSeen(infoHash)
+    } else if (isTsJobPending(infoHash)) {
+        // Direct TorrServer download (no native engine) still resolving
+        // metadata: a 404 here reads as "gone" to the player, a 503 as "retry".
+        res.setHeader('Retry-After', '3')
+        return res.status(503).send('TorrServer is still resolving the torrent')
     } else {
         try {
             await refreshLocalLibrary()

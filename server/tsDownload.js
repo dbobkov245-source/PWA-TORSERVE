@@ -45,7 +45,11 @@ export function getTsConfig(env = process.env) {
         // known peers while TorrServer reaches 20+. Don't wait the full grace for that.
         zeroPeerGraceMs: parseInt(env.TS_FAILOVER_ZERO_PEER_GRACE_MS || '30000', 10),
         // Migration discards native sparse files; past this point finishing is cheaper.
-        maxProgress: parseFloat(env.TS_FAILOVER_MAX_PROGRESS || '0.5')
+        maxProgress: parseFloat(env.TS_FAILOVER_MAX_PROGRESS || '0.5'),
+        // TorrServer is capped by ConnectionsLimit 25 and its 64MB reader window:
+        // on a healthy swarm it is slower than native (native up to 33MB/s vs TS
+        // 7-14MB/s). Above this native speed the manual boost only hurts.
+        boostMaxSpeedBps: parseInt(env.TS_BOOST_MAX_SPEED_BPS || String(5 * 1048576), 10)
     }
 }
 
@@ -71,6 +75,16 @@ export function evaluateDownloadFailover(item, config = getTsConfig()) {
     if (item.connectedPeers === 0 && ageMs >= config.zeroPeerGraceMs) return true
     if (ageMs < config.graceMs) return false
     return (item.downloadSpeed || 0) < config.minSpeedBps
+}
+
+/**
+ * Whether the manual "Ускорить через TorrServer" can help this download:
+ * native, unfinished, and not already faster than TorrServer usually gets.
+ */
+export function isTsBoostable(item, config = getTsConfig()) {
+    if (!config.enabled || !item) return false
+    if (item.backend === 'torrserve' || item.isReady || (item.progress || 0) >= 1) return false
+    return (item.downloadSpeed || 0) < config.boostMaxSpeedBps
 }
 
 export function buildTsStreamUrl(tsUrl, infoHash, tsFileId) {
@@ -124,7 +138,7 @@ export function mapJobToStatusItem(job) {
         numPeers: job.peers || 0,
         connectedPeers: job.peers || 0,
         activePeers: job.peers || 0,
-        knownPeers: job.peers || 0,
+        knownPeers: job.knownPeers || job.peers || 0,
         queuedPeers: 0,
         eta: downloadSpeed > 0 ? Math.round((totalSize - job.written) / downloadSpeed) : null,
         backend: 'torrserve',
@@ -199,6 +213,19 @@ export function getTsDownloadStatusItems() {
 }
 
 /**
+ * Native and TorrServer items, one card per infoHash.
+ *
+ * A migration keeps the native engine until TorrServer reports files (and for
+ * good when it never does), so both lists carried the same hash: the user saw
+ * the film twice, and deleting the "duplicate" deleted both — delete is by hash.
+ * While the native engine lives it is the one serving, so its card wins.
+ */
+export function withoutShadowedTsItems(nativeItems = [], tsItems = []) {
+    const nativeHashes = new Set(nativeItems.map((item) => item?.infoHash?.toLowerCase()).filter(Boolean))
+    return [...nativeItems, ...tsItems.filter((item) => !nativeHashes.has(item?.infoHash?.toLowerCase()))]
+}
+
+/**
  * Where a finished job's file actually sits on disk.
  *
  * `getActiveTsJob` deliberately answers only while a job is downloading, so the
@@ -235,9 +262,23 @@ export function getFinishedTsFile(infoHash, fileIndex, downloadPath = process.en
     return resolveFinishedTsFile(job, fileIndex, downloadPath)
 }
 
+/**
+ * A downloading job the player can be redirected to.
+ *
+ * startFailover registers the job before TorrServer has resolved metadata, so
+ * for up to 90s it has no files. Redirecting then has nothing to point at and
+ * the player gets a 404 — while the native engine, which runJob releases only
+ * after metadata arrives, can still serve the bytes. Wait for the file list.
+ */
 export function getActiveTsJob(infoHash) {
     const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
-    return job && job.status === 'downloading' ? job : null
+    return job && job.status === 'downloading' && job.files?.length > 0 ? job : null
+}
+
+/** A downloading job still waiting for TorrServer to report its files. */
+export function isTsJobPending(infoHash) {
+    const job = jobs.get(infoHash?.toLowerCase?.() || infoHash)
+    return Boolean(job && job.status === 'downloading' && !job.files?.length)
 }
 
 export function hasTsJob(infoHash) {
@@ -285,6 +326,13 @@ async function markCompletedInDb(job) {
     }
 }
 
+/** Copy TorrServer's live swarm numbers onto the job (status item reads them). */
+export function applyTsPeerStats(job, stat) {
+    if (!stat) return
+    job.peers = stat.active_peers || 0
+    job.knownPeers = stat.total_peers || 0
+}
+
 async function downloadFileFromTs(config, job, file) {
     const target = safeJoinDownloadPath(process.env.DOWNLOAD_PATH || './downloads', file.path)
     await fs.promises.mkdir(path.dirname(target), { recursive: true })
@@ -313,6 +361,9 @@ async function downloadFileFromTs(config, job, file) {
         job.speedBps = (job.written - lastBytes) * 1000 / Math.max(now - lastTick, 1)
         lastBytes = job.written
         lastTick = now
+        // Sampled once per file, the count froze at whatever TorrServer had when
+        // the transfer began ("1 peer" while 25 were connected).
+        tsGet(config, job.infoHash).then((stat) => applyTsPeerStats(job, stat)).catch(() => {})
         notifyTorrentsChanged()
     }, 3000)
     resetIdle() // Covers waiting for response headers as well as a stalled body.
@@ -344,6 +395,10 @@ async function downloadFileFromTs(config, job, file) {
         const output = fs.createWriteStream(target, { flags: offset > 0 ? 'r+' : 'w', start: offset })
         await pipeline(Readable.fromWeb(res.body), count, output, { signal: aborter.signal })
         if (received !== expected) throw new Error('Incomplete TorrServer body: ' + received + '/' + expected + ' bytes')
+    } catch (err) {
+        // pipeline() reports an aborted signal as a bare AbortError ("The operation
+        // was aborted"); the reason ("TorrServer stream stalled") is in err.cause.
+        throw err?.name === 'AbortError' && err.cause ? err.cause : err
     } finally {
         clearTimeout(idleTimer)
         clearInterval(speedTimer)
@@ -396,8 +451,7 @@ async function runJob(config, job) {
 
         for (const file of job.files) {
             signal.throwIfAborted()
-            const statSnapshot = await tsGet(config, job.infoHash).catch(() => null)
-            job.peers = statSnapshot?.active_peers || job.peers || 0
+            applyTsPeerStats(job, await tsGet(config, job.infoHash).catch(() => null))
             await downloadFileFromTs(config, job, file)
         }
 

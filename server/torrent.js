@@ -578,7 +578,19 @@ export function getPersistedTorrentsToRestore(persisted = []) {
     return persisted.filter(torrent => torrent?.magnet && torrent.completed !== true)
 }
 
-// Restore all saved torrents on server startup
+// Restore all saved torrents on server startup.
+//
+// Sequential ON PURPOSE. addTorrent() resolves on 'ready', and with verify:true
+// that is only after torrent-stream has re-hashed every saved piece, so each
+// iteration is a full disk read + sha1 pass. Running them in parallel would put
+// several of those on the NAS at once; its freezes were storage starvation
+// (iowait 57-89%, disks at 99-100%, event-loop lag up to 44s), and the
+// per-engine connection limit is not divided across engines. The cost is that
+// a later torrent waits for earlier ones and is not listed until it is ready
+// (see TORRENT_VERIFY_TIMEOUT_MS). This is fire-and-forget after listen(), so
+// it never delays server startup, and completed torrents are skipped, so the
+// queue is normally empty. Do not switch to Promise.all without measuring on
+// the NAS.
 export async function restoreTorrents() {
     await db.read()
     const saved = db.data.torrents || []
@@ -754,10 +766,19 @@ export const addTorrent = (magnetURI, skipSave = false) => {
             // Save to DB for persistence (unless restoring)
             try {
                 if (!skipSave) await saveTorrentToDB(magnetURI, engine.torrent?.name || 'Unknown')
+            } catch (err) {
+                // The caller is told the add failed, so do not leave the engine running:
+                // it is not in db.json and would vanish on restart. The 'error' handler
+                // drops every reference, destroys the engine and rejects with err.
+                console.warn('[Persistence] Failed to save torrent, dropping engine:', err.message)
+                engine.emit('error', err)
+                return
+            }
+
+            try {
                 notifyTorrentChange()
                 resolve(formatEngine(engine))
             } catch (err) {
-                console.warn('[Persistence] Failed to save torrent:', err.message)
                 reject(err)
             }
         })

@@ -1,3 +1,5 @@
+import { isTsBoostable } from './tsDownload.js'
+
 export function scheduleBackgroundRefresh(refresh, onWarning = () => {}) {
     Promise.resolve()
         .then(() => refresh())
@@ -22,6 +24,7 @@ export function serializeStatusItems(items = []) {
         queuedPeers: item.queuedPeers,
         eta: item.eta,
         backend: item.backend || 'native',
+        tsBoostable: isTsBoostable({ ...item, backend: item.backend || 'native' }),
         error: item.error || null,
         files: (item.files || []).map((file) => ({
             name: file.name,
