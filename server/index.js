@@ -30,6 +30,7 @@ import {
     withoutShadowedTsItems,
     getActiveTsJob,
     isTsJobPending,
+    isTsBoostable,
     getFinishedTsFile,
     removeTsJob,
     getTsJobDiskEntries,
@@ -1084,6 +1085,10 @@ app.post('/api/torrents/:infoHash/failover', async (req, res) => {
     }
 
     const torrent = getTorrent(infoHash)
+    if (torrent && !isTsBoostable(torrent)) {
+        const speedMBs = ((torrent.downloadSpeed || 0) / 1048576).toFixed(1)
+        return res.status(409).json({ error: `Уже качается быстро (${speedMBs} МБ/с) — через TorrServer будет медленнее` })
+    }
     const job = await startFailover({
         infoHash,
         magnet: saved.magnet,

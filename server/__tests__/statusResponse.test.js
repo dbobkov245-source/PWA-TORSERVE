@@ -70,6 +70,8 @@ test('serializeStatusItems preserves the public /api/status payload shape', asyn
         queuedPeers: 5,
         eta: 4,
         backend: 'native',
+        // 128 B/s native, unfinished: the manual TorrServer boost can still help.
+        tsBoostable: true,
         error: null,
         files: [{
             name: 'video.mkv',
