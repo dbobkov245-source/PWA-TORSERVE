@@ -21,11 +21,35 @@ async function req(path, { method = 'GET', body } = {}) {
         headers: body ? { 'Content-Type': 'application/json' } : undefined,
         body: body ? JSON.stringify(body) : undefined
     })
-    if (!res.ok) throw new Error(`Trakt ${path} → HTTP ${res.status}`)
+    if (!res.ok) {
+        const error = new Error(`Trakt ${path} → HTTP ${res.status}`)
+        error.body = await res.json().catch(() => null)
+        throw error
+    }
     return res.json()
 }
 
-/** { configured, connected, slug, watchedCount } */
+/**
+ * Human explanation of the server's last Trakt failure ({reason, status, at}).
+ * 401/403 on the app-key calls means Trakt rejects TRAKT_CLIENT_ID itself —
+ * reconnecting cannot help, the API app on developer.trakt.tv must be fixed.
+ */
+export function describeTraktError(lastError) {
+    if (!lastError?.reason) return ''
+    const { reason, status } = lastError
+    const http = status ? ` (HTTP ${status})` : ''
+    const rejectsKey = status === 401 || status === 403
+    if ((reason === 'device_code_failed' || reason === 'discovery_failed') && rejectsKey) {
+        return `Trakt не принимает ключ приложения${http}. Проверь приложение на developer.trakt.tv и TRAKT_CLIENT_ID на сервере.`
+    }
+    if (reason === 'refresh_rejected') return `Trakt отозвал вход${http}. Подключи заново.`
+    if (reason === 'refresh_unavailable') return `Trakt временно недоступен${http}, вход сохранён.`
+    if (reason === 'scrobble_dropped') return 'Просмотры не отправляются в Trakt: он не подключён.'
+    if (reason === 'disconnected') return 'Trakt отключили в настройках.'
+    return `Ошибка Trakt: ${reason}${http}.`
+}
+
+/** { configured, connected, slug, watchedCount, lastError } */
 export function getTraktStatus() {
     return req('/status')
 }

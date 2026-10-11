@@ -5,9 +5,16 @@
  * external player closes. We persist per torrent file, feed the position
  * back into the next play() call (Vimu `startfrom` / MX `position`), and
  * build the home-screen resume row from the unfinished entries.
+ *
+ * localStorage stays the fast synchronous source, but it belongs to one TV.
+ * Changes are also pushed to the server (resumeSync.js) and the other TV's
+ * changes merged back with the server's rule: newest updatedAt wins, and a
+ * finished file leaves a tombstone so a stale copy cannot resurrect it.
  */
 
 const STORAGE_KEY = 'watch_history_v1'
+const TOMBSTONES_KEY = 'watch_history_tombstones_v1'
+const TOMBSTONE_TTL_MS = 60 * 24 * 3600 * 1000
 const MAX_ENTRIES = 30
 // Below this watched amount a resume makes no sense
 const MIN_RESUME_POSITION_MS = 2 * 60 * 1000
@@ -37,6 +44,23 @@ function save(map) {
     } catch { /* localStorage unavailable */ }
 }
 
+function loadTombstones() {
+    try {
+        return JSON.parse(localStorage.getItem(TOMBSTONES_KEY)) || {}
+    } catch {
+        return {}
+    }
+}
+
+function saveTombstones(tombstones, now = Date.now()) {
+    try {
+        for (const [key, at] of Object.entries(tombstones)) {
+            if (now - at > TOMBSTONE_TTL_MS) delete tombstones[key]
+        }
+        localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(tombstones))
+    } catch { /* localStorage unavailable */ }
+}
+
 /** Treats a player result as "watched to the end"? */
 export function isFinishedResult(result) {
     const { position, duration, finished } = result || {}
@@ -49,23 +73,32 @@ export function isFinishedResult(result) {
 /**
  * Store the outcome of a playback session.
  * Finished sessions remove the resume entry (next play starts fresh).
+ * @returns {{key: string, entry?: Object, deletedAt?: number} | null}
+ *   the change to push to the server, or null when nothing changed
  */
 export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentName, tmdbId = null, mediaType = null, result }) {
-    if (!infoHash || !Number.isInteger(fileIndex)) return
+    if (!infoHash || !Number.isInteger(fileIndex)) return null
     const finished = isFinishedResult(result)
     const position = result?.position
     // External players may close without a result (-1). Keep the last known
     // progress unless completion or a real nonnegative position was reported.
-    if (!finished && (!Number.isFinite(position) || position < 0)) return
+    if (!finished && (!Number.isFinite(position) || position < 0)) return null
     const map = load()
     const key = entryKey(infoHash, fileIndex)
 
+    // Finished, or explicitly restarted near the beginning: forget the position
+    // here and, through the tombstone, on the other TV too.
     if (finished || position < MIN_RESUME_POSITION_MS) {
-        if (map[key]) {
-            delete map[key]
-            save(map)
-        }
-        return
+        // A finished film is announced even with no local entry: the position
+        // may exist only on the server, saved by the other TV.
+        if (!map[key] && !finished) return null
+        const deletedAt = Date.now()
+        delete map[key]
+        save(map)
+        const tombstones = loadTombstones()
+        tombstones[key] = deletedAt
+        saveTombstones(tombstones)
+        return { key, deletedAt }
     }
 
     map[key] = {
@@ -83,6 +116,45 @@ export function recordPlaybackResult({ infoHash, fileIndex, fileName, torrentNam
         updatedAt: Date.now()
     }
     save(map)
+    const tombstones = loadTombstones()
+    if (tombstones[key]) {
+        delete tombstones[key]
+        saveTombstones(tombstones)
+    }
+    return { key, entry: map[key] }
+}
+
+/**
+ * Merge the server's snapshot (every TV's changes) into this TV.
+ * @param {{entries: Object[], tombstones: Object}} remote
+ * @returns {boolean} whether anything local changed
+ */
+export function mergeRemoteResume(remote) {
+    const map = load()
+    const tombstones = loadTombstones()
+    let changed = false
+
+    for (const [key, deletedAt] of Object.entries(remote?.tombstones || {})) {
+        if (!Number.isFinite(deletedAt)) continue
+        if (map[key] && map[key].updatedAt <= deletedAt) {
+            delete map[key]
+            changed = true
+        }
+        if (!map[key] && (tombstones[key] || 0) < deletedAt) tombstones[key] = deletedAt
+    }
+    for (const entry of remote?.entries || []) {
+        if (!entry?.infoHash || !Number.isInteger(entry.fileIndex) || !Number.isFinite(entry.updatedAt)) continue
+        const key = entryKey(entry.infoHash, entry.fileIndex)
+        if (entry.updatedAt <= (tombstones[key] || 0)) continue
+        if (map[key] && map[key].updatedAt >= entry.updatedAt) continue
+        map[key] = { ...entry, infoHash: entry.infoHash.toLowerCase() }
+        delete tombstones[key]
+        changed = true
+    }
+
+    if (changed) save(map)
+    saveTombstones(tombstones)
+    return changed
 }
 
 /** Resume position (ms) for the next play() call, 0 = start from scratch */

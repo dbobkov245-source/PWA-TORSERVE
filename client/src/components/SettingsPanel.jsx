@@ -3,7 +3,7 @@ import { App } from '@capacitor/app'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { cleanTitle } from '../utils/helpers'
 import { getLayerStatus } from '../utils/tmdbClient'
-import { getTraktStatus, startTraktDevice, pollTraktDevice, disconnectTrakt } from '../utils/traktApi'
+import { getTraktStatus, startTraktDevice, pollTraktDevice, disconnectTrakt, describeTraktError } from '../utils/traktApi'
 
 const TABS = [
     { id: 'general', name: 'Основные', icon: '⚙️' },
@@ -67,10 +67,13 @@ const TraktSection = () => {
             const d = await startTraktDevice()
             setDevice(d)
             startPolling(d.interval)
-        } catch {
-            setMsg('Ошибка. Проверь TRAKT_CLIENT_ID/SECRET на сервере.')
+        } catch (error) {
+            const body = error?.body
+            setMsg(describeTraktError(body?.error ? { reason: body.error, status: body.status } : null)
+                || 'Ошибка. Проверь TRAKT_CLIENT_ID на сервере.')
+            refresh()
         } finally { setBusy(false) }
-    }, [startPolling])
+    }, [startPolling, refresh])
 
     const disconnect = useCallback(async () => {
         setBusy(true)
@@ -84,7 +87,7 @@ const TraktSection = () => {
 
             {status && !status.configured && (
                 <div className="text-xs text-yellow-500/80 bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-3">
-                    Trakt не настроен на сервере. Задай <code>TRAKT_CLIENT_ID</code> и <code>TRAKT_CLIENT_SECRET</code> (создай приложение на trakt.tv/oauth/applications, redirect uri <code>urn:ietf:wg:oauth:2.0:oob</code>).
+                    Trakt не настроен на сервере. Создай приложение на developer.trakt.tv и задай <code>TRAKT_CLIENT_ID</code> (секрет новым приложениям не нужен) и <code>TRAKT_REDIRECT_URI</code> — тот же адрес, что указан в приложении.
                 </div>
             )}
 
@@ -95,6 +98,12 @@ const TraktSection = () => {
                         className="focusable w-full py-3 bg-red-900/10 text-red-400 rounded-xl font-bold text-sm border border-red-900/30 hover:bg-red-900/20 transition-all disabled:opacity-50">
                         Отключить Trakt
                     </button>
+                </div>
+            )}
+
+            {status?.configured && !status.connected && !device && status.lastError && (
+                <div className="text-xs text-yellow-500/80 bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-3 mb-2">
+                    {describeTraktError(status.lastError)}
                 </div>
             )}
 

@@ -11,6 +11,7 @@ import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResult
 import { dispatchSystemBack } from './utils/backButton.js'
 import { describeAddTorrentError } from './utils/addTorrentError.js'
 import { recordPlaybackResult, getResumePosition, getResumeItems, getResumeEntry, removeResumeEntries } from './utils/watchHistory.js'
+import { pullResume, pushResumeChange } from './utils/resumeSync.js'
 import { scrobbleTrakt } from './utils/traktApi.js'
 
 // Components
@@ -263,16 +264,25 @@ function App() {
     return () => clearInterval(timer)
   }, [fetchStatus])
 
+  // Resume positions from the other TV: on start, and whenever the app comes
+  // back to the foreground (e.g. after the player closes on this TV).
+  const syncResume = useCallback(() => {
+    pullResume(serverUrl).then(changed => { if (changed) setResumeItems(getResumeItems()) })
+  }, [serverUrl])
+
+  useEffect(() => { syncResume() }, [syncResume])
+
   useEffect(() => {
     const listenerPromise = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) return
       fetchStatus.afterCurrent()
+      syncResume()
     })
 
     return () => {
       listenerPromise.then(handle => handle.remove())
     }
-  }, [fetchStatus])
+  }, [fetchStatus, syncResume])
 
   // Check for app updates on launch
   useEffect(() => {
@@ -416,6 +426,9 @@ function App() {
       // 3. Start playback via Custom Plugin, resuming from the saved
       // position. The plugin maps it to Vimu `startfrom` / MX `position`
       // and resolves with {position, duration, finished} on player exit.
+      // The other TV may have moved on since the last sync: ask the server first
+      // (capped at 1.5s, a dead server falls back to the local position).
+      await pullResume(base)
       const resumeFrom = getResumePosition(hash, index)
       const playOptions = { url: streamUrl, title: fileName }
       if (resumeFrom > 0) playOptions.position = resumeFrom
@@ -434,7 +447,7 @@ function App() {
 
       const result = await TVPlayer.play(playOptions)
 
-      recordPlaybackResult({
+      const resumeChange = recordPlaybackResult({
         infoHash: hash,
         fileIndex: index,
         fileName,
@@ -444,6 +457,7 @@ function App() {
         result: result || {}
       })
       setResumeItems(getResumeItems())
+      pushResumeChange(base, resumeChange)
 
       if (tmdbId) {
         const dur = result?.duration || 0

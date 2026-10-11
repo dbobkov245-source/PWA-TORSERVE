@@ -1,7 +1,7 @@
 {
-    "version": "3.18.4",
-    "versionCode": 49,
+    "version": "3.18.5",
+    "versionCode": 50,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.4/pwa-torserve-v3.18.4.apk",
-    "notes": "v3.18.4\n- «Ускорить через TorrServer» скрыта, когда загрузка и так быстрая\n- Окно торрента обновляется вживую\n- Честный счётчик пиров у загрузок через TorrServer"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.5/pwa-torserve-v3.18.5.apk",
+    "notes": "v3.18.5\n- Продолжение просмотра на другом телевизоре: позиция хранится на сервере\n- В настройках видно, почему Trakt не работает"
 }

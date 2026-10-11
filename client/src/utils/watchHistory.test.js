@@ -107,3 +107,58 @@ describe('watchHistory', () => {
         expect(items[0].torrentName).toBe('Newer')
     })
 })
+
+describe('watchHistory sync with the server (resume on another TV)', () => {
+    beforeEach(() => localStorage.clear())
+    const HASH = 'a'.repeat(40)
+    const remoteEntry = (position, updatedAt) => ({
+        infoHash: HASH, fileIndex: 0, fileName: 'Runner.mkv', torrentName: 'Runner',
+        tmdbId: 1, mediaType: 'movie', position, duration: 7200000, updatedAt
+    })
+
+    it('reports what changed so it can be pushed to the server', async () => {
+        const { recordPlaybackResult } = await import('./watchHistory.js')
+        const saved = recordPlaybackResult({ infoHash: HASH, fileIndex: 0, result: { position: 600000, duration: 7200000 } })
+        expect(saved.key).toBe(`${HASH}:0`)
+        expect(saved.entry.position).toBe(600000)
+
+        const finished = recordPlaybackResult({ infoHash: HASH, fileIndex: 0, result: { position: 7100000, duration: 7200000, finished: true } })
+        expect(finished.key).toBe(`${HASH}:0`)
+        expect(finished.deletedAt).toBeGreaterThan(0)
+    })
+
+    it('takes a newer position from the other TV and ignores an older one', async () => {
+        const { mergeRemoteResume, getResumePosition } = await import('./watchHistory.js')
+        expect(mergeRemoteResume({ entries: [remoteEntry(1800000, 2000)], tombstones: {} })).toBe(true)
+        expect(getResumePosition(HASH, 0)).toBe(1800000)
+
+        expect(mergeRemoteResume({ entries: [remoteEntry(300000, 1000)], tombstones: {} })).toBe(false)
+        expect(getResumePosition(HASH, 0)).toBe(1800000)
+    })
+
+    it('drops a film the other TV finished, unless this TV watched it later', async () => {
+        const { mergeRemoteResume, getResumePosition } = await import('./watchHistory.js')
+        mergeRemoteResume({ entries: [remoteEntry(1800000, 2000)], tombstones: {} })
+
+        mergeRemoteResume({ entries: [], tombstones: { [`${HASH}:0`]: 1500 } })
+        expect(getResumePosition(HASH, 0)).toBe(1800000)
+
+        mergeRemoteResume({ entries: [], tombstones: { [`${HASH}:0`]: 3000 } })
+        expect(getResumePosition(HASH, 0)).toBe(0)
+    })
+
+    it('finishing a film started on the other TV still tells the server', async () => {
+        const { recordPlaybackResult } = await import('./watchHistory.js')
+        const change = recordPlaybackResult({ infoHash: HASH, fileIndex: 0, result: { position: 7100000, duration: 7200000, finished: true } })
+        expect(change?.deletedAt).toBeGreaterThan(0)
+    })
+
+    it('a stale copy cannot come back after this TV finished the film', async () => {
+        const { recordPlaybackResult, mergeRemoteResume, getResumePosition } = await import('./watchHistory.js')
+        recordPlaybackResult({ infoHash: HASH, fileIndex: 0, result: { position: 600000, duration: 7200000 } })
+        recordPlaybackResult({ infoHash: HASH, fileIndex: 0, result: { position: 7100000, duration: 7200000, finished: true } })
+
+        mergeRemoteResume({ entries: [remoteEntry(600000, 1)], tombstones: {} })
+        expect(getResumePosition(HASH, 0)).toBe(0)
+    })
+})

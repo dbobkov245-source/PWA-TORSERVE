@@ -6,9 +6,10 @@ import { asyncRoute } from '../asyncRoute.js'
  * client bundle — SEC-01 / Zero-Cost backend). The client talks only to
  * /api/trakt/*; this router proxies Trakt and persists tokens in db.json.
  *
- * Requires env: TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET
- * (create an API app at https://trakt.tv/oauth/applications, redirect uri
- *  `urn:ietf:wg:oauth:2.0:oob`).
+ * Requires env: TRAKT_CLIENT_ID. Apps created on developer.trakt.tv since the
+ * October 2026 auth migration get no client secret (PKCE era; the secret is
+ * optional and deprecated), so TRAKT_CLIENT_SECRET is legacy-only. Set
+ * TRAKT_REDIRECT_URI to the redirect registered on the app: refresh sends it.
  */
 
 import express from 'express'
@@ -29,9 +30,53 @@ function creds() {
     }
 }
 
+/**
+ * Remember why Trakt last failed, and say so in the log. Until 2026-10-11 the
+ * session could vanish (connected:false, no username) with nothing logged and
+ * every scrobble dropped silently. The caller persists db when convenient.
+ */
+function noteTraktError(reason, status = null) {
+    db.data.trakt.lastError = { reason, status, at: Date.now() }
+    console.warn(`[Trakt] ${reason}${status ? ` (HTTP ${status})` : ''}`)
+}
+
+/** Forget a recorded failure once the thing it was about works again. */
+function clearTraktError(reasons) {
+    const reason = db.data.trakt.lastError?.reason
+    if (reason && (!reasons || reasons.includes(reason))) db.data.trakt.lastError = null
+}
+
+/**
+ * A refresh that Trakt rejects (bad/revoked grant, unknown client) ends the
+ * session; anything else - 5xx, 429, Cloudflare - is transient and must keep
+ * the tokens so the next request can try again.
+ */
+export function classifyRefreshFailure(status) {
+    return status === 400 || status === 401 || status === 403 ? 'signed_out' : 'retry'
+}
+
+/** Configured = a client id. The secret is optional since the 2026 migration. */
+export function isTraktConfigured(env = process.env) {
+    return Boolean(env.TRAKT_CLIENT_ID)
+}
+
 function isConfigured() {
-    const { clientId, clientSecret } = creds()
-    return Boolean(clientId && clientSecret)
+    return isTraktConfigured()
+}
+
+/**
+ * Body for /oauth/device/token and /oauth/token. A legacy secret is sent only
+ * when set — sending a stale one alongside a new client id gets rejected.
+ * Refresh carries the app's registered redirect (legacy apps: OOB).
+ */
+export function buildTraktTokenBody(fields, env = process.env, { withRedirect = false } = {}) {
+    const body = { ...fields, client_id: env.TRAKT_CLIENT_ID || '' }
+    if (env.TRAKT_CLIENT_SECRET) body.client_secret = env.TRAKT_CLIENT_SECRET
+    if (withRedirect) {
+        const redirect = env.TRAKT_REDIRECT_URI || (env.TRAKT_CLIENT_SECRET ? OOB_REDIRECT : '')
+        if (redirect) body.redirect_uri = redirect
+    }
+    return body
 }
 
 function apiHeaders(token) {
@@ -93,6 +138,15 @@ export function normalizeTraktDiscovery(entries, type) {
     }).filter(item => item.id)
 }
 
+// Discovery runs on every Home render: log a failing status once, not per request.
+let lastDiscoveryFailure = null
+function logDiscoveryFailure(status) {
+    if (lastDiscoveryFailure === status) return
+    lastDiscoveryFailure = status
+    // 401/403 here means Trakt rejects TRAKT_CLIENT_ID itself, not a login.
+    noteTraktError('discovery_failed', status)
+}
+
 export function createDiscoveryHandler({
     getClientId = () => creds().clientId,
     fetchDiscovery = traktFetch
@@ -111,8 +165,12 @@ export function createDiscoveryHandler({
         try {
             const upstream = await fetchDiscovery(path)
             if (!upstream.ok) {
+                logDiscoveryFailure(upstream.status)
                 return res.status(502).json({ error: 'trakt_discovery_failed', status: upstream.status })
             }
+            lastDiscoveryFailure = null
+            // A key that answers again makes an old "key rejected" stale.
+            clearTraktError(['discovery_failed', 'device_code_failed'])
             res.json({
                 results: normalizeTraktDiscovery(await upstream.json(), type),
                 source: 'trakt',
@@ -138,6 +196,7 @@ async function storeTokens(tokenJson) {
     t.expiresAt = createdMs + (tokenJson.expires_in || 0) * 1000
     t.connected = true
     t.pendingDeviceCode = null
+    clearTraktError() // signed in: every earlier failure is history
     await safeWrite(db)
 }
 
@@ -147,20 +206,18 @@ async function ensureToken() {
     if (!t.connected || !t.accessToken) throw new Error('not_connected')
     if (t.expiresAt && Date.now() < t.expiresAt - TOKEN_SKEW_MS) return t.accessToken
 
-    // Refresh
-    const { clientId, clientSecret } = creds()
+    // Refresh (refresh tokens are single-use: storeTokens keeps the new pair)
     const res = await traktFetch('/oauth/token', {
         method: 'POST',
-        body: {
-            refresh_token: t.refreshToken,
-            client_id: clientId,
-            client_secret: clientSecret,
-            redirect_uri: OOB_REDIRECT,
-            grant_type: 'refresh_token'
-        }
+        body: buildTraktTokenBody({ refresh_token: t.refreshToken, grant_type: 'refresh_token' }, process.env, { withRedirect: true })
     })
     if (!res.ok) {
-        // Refresh failed → force re-login
+        if (classifyRefreshFailure(res.status) === 'retry') {
+            noteTraktError('refresh_unavailable', res.status)
+            throw new Error('refresh_unavailable')
+        }
+        // Trakt rejected the grant → force re-login
+        noteTraktError('refresh_rejected', res.status)
         t.connected = false
         t.accessToken = null
         t.refreshToken = null
@@ -178,7 +235,8 @@ router.get('/status', (req, res) => {
         configured: isConfigured(),
         connected: Boolean(t.connected && t.accessToken),
         slug: t.slug || null,
-        watchedCount: (t.watchedTmdbIds || []).length
+        watchedCount: (t.watchedTmdbIds || []).length,
+        lastError: t.lastError || null
     })
 })
 
@@ -188,7 +246,11 @@ router.post('/device', async (req, res) => {
     try {
         const { clientId } = creds()
         const r = await traktFetch('/oauth/device/code', { method: 'POST', body: { client_id: clientId } })
-        if (!r.ok) return res.status(502).json({ error: 'device_code_failed', status: r.status })
+        if (!r.ok) {
+            noteTraktError('device_code_failed', r.status)
+            await safeWrite(db)
+            return res.status(502).json({ error: 'device_code_failed', status: r.status })
+        }
         const data = await r.json()
         db.data.trakt.pendingDeviceCode = data.device_code
         await safeWrite(db)
@@ -210,10 +272,9 @@ router.post('/device/poll', async (req, res) => {
     const code = db.data.trakt.pendingDeviceCode
     if (!code) return res.json({ status: 'idle' })
     try {
-        const { clientId, clientSecret } = creds()
         const r = await traktFetch('/oauth/device/token', {
             method: 'POST',
-            body: { code, client_id: clientId, client_secret: clientSecret }
+            body: buildTraktTokenBody({ code })
         })
         if (r.status === 200) {
             await storeTokens(await r.json())
@@ -238,6 +299,7 @@ router.post('/disconnect', asyncRoute(async (req, res) => {
         connected: false, accessToken: null, refreshToken: null, expiresAt: 0,
         pendingDeviceCode: null, slug: null, watchedTmdbIds: [], syncedAt: 0
     }
+    noteTraktError('disconnected')
     await safeWrite(db)
     res.json({ status: 'disconnected' })
 }))
@@ -261,6 +323,8 @@ router.post('/scrobble', async (req, res) => {
         res.json({ status: 'ok' })
     } catch (err) {
         const code = err.message === 'not_connected' ? 401 : 500
+        // Log once per outage, not per scrobble.
+        if (db.data.trakt.lastError?.reason !== 'scrobble_dropped') noteTraktError('scrobble_dropped')
         res.status(code).json({ error: err.message })
     }
 })

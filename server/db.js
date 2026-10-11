@@ -23,6 +23,8 @@ const defaultData = {
     viewHistory: [],           // [{ tmdbId, mediaType, title, posterPath, backdropPath, voteAverage, year, lastWatched, genreIds }]
     // TorrServer failover downloads in progress (resumed on restart)
     tsDownloads: [],           // [{ infoHash, magnet, name }]
+    // Resume positions shared by every TV (see resumeStore.js)
+    resume: { entries: {}, tombstones: {} },
     // Trakt.tv OAuth device-flow tokens + sync cache
     trakt: {
         connected: false,
@@ -57,6 +59,7 @@ db.data.autoDownloadHistory ||= []
 db.data.favorites ||= []
 db.data.viewHistory ||= []
 db.data.tsDownloads ||= []
+db.data.resume ||= { entries: {}, tombstones: {} }
 db.data.trakt = { ...defaultData.trakt, ...(db.data.trakt || {}) }
 
 await db.write()

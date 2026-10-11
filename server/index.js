@@ -355,6 +355,8 @@ app.post('/api/library/rescan', async (req, res) => {
 import { smartFetch, insecureAgent } from './utils/doh.js'
 import proxyRouter from './routes/proxy.js'
 import traktRouter from './routes/trakt.js'
+import { createResumeRouter } from './routes/resume.js'
+import { tombstoneTorrent } from './resumeStore.js'
 
 // ────────────────────────────────────────────────────────
 // 🎮 D-Pad trace — device-side navigation diagnostics
@@ -389,6 +391,7 @@ app.delete('/api/debug/dpad', (req, res) => {
 
 app.use('/api/proxy', proxyRouter)
 app.use('/api/trakt', traktRouter)
+app.use('/api/resume', createResumeRouter({ db, safeWrite }))
 
 // ────────────────────────────────────────────────────────
 // 📦 Updater proxy: lets clients with broken TLS (old Android,
@@ -1127,6 +1130,12 @@ app.delete('/api/delete/:infoHash', async (req, res) => {
     // soft=1 keeps engine in frozen keep-alive cache without disk cleanup.
     const tsJobRemoved = removeTsJob(infoHash)
     const success = removeTorrent(infoHash, !softDelete) || tsJobRemoved
+
+    // Every TV keeps its own copy of resume positions: tombstone them here so
+    // the next sync drops this torrent from all Continue Watching rows.
+    if (!softDelete && db.data.resume && tombstoneTorrent(db.data.resume, infoHash)) {
+        safeWrite(db).catch(err => console.warn(`[Resume] Save after delete failed: ${err.message}`))
+    }
 
     if (success) {
         // 🔥 PHYSICAL DELETION (FILE HYGIENE - ASYNC) 🔥
