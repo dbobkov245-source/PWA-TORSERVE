@@ -73,8 +73,11 @@ public class TVPlayer extends Plugin {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(Uri.parse(url), "video/*");
-            // AND-01: Prevent double chooser and activity stacking
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // AND-01: Prevent double chooser and activity stacking.
+            // No new-task flag: launching for a result in a new task makes
+            // Android cancel the result at launch ("Activity is launching as a new
+            // task, so cancelling activity result."), so the player's position never
+            // came back - no resume, and Trakt saw "stop" at 0% as playback began.
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
@@ -149,7 +152,7 @@ public class TVPlayer extends Plugin {
 
             Intent intent = new Intent(Intent.ACTION_VIEW);
             // AND-01: Prevent double chooser
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // Same as play(): no NEW_TASK, or the result is cancelled at launch.
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             intent.putExtra("return_result", true); // Request result

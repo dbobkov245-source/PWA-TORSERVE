@@ -60,7 +60,8 @@ public class TVPlayerTest {
             assertEquals("playerResult", player.callback);
             verify(call, never()).resolve();
             verify(intent).setDataAndType(uri, "video/*");
-            verify(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // NEW_TASK makes Android cancel the result at launch: no position back.
+            verify(intent, never()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             verify(intent).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             verify(intent).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             verify(intent).putExtra("return_result", true);

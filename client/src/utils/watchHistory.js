@@ -157,6 +157,11 @@ export function mergeRemoteResume(remote) {
     return changed
 }
 
+/** Every stored entry keyed like the server (`hash:fileIndex`) — for upload. */
+export function getLocalResumeEntries() {
+    return Object.entries(load()).map(([key, entry]) => ({ key, entry }))
+}
+
 /** Resume position (ms) for the next play() call, 0 = start from scratch */
 export function getResumePosition(infoHash, fileIndex) {
     const entry = load()[entryKey(infoHash, fileIndex)]

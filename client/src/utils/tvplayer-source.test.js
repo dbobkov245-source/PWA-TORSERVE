@@ -8,13 +8,21 @@ const __dirname = path.dirname(__filename)
 const sourcePath = path.resolve(__dirname, '../../android/app/src/main/java/com/torserve/pwa/TVPlayer.java')
 
 describe('TVPlayer source contract', () => {
-    it('keeps NEW_TASK flag in both play and playList intents', () => {
+    // A player launched for a result in a NEW task gets its result cancelled at
+    // launch: logcat "Activity is launching as a new task, so cancelling activity
+    // result." (both TVs, 2026-10-11). play() then resolved at once with
+    // position -1 — no resume position was ever saved and Trakt got "stop" at 0%.
+    it('launches the player in our task so its result (position) is delivered', () => {
         const source = fs.readFileSync(sourcePath, 'utf8')
         const playMethod = source.match(/public void play\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n {4}\}/)
         const playListMethod = source.match(/public void playList\(PluginCall call\) \{[\s\S]*?startActivityForResult\(call, intent, "playerResult"\);[\s\S]*?\n {4}\}/)
 
-        expect(playMethod?.[0]).toContain('FLAG_ACTIVITY_NEW_TASK')
-        expect(playListMethod?.[0]).toContain('FLAG_ACTIVITY_NEW_TASK')
+        for (const method of [playMethod?.[0], playListMethod?.[0]]) {
+            expect(method).toBeTruthy()
+            expect(method).not.toContain('FLAG_ACTIVITY_NEW_TASK')
+            expect(method).toContain('FLAG_ACTIVITY_CLEAR_TOP')
+            expect(method).toContain('FLAG_ACTIVITY_SINGLE_TOP')
+        }
     })
 
     it('returns the complete playback result shape when a player returns no data', () => {
