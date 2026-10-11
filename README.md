@@ -141,6 +141,7 @@ Server settings are environment variables (`.env` or the compose file). The ones
 | `TS_FAILOVER_MIN_SPEED_BPS` | `819200` (800 KB/s) | Automatic handover threshold after the grace period |
 | `RUTRACKER_LOGIN` / `RUTRACKER_PASSWORD` | — | Enables RuTracker search |
 | `TORLOOK_ENABLED` / `TORZNAB_ENABLED` | off | `1` enables those providers (`TORZNAB_URL`, `TORZNAB_API_KEY` for Jackett) |
+| `TRAKT_CLIENT_ID` / `TRAKT_REDIRECT_URI` | — | Trakt sync. Create the app on developer.trakt.tv; new apps have no client secret, set the redirect you registered there |
 | `TMDB_API_KEY` | — | Server-side TMDB calls: the `/api/proxy` level of the cascade, server search, picks |
 | `DOH_DEBUG` | `0` | `1` logs every DoH lookup (noisy) |
 

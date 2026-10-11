@@ -40,7 +40,7 @@ export function describeTraktError(lastError) {
     const http = status ? ` (HTTP ${status})` : ''
     const rejectsKey = status === 401 || status === 403
     if ((reason === 'device_code_failed' || reason === 'discovery_failed') && rejectsKey) {
-        return `Trakt не принимает ключ приложения${http}. Проверь приложение на developer.trakt.tv и TRAKT_CLIENT_ID/SECRET на сервере.`
+        return `Trakt не принимает ключ приложения${http}. Проверь приложение на developer.trakt.tv и TRAKT_CLIENT_ID на сервере.`
     }
     if (reason === 'refresh_rejected') return `Trakt отозвал вход${http}. Подключи заново.`
     if (reason === 'refresh_unavailable') return `Trakt временно недоступен${http}, вход сохранён.`

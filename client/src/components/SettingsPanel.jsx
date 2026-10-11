@@ -70,7 +70,7 @@ const TraktSection = () => {
         } catch (error) {
             const body = error?.body
             setMsg(describeTraktError(body?.error ? { reason: body.error, status: body.status } : null)
-                || 'Ошибка. Проверь TRAKT_CLIENT_ID/SECRET на сервере.')
+                || 'Ошибка. Проверь TRAKT_CLIENT_ID на сервере.')
             refresh()
         } finally { setBusy(false) }
     }, [startPolling, refresh])
@@ -87,7 +87,7 @@ const TraktSection = () => {
 
             {status && !status.configured && (
                 <div className="text-xs text-yellow-500/80 bg-yellow-900/10 border border-yellow-700/30 rounded-lg p-3">
-                    Trakt не настроен на сервере. Задай <code>TRAKT_CLIENT_ID</code> и <code>TRAKT_CLIENT_SECRET</code> (создай приложение на trakt.tv/oauth/applications, redirect uri <code>urn:ietf:wg:oauth:2.0:oob</code>).
+                    Trakt не настроен на сервере. Создай приложение на developer.trakt.tv и задай <code>TRAKT_CLIENT_ID</code> (секрет новым приложениям не нужен) и <code>TRAKT_REDIRECT_URI</code> — тот же адрес, что указан в приложении.
                 </div>
             )}
 

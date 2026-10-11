@@ -6,9 +6,10 @@ import { asyncRoute } from '../asyncRoute.js'
  * client bundle — SEC-01 / Zero-Cost backend). The client talks only to
  * /api/trakt/*; this router proxies Trakt and persists tokens in db.json.
  *
- * Requires env: TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET
- * (create an API app at https://trakt.tv/oauth/applications, redirect uri
- *  `urn:ietf:wg:oauth:2.0:oob`).
+ * Requires env: TRAKT_CLIENT_ID. Apps created on developer.trakt.tv since the
+ * October 2026 auth migration get no client secret (PKCE era; the secret is
+ * optional and deprecated), so TRAKT_CLIENT_SECRET is legacy-only. Set
+ * TRAKT_REDIRECT_URI to the redirect registered on the app: refresh sends it.
  */
 
 import express from 'express'
@@ -48,9 +49,28 @@ export function classifyRefreshFailure(status) {
     return status === 400 || status === 401 || status === 403 ? 'signed_out' : 'retry'
 }
 
+/** Configured = a client id. The secret is optional since the 2026 migration. */
+export function isTraktConfigured(env = process.env) {
+    return Boolean(env.TRAKT_CLIENT_ID)
+}
+
 function isConfigured() {
-    const { clientId, clientSecret } = creds()
-    return Boolean(clientId && clientSecret)
+    return isTraktConfigured()
+}
+
+/**
+ * Body for /oauth/device/token and /oauth/token. A legacy secret is sent only
+ * when set — sending a stale one alongside a new client id gets rejected.
+ * Refresh carries the app's registered redirect (legacy apps: OOB).
+ */
+export function buildTraktTokenBody(fields, env = process.env, { withRedirect = false } = {}) {
+    const body = { ...fields, client_id: env.TRAKT_CLIENT_ID || '' }
+    if (env.TRAKT_CLIENT_SECRET) body.client_secret = env.TRAKT_CLIENT_SECRET
+    if (withRedirect) {
+        const redirect = env.TRAKT_REDIRECT_URI || (env.TRAKT_CLIENT_SECRET ? OOB_REDIRECT : '')
+        if (redirect) body.redirect_uri = redirect
+    }
+    return body
 }
 
 function apiHeaders(token) {
@@ -176,17 +196,10 @@ async function ensureToken() {
     if (!t.connected || !t.accessToken) throw new Error('not_connected')
     if (t.expiresAt && Date.now() < t.expiresAt - TOKEN_SKEW_MS) return t.accessToken
 
-    // Refresh
-    const { clientId, clientSecret } = creds()
+    // Refresh (refresh tokens are single-use: storeTokens keeps the new pair)
     const res = await traktFetch('/oauth/token', {
         method: 'POST',
-        body: {
-            refresh_token: t.refreshToken,
-            client_id: clientId,
-            client_secret: clientSecret,
-            redirect_uri: OOB_REDIRECT,
-            grant_type: 'refresh_token'
-        }
+        body: buildTraktTokenBody({ refresh_token: t.refreshToken, grant_type: 'refresh_token' }, process.env, { withRedirect: true })
     })
     if (!res.ok) {
         if (classifyRefreshFailure(res.status) === 'retry') {
@@ -249,10 +262,9 @@ router.post('/device/poll', async (req, res) => {
     const code = db.data.trakt.pendingDeviceCode
     if (!code) return res.json({ status: 'idle' })
     try {
-        const { clientId, clientSecret } = creds()
         const r = await traktFetch('/oauth/device/token', {
             method: 'POST',
-            body: { code, client_id: clientId, client_secret: clientSecret }
+            body: buildTraktTokenBody({ code })
         })
         if (r.status === 200) {
             await storeTokens(await r.json())

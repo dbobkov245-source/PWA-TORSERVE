@@ -39,3 +39,22 @@ test('every Trakt failure path records and logs its reason', async () => {
         assert.ok(src.includes(`'${reason}'`), `missing noteTraktError('${reason}')`)
     }
 })
+
+test('a new Trakt app needs only a client id: no secret is sent when none is set', async () => {
+    const { buildTraktTokenBody } = await import('../routes/trakt.js')
+    const body = buildTraktTokenBody({ code: 'abc' }, { TRAKT_CLIENT_ID: 'id1' })
+    assert.deepEqual(body, { code: 'abc', client_id: 'id1' })
+})
+
+test('the legacy secret and a configured redirect are sent when set', async () => {
+    const { buildTraktTokenBody } = await import('../routes/trakt.js')
+    const env = { TRAKT_CLIENT_ID: 'id1', TRAKT_CLIENT_SECRET: 's', TRAKT_REDIRECT_URI: 'https://example.org/cb' }
+    const body = buildTraktTokenBody({ grant_type: 'refresh_token' }, env, { withRedirect: true })
+    assert.deepEqual(body, { grant_type: 'refresh_token', client_id: 'id1', client_secret: 's', redirect_uri: 'https://example.org/cb' })
+})
+
+test('Trakt counts as configured with a client id alone', async () => {
+    const { isTraktConfigured } = await import('../routes/trakt.js')
+    assert.equal(isTraktConfigured({ TRAKT_CLIENT_ID: 'id1' }), true)
+    assert.equal(isTraktConfigured({}), false)
+})
