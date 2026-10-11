@@ -65,6 +65,12 @@ vi.mock('./utils/watchHistory.js', () => ({
     removeResumeEntries: vi.fn()
 }))
 
+// Resume-position sync has its own tests; keep this one about the status poll.
+vi.mock('./utils/resumeSync.js', () => ({
+    pullResume: vi.fn(async () => false),
+    pushResumeChange: vi.fn(async () => {})
+}))
+
 vi.mock('./components/HomePanel', () => ({
     default: () => <button type="button">Home resume target</button>
 }))
