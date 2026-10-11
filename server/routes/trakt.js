@@ -40,6 +40,12 @@ function noteTraktError(reason, status = null) {
     console.warn(`[Trakt] ${reason}${status ? ` (HTTP ${status})` : ''}`)
 }
 
+/** Forget a recorded failure once the thing it was about works again. */
+function clearTraktError(reasons) {
+    const reason = db.data.trakt.lastError?.reason
+    if (reason && (!reasons || reasons.includes(reason))) db.data.trakt.lastError = null
+}
+
 /**
  * A refresh that Trakt rejects (bad/revoked grant, unknown client) ends the
  * session; anything else - 5xx, 429, Cloudflare - is transient and must keep
@@ -162,6 +168,9 @@ export function createDiscoveryHandler({
                 logDiscoveryFailure(upstream.status)
                 return res.status(502).json({ error: 'trakt_discovery_failed', status: upstream.status })
             }
+            lastDiscoveryFailure = null
+            // A key that answers again makes an old "key rejected" stale.
+            clearTraktError(['discovery_failed', 'device_code_failed'])
             res.json({
                 results: normalizeTraktDiscovery(await upstream.json(), type),
                 source: 'trakt',
@@ -187,6 +196,7 @@ async function storeTokens(tokenJson) {
     t.expiresAt = createdMs + (tokenJson.expires_in || 0) * 1000
     t.connected = true
     t.pendingDeviceCode = null
+    clearTraktError() // signed in: every earlier failure is history
     await safeWrite(db)
 }
 

@@ -58,3 +58,16 @@ test('Trakt counts as configured with a client id alone', async () => {
     assert.equal(isTraktConfigured({ TRAKT_CLIENT_ID: 'id1' }), true)
     assert.equal(isTraktConfigured({}), false)
 })
+
+test('a working client id clears a stale "key rejected" error', async () => {
+    const { createDiscoveryHandler } = await import('../routes/trakt.js')
+    const { db } = await import('../db.js')
+    db.data.trakt.lastError = { reason: 'discovery_failed', status: 403, at: 1 }
+    const handler = createDiscoveryHandler({
+        getClientId: () => 'new-id',
+        fetchDiscovery: async () => ({ ok: true, status: 200, json: async () => [] })
+    })
+    const res = responseStream()
+    await handler({ params: { kind: 'trending' }, query: { type: 'movies' } }, res)
+    assert.equal(db.data.trakt.lastError, null)
+})
