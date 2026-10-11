@@ -1,7 +1,7 @@
 {
-    "version": "3.18.5",
-    "versionCode": 50,
+    "version": "3.18.6",
+    "versionCode": 51,
     "minVersion": "1.0.0",
-    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.5/pwa-torserve-v3.18.5.apk",
-    "notes": "v3.18.5\n- Продолжение просмотра на другом телевизоре: позиция хранится на сервере\n- В настройках видно, почему Trakt не работает"
+    "url": "https://github.com/dbobkov245-source/PWA-TORSERVE/releases/download/v3.18.6/pwa-torserve-v3.18.6.apk",
+    "notes": "v3.18.6\n- Позиции просмотра, сохранённые до 3.18.5, выгружаются на сервер и видны на другом телевизоре"
 }
