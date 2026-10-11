@@ -89,7 +89,12 @@ export class JacredProvider extends BaseProvider {
             log.info('Trying mirror', { mirror: mirrorId, attempt: i + 1 })
 
             try {
-                const data = await this._doSearch(mirror, query)
+                // Title match first (what Lampa sends); free text such as
+                // "Andor season 1" may match no title, so retry it as a phrase.
+                let data = await this._doSearch(mirror, query, { byTitle: true })
+                if (data.length === 0) {
+                    data = await this._doSearch(mirror, query, { byTitle: false })
+                }
                 hadSuccessfulResponse = true
                 allRateLimited = false
 
@@ -145,8 +150,16 @@ export class JacredProvider extends BaseProvider {
      * On 429: waits for retry-after (up to MAX_RATE_LIMIT_WAIT_MS) and retries once.
      * @private
      */
-    async _doSearch(mirror, query, _isRetry = false) {
-        const url = `${mirror.protocol}://${mirror.host}:${mirror.port}/api/v2.0/indexers/all/results?apikey=&Query=${encodeURIComponent(query)}`
+    async _doSearch(mirror, query, { byTitle = false } = {}, _isRetry = false) {
+        // A bare Query matches the phrase against release names: "F1" found
+        // only 2 releases literally named "F1 / F1". title + title_original
+        // match the film's title field, as Lampa does: 74 releases, 7187 seeds.
+        const params = new URLSearchParams({ apikey: '', Query: query })
+        if (byTitle) {
+            params.set('title', query)
+            params.set('title_original', query)
+        }
+        const url = `${mirror.protocol}://${mirror.host}:${mirror.port}/api/v2.0/indexers/all/results?${params}`
 
         // Using native fetch instead of smartFetch to avoid HTTP 403 blocks 
         // that occur with http.request on certain infrastructure patterns.
@@ -166,7 +179,7 @@ export class JacredProvider extends BaseProvider {
                 // Retry once after waiting
                 log.warn('Rate limited — waiting before retry', { mirror: mirror.host, waitMs })
                 await sleep(waitMs)
-                return this._doSearch(mirror, query, true)
+                return this._doSearch(mirror, query, { byTitle }, true)
             }
 
             throw new Error(`Rate limited (retry after ${retryAfterSec}s)`)
@@ -187,7 +200,11 @@ export class JacredProvider extends BaseProvider {
             throw new Error('Failed to parse JSON response')
         }
 
-        const rawResults = (json?.Results || json?.results || []).slice(0, 50)
+        // Rank before capping: jac.red's order is not by seeders, so a plain
+        // slice could drop the best-seeded releases of a popular title.
+        const rawResults = [...(json?.Results || json?.results || [])]
+            .sort((a, b) => (b.Seeders || b.seeders || 0) - (a.Seeders || a.seeders || 0))
+            .slice(0, 50)
 
         return rawResults.map(r =>
             this.normalizeResult({
