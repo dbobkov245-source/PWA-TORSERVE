@@ -113,6 +113,16 @@ public class PlayerResultTest {
     }
 
     @Test
+    public void zeroPositionAndDurationIsAnErrorNotARestart() {
+        // VLC reports 0/0 when playback failed; passing position 0 on would make
+        // the client forget the saved resume position (on every TV).
+        Intent data = resultIntent("org.videolan.vlc.player.result",
+                "extra_position", 0L, "extra_duration", 0L);
+
+        assertNull(PlayerResult.from(RESULT_OK, data, "org.videolan.vlc"));
+    }
+
+    @Test
     public void noDataAndNoKnownCompletionYieldsNothing() {
         assertNull(PlayerResult.from(RESULT_CANCELED, null, "org.videolan.vlc"));
         assertNull(PlayerResult.from(VIMU_RESULT_ENDED, null, null));

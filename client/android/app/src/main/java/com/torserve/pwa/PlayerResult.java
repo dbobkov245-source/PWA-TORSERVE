@@ -53,6 +53,9 @@ final class PlayerResult {
 
         boolean finished = "playback_completion".equals(endBy)
                 || (duration > 0 && position > duration * FINISHED_RATIO);
+        // 0/0 means the player failed (VLC reports it on errors), not a restart:
+        // a 0 position would make the client forget the saved resume point.
+        if (!finished && position == 0 && duration == 0) return null;
         return new PlayerResult(position, duration, endBy, finished);
     }
 
