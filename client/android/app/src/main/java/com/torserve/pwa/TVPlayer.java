@@ -109,9 +109,12 @@ public class TVPlayer extends Plugin {
             // VLC extras
             if (useChooser || packageName.contains("videolan")) {
                 if (!useChooser) intent.putExtra("title", title);
-                if (position > 0)
-                    intent.putExtra("from_start", false); // VLC specific?
-                // VLC doesn't support standard position extra well, depends on version
+                if (position > 0) {
+                    intent.putExtra("from_start", false);
+                    // VLC reads "position" as a long; an int extra is ignored.
+                    // The chooser keeps MX's int "position" under the same key.
+                    if (!useChooser) intent.putExtra("position", (long) position);
+                }
             }
 
             startActivityForResult(call, intent, "playerResult");
@@ -202,29 +205,15 @@ public class TVPlayer extends Plugin {
         if (call == null)
             return;
 
-        Intent data = result.getData();
+        PlayerResult parsed = PlayerResult.from(
+                result.getResultCode(), result.getData(), call.getString("package"));
         JSObject ret = new JSObject();
 
-        if (data != null) {
-            // MX Player / Vimu standard return keys
-            int position = data.getIntExtra("position", -1);
-            int duration = data.getIntExtra("duration", -1);
-            String endBy = data.getStringExtra("end_by"); // user, playback_completion
-
-            // Try distinct known keys if standard fail
-            if (position == -1)
-                position = data.getIntExtra("current_position", -1);
-
-            ret.put("position", position);
-            ret.put("duration", duration);
-            ret.put("endBy", endBy);
-
-            // Mark as finished if endBy is completion OR position is near duration (95%)
-            boolean finished = "playback_completion".equals(endBy);
-            if (!finished && duration > 0 && position > duration * 0.95) {
-                finished = true;
-            }
-            ret.put("finished", finished);
+        if (parsed != null) {
+            ret.put("position", parsed.position);
+            ret.put("duration", parsed.duration);
+            ret.put("endBy", parsed.endBy);
+            ret.put("finished", parsed.finished);
         } else {
             ret.put("position", -1);
             ret.put("duration", -1);
