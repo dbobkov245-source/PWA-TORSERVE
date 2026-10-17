@@ -5,6 +5,7 @@
  */
 import { Capacitor } from '@capacitor/core'
 import { resolveInitialServerUrl, resolveServerBaseUrl } from './helpers'
+import { appendSearchContext } from './searchContext.js'
 
 export function getServerBase() {
     if (typeof window === 'undefined') return ''
@@ -145,7 +146,7 @@ export async function getAIPicks() {
 // 🔎 Torrent Search
 // ────────────────────────────────────────────────────────
 
-export async function searchTorrents(query, { limit = 100, forceFresh = false, signal } = {}) {
+export async function searchTorrents(query, { limit = 100, forceFresh = false, signal, context = null } = {}) {
     const params = new URLSearchParams({
         query,
         limit: String(limit)
@@ -154,6 +155,7 @@ export async function searchTorrents(query, { limit = 100, forceFresh = false, s
     if (forceFresh) {
         params.set('skipCache', '1')
     }
+    appendSearchContext(params, context)
 
     const url = `${getServerBase()}/api/v2/search?${params.toString()}`
     const res = signal

@@ -60,6 +60,23 @@ describe('searchTorrents', () => {
         )
     })
 
+    it('sends the film identity so jac.red can match the film', async () => {
+        localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({ items: [], meta: { providers: {} } })
+        })
+
+        await searchTorrents('Dune', {
+            context: { title: 'Дюна', original_title: 'Dune', year: '2021', is_serial: '1' }
+        })
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            'http://192.168.1.70:3000/api/v2/search?query=Dune&limit=100&title=%D0%94%D1%8E%D0%BD%D0%B0&original_title=Dune&year=2021&is_serial=1'
+        )
+    })
+
     it('forwards abort signal to fetch when provided', async () => {
         localStorage.setItem('serverUrl', 'http://192.168.1.70:3000')
 

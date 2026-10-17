@@ -5,7 +5,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { useVoiceSearch } from './hooks/useVoiceSearch.jsx'
 import { searchMulti, filterDiscoveryResults } from './utils/tmdbClient'
 import { useMovieTorrentPreload } from './hooks/useMovieTorrentPreload.js'
-import { buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
+import { appendSearchContext, buildMovieTorrentQueries } from './utils/movieTorrentSearch.js'
 import { fetchServerSearchJson } from './utils/serverSearchTransport.js'
 import { getSearchResultActionKey, resolveSearchResultMagnet, verifySearchResultBeforeAdd } from './utils/searchResultActions.js'
 import { dispatchSystemBack } from './utils/backButton.js'
@@ -529,7 +529,7 @@ function App() {
     searchAddPendingRef.current = null
   }, [cancelManualSearch])
 
-  const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false, signal } = {}) => {
+  const performTorrentSearch = useCallback(async (query, { limit = 100, forceFresh = false, signal, context = null } = {}) => {
     const params = new URLSearchParams({
       query,
       limit: String(limit)
@@ -538,6 +538,7 @@ function App() {
     if (forceFresh) {
       params.set('skipCache', '1')
     }
+    appendSearchContext(params, context)
 
     return fetchSearchJson(`/api/v2/search?${params.toString()}`, { signal })
   }, [fetchSearchJson])

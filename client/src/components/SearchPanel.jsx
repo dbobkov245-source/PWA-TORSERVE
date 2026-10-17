@@ -3,6 +3,7 @@ import { useVoiceSearch } from '../hooks/useVoiceSearch.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 import SpatialEngine, { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getSearchResultActionKey } from '../utils/searchResultActions.js'
+import { getReleaseBadges } from '../utils/releaseBadges.js'
 
 // ─── Sub-Components ─────────────────────────────────────────
 
@@ -29,6 +30,15 @@ const getHealthIcon = (health) => {
     }
 }
 
+const RELEASE_BADGE_STYLES = {
+    quality: 'bg-purple-900/60 text-purple-200 border-purple-500/40',
+    hdr: 'bg-yellow-900/60 text-yellow-200 border-yellow-500/40',
+    dv: 'bg-pink-900/60 text-pink-200 border-pink-500/40',
+    audio: 'bg-blue-900/60 text-blue-200 border-blue-500/40',
+    voices: 'bg-gray-700/60 text-gray-200 border-gray-500/40',
+    subs: 'bg-green-900/60 text-green-200 border-green-500/40'
+}
+
 const getPlayabilityMeta = (status, preflightPeers) => {
     switch (status) {
         case 'playable': return { icon: '🟢', label: preflightPeers > 0 ? `live ${preflightPeers}` : 'live' }
@@ -47,6 +57,7 @@ const SearchResultItem = memo(({ item, onAdd, addingItemKey }) => {
     const actionKey = getSearchResultActionKey(item)
     const isPending = Boolean(addingItemKey)
     const isActivePending = addingItemKey === actionKey
+    const releaseBadges = getReleaseBadges(item)
 
     return (
         <button
@@ -65,6 +76,17 @@ const SearchResultItem = memo(({ item, onAdd, addingItemKey }) => {
                     {item.tracker && <span className="text-purple-400">{item.tracker}</span>}
                     {item.dateTs && <span className="text-gray-500">{formatRelativeDate(item.dateTs)}</span>}
                 </div>
+                {releaseBadges.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                        {releaseBadges.map(badge => (
+                            <span
+                                key={badge.kind}
+                                title={badge.title}
+                                className={`px-1.5 py-0.5 rounded text-[11px] border truncate max-w-[16rem] ${RELEASE_BADGE_STYLES[badge.kind]}`}
+                            >{badge.label}</span>
+                        ))}
+                    </div>
+                )}
             </div>
             {/* Visual hint that Enter/OK will add */}
             <span className="ml-2 text-gray-500 group-focus:text-green-400 text-lg transition-colors">{isActivePending ? '⏳' : '➕'}</span>
