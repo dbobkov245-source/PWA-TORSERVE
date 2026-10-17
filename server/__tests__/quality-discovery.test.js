@@ -44,14 +44,16 @@ const dune1984 = { key: 'movie:841', title: 'Дюна', original_title: 'Dune', 
 
 test('a poster asks jac.red for the film itself, original title first', async () => {
     const calls = []
-    const result = await withJacred(async (query, context) => {
-        calls.push({ query, context })
+    const result = await withJacred(async (query, context, options) => {
+        calls.push({ query, context, options })
         return [release('Dune 2021 2160p HDR', ['2160p', 'hdr']), release('Dune 2021 1080p', ['1080p'])]
     }, (q) => q.batchDiscoverItems([dune2021]))
 
+    // Background lane: badge lookups wait behind the user's own searches.
     assert.deepEqual(calls, [{
         query: 'Dune',
-        context: { title: 'Дюна', originalTitle: 'Dune', year: 2021, isSerial: false }
+        context: { title: 'Дюна', originalTitle: 'Dune', year: 2021, isSerial: false },
+        options: { background: true }
     }])
     assert.deepEqual(result, { 'movie:438631': ['4K', 'HDR'] })
 })

@@ -30,7 +30,9 @@ const FLUSH_DELAY_MS = 30 * 1000
 const DISCOVERY_TIMEOUT_MS = 6000
 const DISCOVERY_CONCURRENCY = 2
 const FAST_PROVIDER_NAME = 'jacred'
-const FAST_PROVIDER_TIMEOUT_MS = 4500
+// jac.red lookups wait in JacredGate's background lane (~1 request/s, user
+// searches first), so this bounds the queue wait, not a single request.
+const FAST_PROVIDER_TIMEOUT_MS = 60000
 
 const DEFAULT_CACHE_FILE = path.join(path.dirname(process.env.DB_PATH || 'db.json'), 'quality-badges.json')
 
@@ -149,23 +151,17 @@ function lookup(key, query, context) {
             const fastProvider = providerManager.get(FAST_PROVIDER_NAME)
             let fastProviderFailed = false
 
-            // Fast path: jacred is usually available and quick in this deployment.
+            // jac.red, in the background lane behind user searches. If it
+            // fails (rate-limited, down), retry later: asking it again through
+            // the aggregator would only double the load on its rate limit.
             if (fastProvider && fastProvider.enabled && fastProvider.isHealthy()) {
-                try {
-                    results = await withTimeout(
-                        fastProvider.search(query, context),
-                        FAST_PROVIDER_TIMEOUT_MS,
-                        `${FAST_PROVIDER_NAME} timeout`
-                    )
-                } catch (fastErr) {
-                    fastProviderFailed = true
-                    log.debug('Fast provider failed, fallback to aggregator', {
-                        provider: FAST_PROVIDER_NAME,
-                        key,
-                        error: fastErr.message
-                    })
-                }
+                results = await withTimeout(
+                    fastProvider.search(query, context, { background: true }),
+                    FAST_PROVIDER_TIMEOUT_MS,
+                    `${FAST_PROVIDER_NAME} timeout`
+                )
             } else {
+                // jac.red disabled or unhealthy: the other trackers are all we have.
                 fastProviderFailed = true
             }
 

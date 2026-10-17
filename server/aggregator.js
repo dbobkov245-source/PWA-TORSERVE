@@ -190,7 +190,7 @@ export async function search(query, options = {}) {
 
         try {
             const results = await Promise.race([
-                provider.search(query, context),
+                provider.search(query, context, { background: Boolean(options.background) }),
                 timeoutPromise
             ])
             // Background queries (e.g. quality-badge discovery) must not

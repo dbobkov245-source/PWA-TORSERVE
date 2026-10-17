@@ -85,14 +85,18 @@ test('search hands the film identity to every provider', async () => {
     const seen = []
     const fake = {
         name: 'fake', enabled: true, isHealthy: () => true,
-        search: async (query, context) => { seen.push({ query, context }); return [] }
+        search: async (query, context, options) => { seen.push({ query, context, options }); return [] }
     }
     const original = providerManager.providers
     providerManager.providers = new Map([['fake', fake]])
     try {
         const context = { title: 'Дюна', originalTitle: 'Dune', year: 2021, isSerial: false }
         await search('Dune', { skipCache: true, skipCacheWrite: true, context })
-        expect(seen).toEqual([{ query: 'Dune', context }])
+        await search('Dune', { skipCache: true, skipCacheWrite: true, context, background: true })
+        expect(seen).toEqual([
+            { query: 'Dune', context, options: { background: false } },
+            { query: 'Dune', context, options: { background: true } }
+        ])
     } finally {
         providerManager.providers = original
     }

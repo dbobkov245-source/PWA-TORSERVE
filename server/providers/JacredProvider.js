@@ -6,7 +6,8 @@
  * - Mirror rotation (jac.red primary, jacred.xyz fallback)
  * - User-Agent rotation
  * - DoH + Worker proxy fallback (via smartFetch)
- * - Rate limiting (429) handling: wait + retry
+ * - One request at a time through JacredGate (jac.red rate-limits per IP),
+ *   user searches ahead of poster-badge lookups; 429 pauses the gate
  * - Request coalescing: deduplicate parallel identical queries
  * 
  * Security note: SSL validation disabled for Jacred mirrors
@@ -16,6 +17,7 @@
 import { BaseProvider, formatSize } from './BaseProvider.js'
 import { logger } from '../utils/logger.js'
 import { smartFetch } from '../utils/doh.js'
+import { JacredGate, jacredGate } from './JacredGate.js'
 
 const log = logger.child('JacredProvider')
 
@@ -38,15 +40,17 @@ const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGE
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const JACRED_TIMEOUT_MS = parseInt(process.env.JACRED_TIMEOUT_MS || '15000', 10)
 
-// Max ms to wait on a 429 retry-after before giving up
-const MAX_RATE_LIMIT_WAIT_MS = 10000
-
 export class JacredProvider extends BaseProvider {
     name = 'jacred'
 
-    constructor() {
+    /**
+     * @param {{gate?: JacredGate, minIntervalMs?: number}} [options] - tests pass their
+     *   own gate or spacing; the server shares one gate for its single IP
+     */
+    constructor({ gate = null, minIntervalMs } = {}) {
         super()
         this.currentMirror = JACRED_MIRRORS[0].host
+        this.gate = gate || (minIntervalMs !== undefined ? new JacredGate({ minIntervalMs }) : jacredGate)
         // In-flight request map for coalescing: query -> Promise
         this._inflight = new Map()
     }
@@ -57,10 +61,12 @@ export class JacredProvider extends BaseProvider {
      * @param {string} query
      * @param {{title?: string, originalTitle?: string, year?: number, isSerial?: boolean}} [context]
      *   the film being looked up; lets jac.red match its title fields, year and type
+     * @param {{background?: boolean}} [options] - background (poster badge) lookups wait
+     *   behind user searches, skip the phrase fallback and fail when rate-limited
      * @returns {Promise<Array>} Normalized SearchResult[]
      */
-    async search(query, context = null) {
-        const key = `${query.toLowerCase().trim()}|${contextKey(context)}`
+    async search(query, context = null, { background = false } = {}) {
+        const key = `${query.toLowerCase().trim()}|${contextKey(context)}|${background ? 'bg' : 'user'}`
 
         // COALESCING: if an identical query is already in-flight, share the result
         if (this._inflight.has(key)) {
@@ -68,7 +74,7 @@ export class JacredProvider extends BaseProvider {
             return this._inflight.get(key)
         }
 
-        const promise = this._search(query, context)
+        const promise = this._search(query, context, background)
             .finally(() => this._inflight.delete(key))
 
         this._inflight.set(key, promise)
@@ -79,7 +85,7 @@ export class JacredProvider extends BaseProvider {
      * Internal search — executes actual HTTP requests
      * @private
      */
-    async _search(query, context = null) {
+    async _search(query, context = null, background = false) {
         log.info('🔍 Starting search', { query, mirrorsCount: JACRED_MIRRORS.length })
         let hadSuccessfulResponse = false
         let lastError = null
@@ -96,12 +102,14 @@ export class JacredProvider extends BaseProvider {
                 // so retry it as a phrase.
                 let data = []
                 if (hasIdentity(context)) {
-                    data = await this._doSearch(mirror, query, { byTitle: true, context })
+                    data = await this._doSearch(mirror, query, { byTitle: true, context, background })
                 }
                 if (data.length === 0) {
-                    data = await this._doSearch(mirror, query, { byTitle: true })
+                    data = await this._doSearch(mirror, query, { byTitle: true, background })
                 }
-                if (data.length === 0) {
+                // The phrase fallback is for free text a user typed; a poster
+                // lookup would only spend another request of jac.red's budget.
+                if (data.length === 0 && !background) {
                     data = await this._doSearch(mirror, query, { byTitle: false })
                 }
                 hadSuccessfulResponse = true
@@ -130,6 +138,8 @@ export class JacredProvider extends BaseProvider {
 
         // Do not poison circuit breaker on temporary rate-limit bursts.
         if (!hadSuccessfulResponse && allRateLimited) {
+            // A badge lookup must not read this as "no releases".
+            if (background) throw new Error('Rate limited')
             log.warn('All mirrors rate-limited, returning empty set for this cycle', { query })
             return []
         }
@@ -157,10 +167,10 @@ export class JacredProvider extends BaseProvider {
 
     /**
      * Do search request to specific mirror.
-     * On 429: waits for retry-after (up to MAX_RATE_LIMIT_WAIT_MS) and retries once.
+     * jac.red requests go through the shared gate, which spaces them and retries 429s.
      * @private
      */
-    async _doSearch(mirror, query, { byTitle = false, context = null } = {}, _isRetry = false) {
+    async _doSearch(mirror, query, { byTitle = false, context = null, background = false } = {}) {
         // A bare Query matches the phrase against release names: "F1" found
         // only 2 releases literally named "F1 / F1". title + title_original
         // match the film's title field, as Lampa does: 74 releases, 7187 seeds.
@@ -180,26 +190,22 @@ export class JacredProvider extends BaseProvider {
 
         // Using native fetch instead of smartFetch to avoid HTTP 403 blocks 
         // that occur with http.request on certain infrastructure patterns.
-        const response = await fetch(url, {
+        const send = () => fetch(url, {
             signal: AbortSignal.timeout(JACRED_TIMEOUT_MS),
             headers: {
                 'User-Agent': getRandomUserAgent(),
                 'Accept': 'application/json'
             }
         })
+        // jac.red rate-limits per IP: its requests share one gate, which also
+        // waits out 429s (see JacredGate.js). Other mirrors go straight out.
+        const response = mirror.host === JACRED_MIRRORS[0].host
+            ? await this.gate.schedule(send, { background })
+            : await send()
 
         if (response.status === 429) {
-            const retryAfterSec = parseInt(response.headers.get('retry-after') || '5', 10)
-            const waitMs = Math.min(retryAfterSec * 1000, MAX_RATE_LIMIT_WAIT_MS)
-
-            if (!_isRetry) {
-                // Retry once after waiting
-                log.warn('Rate limited — waiting before retry', { mirror: mirror.host, waitMs })
-                await sleep(waitMs)
-                return this._doSearch(mirror, query, { byTitle, context }, true)
-            }
-
-            throw new Error(`Rate limited (retry after ${retryAfterSec}s)`)
+            log.warn('Rate limited after retries', { mirror: mirror.host, background })
+            throw new Error(`Rate limited (retry after ${response.headers.get('retry-after') || '?'}s)`)
         }
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`)
