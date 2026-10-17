@@ -511,6 +511,7 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 
 import { search as aggregatorSearch, getMagnet as aggregatorGetMagnet, getProvidersStatus, getProvidersDiagnostics, getPreflightStats } from './aggregator.js'
+import { parseSearchContext } from './searchContext.js'
 import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
 import { parseMagnetLookupQuery } from './utils/searchMagnet.js'
 
@@ -544,6 +545,10 @@ app.post('/api/quality-badges', async (req, res) => {
 
 /**
  * API v2 Search with envelope response pattern
+ * Query: query, limit, skipCache; optional film identity title, original_title,
+ * year, is_serial ('1' movie, '2' series).
+ * Items from jac.red carry `release` (quality, hdr, voices, video, audioChannels,
+ * audioLanguages, subtitleLanguages) or null.
  * Response format:
  * {
  *   meta: { query, cached, ms, providers: { [name]: { status, count, error? } } },
@@ -561,7 +566,10 @@ app.get('/api/v2/search', async (req, res) => {
     const startTime = Date.now()
 
     try {
-        const { results, errors, providers, cached } = await aggregatorSearch(query, { skipCache: skipCacheFlag })
+        // Optional film identity (title, original_title, year, is_serial) lets
+        // jac.red match the film instead of a phrase in release names.
+        const context = parseSearchContext(req.query)
+        const { results, errors, providers, cached } = await aggregatorSearch(query, { skipCache: skipCacheFlag, context })
 
         // Transform providers to StatusMap with enhanced info
         const providersMeta = {}

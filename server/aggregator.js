@@ -15,6 +15,7 @@
 import { providerManager } from './providers/index.js'
 import { searchCache } from './searchCache.js'
 import { preflightResults, rankWithoutProbe, getPreflightStats } from './magnetPreflight.js'
+import { searchCacheKey } from './searchContext.js'
 import { logger } from './utils/logger.js'
 
 const log = logger.child('Aggregator')
@@ -146,12 +147,15 @@ setInterval(() => {
  * @param {Object} options - Search options
  * @param {boolean} options.skipCache - Skip cache lookup
  * @param {boolean} options.skipCacheWrite - Skip cache store
+ * @param {Object} [options.context] - Film identity (see searchContext.js), passed to providers
  * @returns {Promise<{results: Array, errors: Array, providers: Object, cached: boolean}>}
  */
 export async function search(query, options = {}) {
+    const context = options.context || null
+    const cacheKey = searchCacheKey(query, context)
     // Check cache first
     if (!options.skipCache) {
-        const cached = searchCache.get(query)
+        const cached = searchCache.get(cacheKey)
         if (cached) {
             log.info('📦 Cache hit', { query, resultsCount: cached.results.length })
             return { ...cached, errors: [], cached: true }
@@ -186,7 +190,7 @@ export async function search(query, options = {}) {
 
         try {
             const results = await Promise.race([
-                provider.search(query),
+                provider.search(query, context),
                 timeoutPromise
             ])
             // Background queries (e.g. quality-badge discovery) must not
@@ -283,11 +287,11 @@ export async function search(query, options = {}) {
     const ranked = rankWithoutProbe(deduped)
 
     if (ranked.length > 0 && !options.skipCacheWrite) {
-        searchCache.set(query, ranked, providerStats)
+        searchCache.set(cacheKey, ranked, providerStats)
         preflightResults(deduped)
             .then((enriched) => {
                 if (enriched?.length > 0) {
-                    searchCache.set(query, enriched, providerStats)
+                    searchCache.set(cacheKey, enriched, providerStats)
                 }
             })
             .catch((error) => {
@@ -381,7 +385,7 @@ export function resetCircuit(providerName) {
 /**
  * Deduplicate results by infohash
  */
-function deduplicateByInfohash(results) {
+export function deduplicateByInfohash(results) {
     const seen = new Map()
 
     for (const result of results) {
@@ -393,9 +397,17 @@ function deduplicateByInfohash(results) {
         }
 
         const existing = seen.get(hash)
-        if (!existing || (result.seeders > existing.seeders)) {
+        if (!existing) {
             seen.set(hash, result)
+            continue
         }
+        // Keep the best-seeded copy, but only jac.red knows quality, voices
+        // and streams: carry its release info over to whichever copy wins.
+        const winner = result.seeders > existing.seeders ? result : existing
+        const loser = winner === result ? existing : result
+        seen.set(hash, winner.release || !loser.release
+            ? winner
+            : { ...winner, release: loser.release, tags: loser.tags })
     }
 
     return Array.from(seen.values())

@@ -1,0 +1,762 @@
+{
+ "_source": "jac.red /api/v2.0/indexers/all/results, Dune: Part Two (2024), captured 2026-10-17; magnets trimmed to the infohash, ffprobe trimmed to the fields we read",
+ "Results": [
+  {
+   "Tracker": "korsars, torrentby, nnmclub, kinozal, bitru, selezen, rutor, megapeer",
+   "Title": "Дюна: Часть вторая / Dune: Part Two / 2024 / ДБ, ПМ, АП (Сербин, Яроцкий), СТ / 4K, HEVC, HDR, Dolby Vision Profile 8 / WEB-DL (2160p) | Дубляж | Сербин | Яроцкий",
+   "Size": 33092723015,
+   "PublishDate": "2024-04-15T21:00:00Z",
+   "Seeders": 2564,
+   "Peers": 835,
+   "info": {
+    "quality": 2160,
+    "videotype": "hdr",
+    "voices": [
+     "Дубляж",
+     "Сербин",
+     "Яроцкий"
+    ],
+    "types": [
+     "movie"
+    ],
+    "sizeName": "30.82 GB",
+    "name": "Дюна: Часть вторая",
+    "originalname": "Dune: Part Two",
+    "relased": 2024
+   },
+   "languages": [
+    "rus",
+    "eng"
+   ],
+   "MagnetUri": "magnet:?xt=urn:btih:5ef1461522b909f825ce478dd7eccfdcfddd52d6",
+   "ffprobe": [
+    {
+     "codec_name": "hevc",
+     "codec_type": "video",
+     "width": 3840,
+     "height": 1606,
+     "tags": {
+      "language": "eng"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Dub_Bravo Records Georgia / Movie Dubbing"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Dub_Bravo Records Georgia / Movie Dubbing"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "MVO_Jaskier"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "AVO_Serbin"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "AVO_Yarotsky"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "eng",
+      "title": "Original"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Forced (Off.)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Full (Off.)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Full (Cool Story Blog / by stirlooo)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Full (Dark_Alice)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Forced"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "SDH"
+     }
+    }
+   ]
+  },
+  {
+   "Tracker": "kinozal, rutracker",
+   "Title": "Дюна: Часть вторая / Dune: Part Two / 2024 / 4 x ДБ, 3 x ПМ, АП (Сербин, Яроцкий), СТ / WEB-DLRip (1080p) | Дубляж | Сербин | Яроцкий | LostFilm | Jaskier | HDRezka | TVShows",
+   "Size": 14527726878,
+   "PublishDate": "2024-04-20T17:03:00Z",
+   "Seeders": 1271,
+   "Peers": 52,
+   "info": {
+    "quality": 1080,
+    "videotype": "sdr",
+    "voices": [
+     "Дубляж",
+     "Сербин",
+     "Яроцкий",
+     "LostFilm",
+     "Jaskier",
+     "HDRezka",
+     "TVShows"
+    ],
+    "types": [
+     "movie"
+    ],
+    "sizeName": "13.53 ГБ",
+    "name": "Дюна: Часть вторая",
+    "originalname": "Dune: Part Two",
+    "relased": 2024
+   },
+   "languages": [
+    "rus",
+    "ukr",
+    "eng"
+   ],
+   "MagnetUri": "magnet:?xt=urn:btih:030961c74bf78b5e55297aaec34ac9d115874ef9",
+   "ffprobe": [
+    {
+     "codec_name": "h264",
+     "codec_type": "video",
+     "width": 1920,
+     "height": 800,
+     "tags": {
+      "language": "eng",
+      "title": "Dune.Part.Two.2024.1080p.AMZN.WEB-DL"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж (Bravo Records Georgia / Movie Dubbing)"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж (Red Head Sound)"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж (Jaskier)"
+     }
+    },
+    {
+     "codec_name": "aac",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж (HDRezka Studio)"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "MVO (Lost Film) [PROPER]"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "MVO (TVShows)"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "MVO (Jaskier)"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "AVO (Юрий Сербин)"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "VO (Михаил Яроцкий)"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "ukr",
+      "title": "Postmodern"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "eng",
+      "title": "Original English Atmos"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Форсированные"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные (Cool Story Blog / by stirlooo)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные (Dark_Alice)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Forced"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full (with Freemen)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "SDH"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ukr",
+      "title": "Forced"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ukr",
+      "title": "Full (Rakuten TV)"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "fre"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ger"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "spa",
+      "title": "Latin American"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "heb"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "hun"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ita"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "lit"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "por"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "nor"
+     }
+    },
+    {
+     "codec_name": "mjpeg",
+     "codec_type": "video",
+     "width": 422,
+     "height": 600,
+     "tags": {}
+    }
+   ]
+  },
+  {
+   "Tracker": "rutracker, megapeer, korsars, bitru, rutor",
+   "Title": "Дюна: Часть вторая / Dune: Part Two (Дени Вильнев / Denis Villeneuve) [2024, США, Канада, боевик, приключения, драма, UHD BDRemux 2160p, HDR10, Dolby Vision] 4x Dub (Bravo Records Georgia, RHS, Jaskier, HDrezka) + 3x MVO + AVO (Юрий Сербин) + VO + Dub Ukr + Sub Rus, Ukr, Eng, Multi 4 + Original Eng",
+   "Size": 74463995494,
+   "PublishDate": "2026-06-25T19:41:00",
+   "Seeders": 407,
+   "Peers": 85,
+   "info": {
+    "quality": 2160,
+    "videotype": "hdr",
+    "voices": [
+     "Дубляж",
+     "Jaskier",
+     "Сербин",
+     "HDRezka"
+    ],
+    "types": [
+     "movie"
+    ],
+    "sizeName": "69.35 GB",
+    "name": "Дюна: Часть вторая",
+    "originalname": "Dune: Part Two",
+    "relased": 2024
+   },
+   "languages": [
+    "ukr",
+    "rus",
+    "eng"
+   ],
+   "MagnetUri": "magnet:?xt=urn:btih:9c1cf8aa4f0a00fda70d149238e7d0fe0b352a00",
+   "ffprobe": [
+    {
+     "codec_name": "hevc",
+     "codec_type": "video",
+     "width": 3840,
+     "height": 2160,
+     "tags": {
+      "language": "eng",
+      "title": "Dune.Part.Two.2024.2160p.UHD.BDREMUX.HDR.DV.HEVC-Нечипорук"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж Bravo Records Georgia / Movie Dubbing"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж Red Head Sound"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж Jaskier"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "Дубляж HDRezka Studio"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "MVO LostFilm"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "MVO TVShows"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 2,
+     "tags": {
+      "language": "rus",
+      "title": "MVO Jaskier"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "AVO Юрий Сербин"
+     }
+    },
+    {
+     "codec_name": "eac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "rus",
+      "title": "VO Михаил Яроцкий"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "ukr",
+      "title": "Дубляж Postmodern"
+     }
+    },
+    {
+     "codec_name": "truehd",
+     "codec_type": "audio",
+     "channels": 8,
+     "tags": {
+      "language": "eng",
+      "title": "Original"
+     }
+    },
+    {
+     "codec_name": "ac3",
+     "codec_type": "audio",
+     "channels": 6,
+     "tags": {
+      "language": "eng",
+      "title": "Original Core"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Форсированные"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные iTunes"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные Cool Story Blog"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "rus",
+      "title": "Полные Dark_Alice"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ukr",
+      "title": "Форсованнi"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ukr",
+      "title": "Повнi iTunes"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Forced"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full with Freemen"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "eng",
+      "title": "Full SDH SRT"
+     }
+    },
+    {
+     "codec_name": "hdmv_pgs_subtitle",
+     "codec_type": "subtitle",
+     "width": 1920,
+     "height": 1080,
+     "tags": {
+      "language": "eng",
+      "title": "Full SDH PGS"
+     }
+    },
+    {
+     "codec_name": "hdmv_pgs_subtitle",
+     "codec_type": "subtitle",
+     "width": 1920,
+     "height": 1080,
+     "tags": {
+      "language": "fre",
+      "title": "Sous-titres complets"
+     }
+    },
+    {
+     "codec_name": "hdmv_pgs_subtitle",
+     "codec_type": "subtitle",
+     "width": 1920,
+     "height": 1080,
+     "tags": {
+      "language": "spa",
+      "title": "Subtítulos completos"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "ger",
+      "title": "Voll"
+     }
+    },
+    {
+     "codec_name": "subrip",
+     "codec_type": "subtitle",
+     "tags": {
+      "language": "lit",
+      "title": "Pilni subtitrai"
+     }
+    },
+    {
+     "codec_name": "mjpeg",
+     "codec_type": "video",
+     "width": 640,
+     "height": 360,
+     "tags": {}
+    }
+   ]
+  },
+  {
+   "Tracker": "rutracker",
+   "Title": "Дюна: Часть вторая / Dune: Part Two (Дени Вильнев / Denis Villeneuve) [2024, США, Канада, фантастика, боевик, драма, приключения, WEB-DLRip-AVC] Dub (Movie Dubbing) + MVO (LostFilm) + Sub (Rus, Eng) + Original (Eng)",
+   "Size": 4831838208,
+   "PublishDate": "2026-03-28T19:42:00",
+   "Seeders": 479,
+   "Peers": 22,
+   "info": {
+    "quality": 480,
+    "videotype": "sdr",
+    "voices": [
+     "Дубляж",
+     "LostFilm"
+    ],
+    "types": [
+     "movie"
+    ],
+    "sizeName": "4.5 GB",
+    "name": "Дюна: Часть вторая",
+    "originalname": "Dune: Part Two",
+    "relased": 2024
+   },
+   "languages": [
+    "rus"
+   ],
+   "MagnetUri": "magnet:?xt=urn:btih:96E0CF8E546C9AC7BF36E64BE1AA6B88B51F6A0A"
+  }
+ ]
+}
