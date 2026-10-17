@@ -223,3 +223,38 @@ test('a result without info or ffprobe has no release block', async () => {
     assert.equal(result.release, null)
     assert.ok(result.tags.includes('720p'))
 })
+
+// ─── Mirrors ─────────────────────────────────────────────────────────────
+//
+// jacred.xyz has been dead since ~March 2026 and hangs ~10s on connect. An
+// empty answer from jac.red used to fall through to it, so every film with no
+// releases took 11-15s: past the 4.5s badge and 8s search timeouts, and three
+// such films in a row opened jacred's circuit for all searches (seen live
+// 2026-10-17: "The Odyssey", "Resident Evil" badges empty, jacred circuit_open).
+
+test('an empty answer from a working mirror is final; the next mirror is only for errors', async () => {
+    const { JacredProvider } = await import('../providers/JacredProvider.js')
+    const hosts = []
+    const results = await withFetch(async (url) => {
+        hosts.push(new URL(url).hostname)
+        return jacredResponse([])
+    }, () => new JacredProvider().search('Clayface', { title: 'Клэйфейс', originalTitle: 'Clayface', year: 2026, isSerial: false }))
+
+    assert.deepEqual(results, [])
+    assert.ok(hosts.length > 0)
+    assert.ok(hosts.every(host => host === 'jac.red'), `asked ${hosts.join(', ')}`)
+})
+
+test('a failing mirror still falls back to the next one', async () => {
+    const { JacredProvider } = await import('../providers/JacredProvider.js')
+    const hosts = []
+    const results = await withFetch(async (url) => {
+        const host = new URL(url).hostname
+        hosts.push(host)
+        if (host === 'jac.red') return new Response('bad gateway', { status: 502 })
+        return jacredResponse([release('Dune 1080p', 5)])
+    }, () => new JacredProvider().search('Dune'))
+
+    assert.ok(hosts.includes('jacred.xyz'))
+    assert.equal(results.length, 1)
+})

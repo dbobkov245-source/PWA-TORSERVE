@@ -107,13 +107,14 @@ export class JacredProvider extends BaseProvider {
                 hadSuccessfulResponse = true
                 allRateLimited = false
 
-                if (data && data.length > 0) {
-                    this.currentMirror = mirror.host
-                    log.info('✅ Mirror connected', { mirror: mirrorId, resultsCount: data.length })
-                    return data
-                } else {
-                    log.warn('Mirror returned empty results', { mirror: mirrorId })
-                }
+                // A mirror that answered is the answer, even when it is empty:
+                // the next mirror is for errors only. Falling through to the dead
+                // jacred.xyz (hangs ~10s) made every film without releases time
+                // out and opened jacred's circuit for all searches.
+                this.currentMirror = mirror.host
+                log.info(data.length > 0 ? '✅ Mirror connected' : 'Mirror answered: no releases',
+                    { mirror: mirrorId, resultsCount: data.length })
+                return data
             } catch (err) {
                 lastError = err
                 log.warn('❌ Mirror failed', { mirror: mirrorId, error: err.message })
