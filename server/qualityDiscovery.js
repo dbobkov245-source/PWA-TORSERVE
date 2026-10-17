@@ -177,6 +177,13 @@ function lookup(key, query, context) {
                     'Quality discovery timeout'
                 )
                 results = aggregated?.results || []
+
+                // Without an answer from jac.red, "nothing found" is not
+                // "no releases": retry soon instead of caching it for hours.
+                const jacredStatus = aggregated?.providers?.[FAST_PROVIDER_NAME]?.status
+                if (results.length === 0 && jacredStatus !== 'ok' && jacredStatus !== 'empty') {
+                    throw new Error(`no answer from ${FAST_PROVIDER_NAME} (${jacredStatus || 'not asked'})`)
+                }
             }
 
             const badges = extractBestQuality(results)

@@ -148,3 +148,31 @@ test('old clients asking by title still get badges', async () => {
 
     assert.deepEqual(result, { 'Хищник': ['1080p'] })
 })
+
+test('an empty answer caused by provider failures is retried soon, not cached for hours', async () => {
+    // jac.red timed out; the aggregator fallback got an error from jacred and
+    // an empty rutor. Without jac.red that is not "no releases" (seen live
+    // 2026-10-17: "The Odyssey" cached empty while jacred's circuit was open).
+    const { providerManager } = await import('../providers/index.js')
+    const quality = await import('../qualityDiscovery.js')
+    const original = providerManager.providers
+    const timedOut = { name: 'jacred', enabled: true, isHealthy: () => true, search: async () => { throw new Error('jacred timeout') } }
+    const emptyRutor = { name: 'rutor', enabled: true, isHealthy: () => true, search: async () => [] }
+    providerManager.providers = new Map([['jacred', timedOut], ['rutor', emptyRutor]])
+    quality.resetQualityCache()
+    const now = Date.now()
+    try {
+        const odyssey = { key: 'movie:1', title: 'Одиссея', original_title: 'The Odyssey', year: '2026', is_serial: '1' }
+        await withNow(now, () => quality.batchDiscoverItems([odyssey]))
+
+        let calls = 0
+        timedOut.search = async () => { calls++; return [release('The Odyssey 2160p', ['2160p'])] }
+        const later = await withNow(now + 15 * 60 * 1000, () => quality.batchDiscoverItems([odyssey]))
+
+        assert.equal(calls, 1, 'retried after 15 minutes')
+        assert.deepEqual(later, { 'movie:1': ['4K'] })
+    } finally {
+        providerManager.providers = original
+        quality.resetQualityCache()
+    }
+})
