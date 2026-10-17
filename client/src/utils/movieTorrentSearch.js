@@ -1,6 +1,8 @@
 import { getYear } from './discover.js'
 import { isLikelyAccessibleCandidate } from './trackerAccess.js'
 
+export { appendSearchContext, buildMovieTorrentContext } from './searchContext.js'
+
 function getMediaType(item) {
     return item?.media_type === 'tv' || item?.name || item?.original_name ? 'tv' : 'movie'
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+    buildMovieTorrentContext,
     buildMovieTorrentQueries,
     getMovieTorrentKey,
     shouldStopMovieTorrentPreload
@@ -81,6 +82,9 @@ export function useMovieTorrentPreload({
         }
 
         const queries = buildMovieTorrentQueries(currentItem)
+        // The first query carries the film's identity: jac.red then matches the
+        // film itself (Lampa's request). Later queries are plain fallbacks.
+        const context = buildMovieTorrentContext(currentItem)
         const baseSession = createBaseSession(currentItem)
         const controller = new AbortController()
         abortControllerRef.current = controller
@@ -100,7 +104,7 @@ export function useMovieTorrentPreload({
         let lastSearchError = null
 
         try {
-            for (const query of queries) {
+            for (const [index, query] of queries.entries()) {
                 if (controller.signal.aborted || requestId !== requestIdRef.current) {
                     return null
                 }
@@ -109,7 +113,8 @@ export function useMovieTorrentPreload({
                     const response = await searchTorrents(query, {
                         forceFresh,
                         limit: 100,
-                        signal: controller.signal
+                        signal: controller.signal,
+                        ...(index === 0 && context ? { context } : {})
                     })
 
                     if (controller.signal.aborted || requestId !== requestIdRef.current) {

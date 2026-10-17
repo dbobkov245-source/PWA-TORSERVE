@@ -354,7 +354,7 @@ describe('hybrid row orchestration', () => {
         )
     })
 
-    it('caps quality discovery titles and passes source and active state to rows', async () => {
+    it('asks badges for the visible posters as films and passes source and active state to rows', async () => {
         mocks.createHybridRows.mockReturnValue([row('x', 'editorial', {
             source: 'trakt',
             fetcher: vi.fn(async () => ({
@@ -369,7 +369,11 @@ describe('hybrid row orchestration', () => {
 
         expect(rendered.dataset.source).toBe('trakt')
         expect(rendered.dataset.active).toBe('false')
-        expect(mocks.useQualityBadges.mock.calls.at(-1)[0]).toHaveLength(12)
+        // One request item per film (title + original title together), keyed by
+        // TMDB identity: the focused poster and the 7 after it, not all 20.
+        const requested = mocks.useQualityBadges.mock.calls.at(-1)[0]
+        expect(requested.map(entry => entry.key)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map(id => `movie:${id}`))
+        expect(requested[1]).toEqual({ key: 'movie:2', title: 'Item 2', original_title: 'Original 1', is_serial: '1' })
     })
 })
 
@@ -937,7 +941,8 @@ describe('bounded loading', () => {
     })
 
     it('keeps home quality badge discovery capped to visible rows', () => {
-        expect(src).toContain('const MAX_HOME_QUALITY_TITLES = 12')
+        expect(src).toContain('const MAX_HOME_QUALITY_ITEMS = 20')
+        expect(src).toContain('selectQualityItems({')
     })
 
     it('does not rely only on IntersectionObserver for tier-3 lazy rows', () => {

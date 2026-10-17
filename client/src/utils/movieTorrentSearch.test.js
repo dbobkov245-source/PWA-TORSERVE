@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+    appendSearchContext,
+    buildMovieTorrentContext,
     buildMovieTorrentQueries,
     getMovieTorrentKey,
     getMovieTorrentSummary,
@@ -154,5 +156,58 @@ describe('getMovieTorrentSummary', () => {
             bestQuality: null,
             label: 'Ничего не найдено'
         })
+    })
+})
+
+describe('buildMovieTorrentContext', () => {
+    it('describes a movie the way jac.red matches it', () => {
+        expect(buildMovieTorrentContext({
+            id: 693134,
+            title: 'Дюна: Часть вторая',
+            original_title: 'Dune: Part Two',
+            release_date: '2024-02-27',
+            media_type: 'movie'
+        })).toEqual({
+            title: 'Дюна: Часть вторая',
+            original_title: 'Dune: Part Two',
+            year: '2024',
+            is_serial: '1'
+        })
+    })
+
+    it('marks series without a year: later seasons were released in later years', () => {
+        expect(buildMovieTorrentContext({
+            id: 83867,
+            name: 'Андор',
+            original_name: 'Andor',
+            first_air_date: '2022-09-21'
+        })).toEqual({
+            title: 'Андор',
+            original_title: 'Andor',
+            is_serial: '2'
+        })
+    })
+
+    it('omits fields it does not know and gives up without a title', () => {
+        expect(buildMovieTorrentContext({ id: 1, title: 'Без даты', media_type: 'movie' }))
+            .toEqual({ title: 'Без даты', is_serial: '1' })
+        expect(buildMovieTorrentContext({ id: 2, media_type: 'movie' })).toBeNull()
+        expect(buildMovieTorrentContext(null)).toBeNull()
+    })
+})
+
+describe('appendSearchContext', () => {
+    it('adds the film identity to search params', () => {
+        const params = new URLSearchParams({ query: 'Dune: Part Two' })
+        appendSearchContext(params, { title: 'Дюна', original_title: 'Dune: Part Two', year: '2024', is_serial: '1' })
+        expect(params.toString()).toBe(
+            'query=Dune%3A+Part+Two&title=%D0%94%D1%8E%D0%BD%D0%B0&original_title=Dune%3A+Part+Two&year=2024&is_serial=1'
+        )
+    })
+
+    it('leaves params alone without a context', () => {
+        const params = new URLSearchParams({ query: 'Dune' })
+        appendSearchContext(params, null)
+        expect(params.toString()).toBe('query=Dune')
     })
 })

@@ -343,3 +343,30 @@ describe('useMovieTorrentPreload', () => {
         })
     })
 })
+
+describe('useMovieTorrentPreload film identity', () => {
+    it('sends the film identity with the first query only', async () => {
+        const searchTorrents = vi.fn().mockResolvedValue({
+            items: [{ id: 'weak', seeders: 1, tags: [] }],
+            meta: { providers: {} }
+        })
+        const item = {
+            id: 693134,
+            title: 'Дюна: Часть вторая',
+            original_title: 'Dune: Part Two',
+            release_date: '2024-02-27',
+            media_type: 'movie'
+        }
+
+        renderHook(() => useMovieTorrentPreload({ item, searchTorrents }))
+
+        await waitFor(() => expect(searchTorrents.mock.calls.length).toBeGreaterThanOrEqual(2))
+        expect(searchTorrents.mock.calls[0][1].context).toEqual({
+            title: 'Дюна: Часть вторая',
+            original_title: 'Dune: Part Two',
+            year: '2024',
+            is_serial: '1'
+        })
+        expect(searchTorrents.mock.calls[1][1].context).toBeUndefined()
+    })
+})

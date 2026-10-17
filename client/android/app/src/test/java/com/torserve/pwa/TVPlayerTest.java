@@ -81,6 +81,13 @@ public class TVPlayerTest {
             if (chooser || packageName.contains("videolan")) {
                 verify(intent).putExtra("from_start", false);
             }
+            // VLC reads "position" as a long; MX reads it as an int. The chooser
+            // keeps MX's int, an explicit VLC launch gets the long.
+            if (!chooser && packageName.contains("videolan")) {
+                verify(intent).putExtra("position", 600000L);
+            } else {
+                verify(intent, never()).putExtra("position", 600000L);
+            }
         }
     }
 }

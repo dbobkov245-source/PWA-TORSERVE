@@ -21,6 +21,11 @@ describe('SearchPanel', () => {
         expect(src).toContain('type="button"')
     })
 
+    it('shows release badges (quality, HDR, sound, voices) on every result row', () => {
+        expect(src).toContain("import { getReleaseBadges } from '../utils/releaseBadges.js'")
+        expect(src).toContain('getReleaseBadges(item)')
+    })
+
     it('passes the whole search result object to the add handler instead of raw id fallback', () => {
         expect(src).not.toContain('onAdd(item.magnet || item.id, item.title)')
         expect(src).toContain('onAdd(item)')

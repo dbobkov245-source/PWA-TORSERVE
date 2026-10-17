@@ -24,6 +24,7 @@ import tmdbClient, { getDiscoverByGenre } from '../utils/tmdbClient'
 import { addFavorite, getFavorites, getHistory, getAIPicks, toTmdbItem } from '../utils/serverApi'
 import { getTraktSynced } from '../utils/traktApi'
 import { useQualityBadges } from '../hooks/useQualityBadges'
+import { buildQualityRequestItem, getItemBadges, selectQualityItems } from '../utils/qualityItems.js'
 import { contentRowsRegistry } from '../utils/ContentRowsRegistry'
 import {
     buildSwipeCandidates,
@@ -98,9 +99,10 @@ const HomePanel = ({
 }) => {
     // Kept for public API compatibility; Sidebar Close only collapses the sidebar.
     void ON_CLOSE
-    // ~2 visible rows; covers the "Есть в 4K" row too. 60 used to trigger
-    // ~40s of background jacred searches on the NAS right after home load.
-    const MAX_HOME_QUALITY_TITLES = 12
+    // Posters per badge pass: the focused row and the top rows. One jac.red
+    // search per film (60 title searches used to take ~40s on the NAS), and
+    // the server keeps answers for a day, across restarts.
+    const MAX_HOME_QUALITY_ITEMS = 20
     const factoryRows = useMemo(() => createHybridRows({ getHistory }), [])
     const [registryRows, setRegistryRows] = useState(factoryRows)
     const [registryReady, setRegistryReady] = useState(false)
@@ -120,6 +122,12 @@ const HomePanel = ({
     ))
     const [loading, setLoading] = useState(cachedRows.length === 0)
     const [focusedItem, setFocusedItem] = useState(cachedRows[0]?.items?.[0] || null)
+    // Row and position of the focus: badges follow the row being browsed.
+    const [qualityFocus, setQualityFocus] = useState(() => (
+        savedFocusRef.current?.rowId
+            ? { rowId: savedFocusRef.current.rowId, itemIndex: savedFocusRef.current.itemIndex ?? 0 }
+            : null
+    ))
     const [visibleRows, setVisibleRows] = useState(cachedRows)
     const [pickerOpen, setPickerOpen] = useState(false)
     const [rejectedIds, setRejectedIds] = useState(() => new Set())
@@ -160,34 +168,19 @@ const HomePanel = ({
     }, [pickerOpen, swipeCandidates.length])
 
     // Share one quality queue for all rows to avoid request storms and duplicated fetches.
-    const homeQualityTitles = useMemo(() => {
-        const titles = []
-        const seen = new Set()
-        const push = (value) => {
-            if (!value || seen.has(value) || titles.length >= MAX_HOME_QUALITY_TITLES) return
-            seen.add(value)
-            titles.push(value)
-        }
+    const homeQualityItems = useMemo(() => (
+        selectQualityItems({
+            rows: displayRows,
+            focusedItem,
+            focusedRowId: qualityFocus?.rowId ?? null,
+            focusedIndex: qualityFocus?.itemIndex ?? -1,
+            max: MAX_HOME_QUALITY_ITEMS
+        })
+            .map(buildQualityRequestItem)
+            .filter(Boolean)
+    ), [displayRows, focusedItem, qualityFocus])
 
-        // Highest priority: focused poster and its original title.
-        push(focusedItem?.title || focusedItem?.name)
-        push(focusedItem?.original_title || focusedItem?.original_name)
-
-        // Then fill from top rows, cap total to keep discovery responsive.
-        for (const row of displayRows) {
-            for (const item of (row?.items || [])) {
-                push(item?.title || item?.name)
-                push(item?.original_title || item?.original_name)
-                if (titles.length >= MAX_HOME_QUALITY_TITLES) {
-                    return titles
-                }
-            }
-        }
-
-        return titles
-    }, [displayRows, focusedItem])
-
-    const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityTitles)
+    const { badges: qualityBadges, debug: qualityDebug } = useQualityBadges(homeQualityItems)
 
     // 💎 "Есть в 4K": items from loaded rows whose torrent quality badges
     // include 4K. Populates progressively as badge discovery completes —
@@ -198,10 +191,7 @@ const HomePanel = ({
         for (const row of displayRows) {
             for (const item of (row?.items || [])) {
                 if (!item?.id || seen.has(item.id)) continue
-                const title = item.title || item.name
-                const original = item.original_title || item.original_name
-                const badges = qualityBadges?.[title] || qualityBadges?.[original] || []
-                if (badges.includes('4K')) {
+                if (getItemBadges(qualityBadges, item).includes('4K')) {
                     seen.add(item.id)
                     out.push(item)
                 }
@@ -696,6 +686,9 @@ const HomePanel = ({
 
     const handleRowFocus = useCallback((item, itemIndex, rowId, horizontalScroll = 0) => {
         setFocusedItem(item)
+        setQualityFocus(prev => (
+            prev?.rowId === rowId && prev?.itemIndex === itemIndex ? prev : { rowId, itemIndex }
+        ))
         const focus = {
             rowId,
             itemIndex,

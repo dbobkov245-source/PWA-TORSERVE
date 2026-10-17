@@ -2,11 +2,11 @@ import { useCallback, useState } from 'react'
 import { getBackdropUrl, getTitle } from '../utils/discover'
 import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 import TVRowShell from './TVRowShell'
+import { getItemBadges } from '../utils/qualityItems.js'
 
 const RankedCard = ({ item, index, focused, qualityBadges, watched }) => {
     const title = getTitle(item)
-    const originalTitle = item?.original_title || item?.original_name
-    const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
+    const badges = getItemBadges(qualityBadges, item)
     const rank = item.rank || index + 1
     const backdropUrl = getBackdropUrl(item, 'w780')
     const [imageState, setImageState] = useState({ origin: backdropUrl, src: backdropUrl })

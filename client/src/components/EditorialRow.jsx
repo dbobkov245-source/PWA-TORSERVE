@@ -2,12 +2,9 @@ import { useCallback, useState } from 'react'
 import { getBackdropUrl, getTitle, getYear } from '../utils/discover'
 import { getNextImageUrl, reportBrokenImage } from '../utils/tmdbClient'
 import TVRowShell from './TVRowShell'
+import { getItemBadges } from '../utils/qualityItems.js'
 
-const getBadges = (item, qualityBadges) => {
-    const title = getTitle(item)
-    const originalTitle = item?.original_title || item?.original_name
-    return qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
-}
+const getBadges = (item, qualityBadges) => getItemBadges(qualityBadges, item)
 
 const EditorialCard = ({ item, focused, qualityBadges, watched }) => {
     const title = getTitle(item)
