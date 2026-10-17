@@ -1,16 +1,17 @@
 /**
  * useQualityBadges.js — Hook to fetch quality badges for movies
  * ADR-001 Item 7: Quality Badges on home page
- * 
- * Batches visible movie titles, fetches quality info from server,
- * caches in localStorage for 1 hour.
+ *
+ * Takes posters as films (see utils/qualityItems.js), most visible first,
+ * fetches their quality from the server in that order and keeps found badges
+ * in localStorage for a day, per film.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
-const CACHE_KEY = 'quality_badges_cache'
-const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+const CACHE_KEY = 'quality_badges_v2'
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // per film; the server keeps them as long
 const DEBOUNCE_MS = 500
 const BATCH_SIZE = 3
 const REQUEST_TIMEOUT_MS = 25000
@@ -34,9 +35,9 @@ async function parseNativeJson(data) {
     return data || {}
 }
 
-async function requestQualityBadges(serverUrl, titles) {
+async function requestQualityBadges(serverUrl, items) {
     const endpoint = `${serverUrl}/api/quality-badges`
-    const payload = { titles }
+    const payload = { items }
     const preferNativeHttp = Capacitor.isNativePlatform() && endpoint.startsWith('http://')
     const withTimeout = async (promise, ms = REQUEST_TIMEOUT_MS) => {
         let timeoutId
@@ -101,55 +102,60 @@ async function requestQualityBadges(serverUrl, titles) {
     }
 }
 
-/**
- * Get cached quality badges from localStorage
- */
-function getCached() {
+function readStore() {
     try {
-        const raw = localStorage.getItem(CACHE_KEY)
-        if (!raw) return {}
-        const { data, expires } = JSON.parse(raw)
-        if (Date.now() > expires) {
-            localStorage.removeItem(CACHE_KEY)
-            return {}
-        }
-        if (!data || typeof data !== 'object') return {}
-        // Do not treat empty badges as long-lived cache entries.
-        const sanitized = Object.fromEntries(
-            Object.entries(data).filter(([, badges]) => Array.isArray(badges) && badges.length > 0)
-        )
-        return sanitized
+        const stored = JSON.parse(localStorage.getItem(CACHE_KEY))
+        return stored && typeof stored === 'object' ? stored : {}
     } catch {
         return {}
     }
 }
 
 /**
- * Save quality badges to localStorage cache
+ * Cached badges by poster key; expired entries are dropped.
+ * @returns {Object<string, string[]>}
  */
-function saveCache(badges) {
+function getCached() {
+    const now = Date.now()
+    return Object.fromEntries(
+        Object.entries(readStore())
+            .filter(([, entry]) => Array.isArray(entry?.badges) && entry.badges.length > 0 && entry.expires > now)
+            .map(([key, entry]) => [key, entry.badges])
+    )
+}
+
+/**
+ * Keep found badges for a day each. Empty answers are not cached here:
+ * the server already remembers them.
+ */
+function saveCache(found) {
     try {
-        const filtered = Object.fromEntries(
-            Object.entries(badges || {}).filter(([, list]) => Array.isArray(list) && list.length > 0)
+        const now = Date.now()
+        const store = Object.fromEntries(
+            Object.entries(readStore()).filter(([, entry]) => entry?.expires > now)
         )
-        localStorage.setItem(CACHE_KEY, JSON.stringify({
-            data: filtered,
-            expires: Date.now() + CACHE_TTL_MS
-        }))
+        for (const [key, badges] of Object.entries(found || {})) {
+            if (Array.isArray(badges) && badges.length > 0) {
+                store[key] = { badges, expires: now + CACHE_TTL_MS }
+            }
+        }
+        localStorage.setItem(CACHE_KEY, JSON.stringify(store))
     } catch (e) {
         console.warn('[QualityBadges] Cache save failed:', e)
     }
 }
 
 /**
- * Hook to fetch quality badges for a list of movie titles
- * @param {string[]} titles - Array of movie titles to fetch badges for
- * @returns {{ badges: Object, debug: { queueSize: number, fetchCount: number }|null }}
+ * Hook to fetch quality badges for posters
+ * @param {Array<{key: string}>} items - posters from buildQualityRequestItem, most visible first;
+ *   the queue follows this order, so a newly focused row jumps ahead
+ * @returns {{ badges: Object<string, string[]>, debug: { queueSize: number, fetchCount: number }|null }}
  */
-export function useQualityBadges(titles) {
+export function useQualityBadges(items) {
     const [badges, setBadges] = useState(() => getCached())
     const [debug, setDebug] = useState(() => ({ queueSize: 0, fetchCount: 0 }))
-    const pendingRef = useRef(new Set())
+    const pendingRef = useRef(new Map()) // key -> request item
+    const orderRef = useRef([])          // keys in the caller's current priority
     const timeoutRef = useRef(null)
     const isProcessingRef = useRef(false)
 
@@ -163,8 +169,8 @@ export function useQualityBadges(titles) {
         ))
     }, [])
 
-    const fetchBadges = useCallback(async (titlesToFetch) => {
-        if (titlesToFetch.length === 0) return false
+    const fetchBadges = useCallback(async (batch) => {
+        if (batch.length === 0) return false
 
         const serverUrl = getServerUrl()
         if (!serverUrl) return false
@@ -174,20 +180,27 @@ export function useQualityBadges(titles) {
         }
 
         try {
-            const result = await requestQualityBadges(serverUrl, titlesToFetch)
-            setBadges(prev => {
-                const nonEmpty = Object.fromEntries(
-                    Object.entries(result || {}).filter(([, list]) => Array.isArray(list) && list.length > 0)
-                )
-                const updated = { ...prev, ...nonEmpty }
-                saveCache(updated)
-                return updated
-            })
+            const result = await requestQualityBadges(serverUrl, batch)
+            const found = Object.fromEntries(
+                Object.entries(result || {}).filter(([, list]) => Array.isArray(list) && list.length > 0)
+            )
+            saveCache(found)
+            setBadges(prev => ({ ...prev, ...found }))
             return true
         } catch (err) {
             console.warn('[QualityBadges] Fetch failed:', err.message)
             return false
         }
+    }, [])
+
+    /** Next pending posters: the caller's priority first, then anything left over. */
+    const nextBatch = useCallback(() => {
+        const pending = pendingRef.current
+        const keys = orderRef.current.filter(key => pending.has(key))
+        for (const key of pending.keys()) {
+            if (!keys.includes(key)) keys.push(key)
+        }
+        return keys.slice(0, BATCH_SIZE).map(key => pending.get(key))
     }, [])
 
     const processQueue = useCallback(async () => {
@@ -198,16 +211,16 @@ export function useQualityBadges(titles) {
 
         try {
             while (pendingRef.current.size > 0) {
-                const batch = Array.from(pendingRef.current).slice(0, BATCH_SIZE)
+                const batch = nextBatch()
                 const ok = await fetchBadges(batch)
 
                 if (!ok) {
-                    // Fallback to single-title requests when a small batch still fails.
+                    // Fallback to single-poster requests when a small batch still fails.
                     if (batch.length > 1) {
                         const single = batch[0]
                         const singleOk = await fetchBadges([single])
                         if (singleOk) {
-                            pendingRef.current.delete(single)
+                            pendingRef.current.delete(single.key)
                             syncQueueDebug()
                             continue
                         }
@@ -215,14 +228,14 @@ export function useQualityBadges(titles) {
                     break
                 }
 
-                batch.forEach(title => pendingRef.current.delete(title))
+                batch.forEach(item => pendingRef.current.delete(item.key))
                 syncQueueDebug()
             }
         } finally {
             isProcessingRef.current = false
             syncQueueDebug()
 
-            // Retry later if we still have pending titles (e.g., temporary network issues)
+            // Retry later if we still have pending posters (e.g., temporary network issues)
             if (pendingRef.current.size > 0) {
                 clearTimeout(timeoutRef.current)
                 timeoutRef.current = setTimeout(() => {
@@ -230,22 +243,24 @@ export function useQualityBadges(titles) {
                 }, DEBOUNCE_MS)
             }
         }
-    }, [fetchBadges, syncQueueDebug])
+    }, [fetchBadges, nextBatch, syncQueueDebug])
 
     useEffect(() => {
-        if (!titles || titles.length === 0) return
+        if (!items || items.length === 0) return
+        orderRef.current = items.map(item => item?.key).filter(Boolean)
 
         // Filter out already cached and pending
         const cached = getCached()
-        const uncached = titles.filter(t =>
-            t && !cached[t] && !pendingRef.current.has(t)
+        const uncached = items.filter(item =>
+            item?.key && !cached[item.key] && !pendingRef.current.has(item.key)
         )
 
-        if (uncached.length === 0) return
-
-        // Mark as pending
-        uncached.forEach(t => pendingRef.current.add(t))
+        uncached.forEach(item => pendingRef.current.set(item.key, item))
         syncQueueDebug()
+
+        // The previous run's cleanup cleared its timer: restart the queue
+        // whenever anything is waiting, not only when new posters arrived.
+        if (pendingRef.current.size === 0) return
 
         // Debounce queue processing
         clearTimeout(timeoutRef.current)
@@ -254,7 +269,7 @@ export function useQualityBadges(titles) {
         }, DEBOUNCE_MS)
 
         return () => clearTimeout(timeoutRef.current)
-    }, [titles, processQueue, syncQueueDebug])
+    }, [items, processQueue, syncQueueDebug])
 
     return {
         badges,

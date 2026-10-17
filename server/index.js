@@ -512,28 +512,33 @@ app.get('/api/tmdb/image/:size/:path', async (req, res) => {
 
 import { search as aggregatorSearch, getMagnet as aggregatorGetMagnet, getProvidersStatus, getProvidersDiagnostics, getPreflightStats } from './aggregator.js'
 import { parseSearchContext } from './searchContext.js'
-import { batchDiscoverQuality, getQualityCacheStats } from './qualityDiscovery.js'
+import { batchDiscoverQuality, batchDiscoverItems, getQualityCacheStats, initQualityCache } from './qualityDiscovery.js'
 import { parseMagnetLookupQuery } from './utils/searchMagnet.js'
+
+// Saved badges survive container restarts (file next to db.json).
+initQualityCache()
 
 /**
  * POST /api/quality-badges — Batch discover available quality for movies
  * ADR-001 Item 7: Quality Badges on home page (like Lampa)
- * 
- * Request: { titles: ["Movie 1", "Movie 2"] } (max 10)
- * Response: { "Movie 1": ["4K", "HDR"], "Movie 2": ["1080p"] }
+ *
+ * Request: { items: [{ key, title, original_title, year, is_serial }] } (max 10)
+ * Response: { [key]: ["4K", "HDR"] }
+ * Clients before v3.19 send { titles: ["Movie 1"] } and get { "Movie 1": [...] }.
  */
 app.post('/api/quality-badges', async (req, res) => {
-    const { titles } = req.body
+    const { titles, items } = req.body || {}
+    const byItem = Array.isArray(items) && items.length > 0
 
-    if (!titles || !Array.isArray(titles) || titles.length === 0) {
-        return res.status(400).json({ error: 'titles array required' })
+    if (!byItem && (!Array.isArray(titles) || titles.length === 0)) {
+        return res.status(400).json({ error: 'items or titles array required' })
     }
 
-    console.log(`[QualityBadges] Batch request: ${titles.length} titles`)
+    console.log(`[QualityBadges] Batch request: ${byItem ? `${items.length} items` : `${titles.length} titles`}`)
     const startTime = Date.now()
 
     try {
-        const result = await batchDiscoverQuality(titles)
+        const result = byItem ? await batchDiscoverItems(items) : await batchDiscoverQuality(titles)
         const ms = Date.now() - startTime
         console.log(`[QualityBadges] Complete in ${ms}ms`)
         res.json(result)

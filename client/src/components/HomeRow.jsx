@@ -3,6 +3,7 @@ import { getPosterUrl, getTitle, getBackdropUrl, getYear } from '../utils/discov
 import { reportBrokenImage, getNextImageUrl } from '../utils/tmdbClient'
 import { useSpatialItem } from '../hooks/useSpatialNavigation'
 import { getBadgeStyle } from '../hooks/useQualityBadges'
+import { getItemBadges } from '../utils/qualityItems.js'
 import useTVNavigation from '../hooks/useTVNavigation'
 
 const createImageErrorCache = () => {
@@ -23,8 +24,7 @@ const MovieCard = ({ item, index, layout, registerItem, onItemClick, onFocus, im
     const title = getTitle(item)
     const [imgSrc, setImgSrc] = useState(imageUrl)
     const [isBroken, setIsBroken] = useState(() => imageErrors.has(imageUrl))
-    const originalTitle = item?.original_title || item?.original_name
-    const badges = qualityBadges?.[title] || qualityBadges?.[originalTitle] || []
+    const badges = getItemBadges(qualityBadges, item)
 
     const setCardRef = useCallback((node) => {
         spatialRef(node)

@@ -1,7 +1,7 @@
 import { getYear } from './discover.js'
 import { isLikelyAccessibleCandidate } from './trackerAccess.js'
 
-export { appendSearchContext } from './searchContext.js'
+export { appendSearchContext, buildMovieTorrentContext } from './searchContext.js'
 
 function getMediaType(item) {
     return item?.media_type === 'tv' || item?.name || item?.original_name ? 'tv' : 'movie'
@@ -34,28 +34,6 @@ function getTopQualityTag(tags = []) {
     }
 
     return tags[0] || null
-}
-
-/**
- * The film's identity as /api/v2/search takes it. jac.red matches these
- * fields (as Lampa sends them) instead of a phrase in release names.
- * @returns {{title?: string, original_title?: string, year?: string, is_serial: '1'|'2'}|null}
- */
-export function buildMovieTorrentContext(item) {
-    const title = getLocalTitle(item)
-    const originalTitle = getOriginalTitle(item)
-    if (!title && !originalTitle) return null
-
-    const context = {}
-    if (title) context.title = title
-    if (originalTitle) context.original_title = originalTitle
-    const isSerial = getMediaType(item) === 'tv'
-    // A series' first-air year would hide seasons released later, and a
-    // non-empty answer skips the fallback queries. Movies keep their year.
-    const year = isSerial ? null : getYear(item)
-    if (year) context.year = year
-    context.is_serial = isSerial ? '2' : '1'
-    return context
 }
 
 export function getMovieTorrentKey(item) {
