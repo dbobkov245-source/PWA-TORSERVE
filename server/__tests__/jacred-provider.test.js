@@ -185,10 +185,34 @@ test('a release without ffprobe keeps what info knows and no stream details', as
     const [result] = await withFetch(async () => jacredResponse([noProbe]),
         () => new JacredProvider().search('Dune: Part Two', duneContext))
 
-    assert.equal(result.release.quality, 480)
+    // jac.red's 480 is its "not recognised" value (see the next test), so
+    // without streams the quality stays unknown.
+    assert.equal(result.release.quality, null)
     assert.equal(result.release.video, null)
     assert.equal(result.release.audioChannels, null)
     assert.deepEqual(result.release.subtitleLanguages, [])
+})
+
+test('quality comes from the probed video track, not jac.red\'s 480 placeholder', async () => {
+    // Seen live on the NAS 2026-10-17: "WEB-DL (1080p)" and a 4K release both
+    // had info.quality 480 while their ffprobe said 1920x1080 and 3840x1600.
+    const { JacredProvider } = await import('../providers/JacredProvider.js')
+    const probed = (title, width, height, seeders) => ({
+        ...release(title, seeders),
+        info: { quality: 480, videotype: 'sdr', voices: ['Дубляж'] },
+        ffprobe: [{ codec_type: 'video', codec_name: 'h264', width, height }]
+    })
+    const results = await withFetch(async () => jacredResponse([
+        probed('Dune Part Two WEB-DL (1080p)', 1920, 1080, 4863),
+        probed('Dune Part Two 4K HEVC', 3840, 1600, 900),
+        probed('Dune Part Two scope 1080p', 1920, 800, 300),
+        probed('Dune Part Two DVDRip', 720, 304, 20)
+    ]), () => new JacredProvider().search('Dune: Part Two', duneContext))
+
+    assert.deepEqual(results.map(r => r.release.quality), [1080, 2160, 1080, 480])
+    assert.ok(results[0].tags.includes('1080p'))
+    assert.ok(results[1].tags.includes('2160p'))
+    assert.ok(!results[1].tags.includes('1080p'))
 })
 
 test('a result without info or ffprobe has no release block', async () => {

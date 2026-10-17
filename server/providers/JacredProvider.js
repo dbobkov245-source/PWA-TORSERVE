@@ -276,7 +276,7 @@ export function extractReleaseInfo(raw) {
     const channels = audio.map(s => s.channels).filter(n => Number.isFinite(n) && n > 0)
 
     return {
-        quality: Number.isFinite(info?.quality) ? info.quality : null,
+        quality: videoQuality(video) ?? reportedQuality(info?.quality),
         hdr: info?.videotype === 'hdr',
         voices: Array.isArray(info?.voices) ? info.voices.filter(Boolean) : [],
         video: video ? { codec: video.codec_name, width: video.width, height: video.height } : null,
@@ -284,6 +284,28 @@ export function extractReleaseInfo(raw) {
         audioLanguages: uniqueLanguages(audio),
         subtitleLanguages: uniqueLanguages(subtitles)
     }
+}
+
+/**
+ * Quality class of a probed video track. Width first: scope films are
+ * 1920x800, and still 1080p.
+ */
+function videoQuality(video) {
+    const width = video?.width || 0
+    const height = video?.height || 0
+    if (!width && !height) return null
+    if (width >= 3200 || height >= 1800) return 2160
+    if (width >= 1800 || height >= 1000) return 1080
+    if (width >= 1200 || height >= 700) return 720
+    return 480
+}
+
+/**
+ * jac.red's own quality guess. Its 480 is a "not recognised" value: live
+ * results labelled 480 probed as 1920x1080 and 3840x1600.
+ */
+function reportedQuality(quality) {
+    return Number.isFinite(quality) && quality > 480 ? quality : null
 }
 
 const RESOLUTION_TAGS = { 2160: '2160p', 1080: '1080p', 720: '720p' }
